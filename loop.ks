@@ -285,6 +285,16 @@ UNTIL done {
 						IF inputStringList:LENGTH = 4 {ADD NODE(TIME:SECONDS + 60, inputStringList[3]:TONUMBER(0), inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
 						SET loopMessage TO "Added a node" + ISRU.
 						SET commandValid TO TRUE.
+					} ELSE IF (inputStringList[0] = "copyscript") {
+						IF connectionToKSC() {
+							IF EXISTS("1:" + inputStringList[1] + ".ks") DELETEPATH("1:" + inputStringList[1] + ".ks").
+							IF EXISTS("1:" + inputStringList[1] + ".ksm") DELETEPATH("1:" + inputStringList[1] + ".ksm").
+							COMPILE "0:" + inputStringList[1] + ".ks" TO "1:" + inputStringList[1] + ".ksm".
+							IF EXISTS("1:" + inputStringList[1] + ".ksm") SET loopMessage TO "File compiled and copied.".
+							ELSE SET loopMessage TO "File was not copied correctly!".
+						}
+						ELSE SET loopMessage TO "No connection to KSC, cannot copy script".
+						SET commandValid TO TRUE.
 					} ELSE IF ((inputStringList[0] = "ISRU") OR (inputStringList[0] = "CONVERTER")) {
 						IF inputStringList[1] = "On" ISRU ON.
 						IF inputStringList[1] = "Off" ISRU OFF.
