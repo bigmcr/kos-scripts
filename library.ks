@@ -349,29 +349,14 @@ FUNCTION logShipInfo {
 	LOG "Stage,Engine Count,Engine Type,Fuel Mass (kg),Isp (s),delta V (m/s)" TO fileName.
 	LOG deltaVLogList TO fileName.
 	
-	LOCAL totalMass IS 0.
-	LOCAL totalAmount IS 0.
-	LOCAL totalCapacity IS 0.
 	LOCAL density IS 0.
-	LOCAL index IS 0.
-	LOG "Resource Name,Amount Agg,Amount Parts,Capacity Agg,Capacity Parts,Mass Agg,Mass Parts,Density" TO fileName.
-	LOG ",Liters?,Liters?,Liters?,Liters?,kg,kg,kg/L" TO fileName.
+	LOCAL indexRes IS 0.
+	LOG "Name,Amount (L),Capacity (L),Mass (kg),Density (kg/L)" TO fileName.
+	LOG ",Liters,Liters,kg,kg/L" TO fileName.
 	FOR eachResource IN SHIP:RESOURCES {
-		SET totalMass TO 0.
-		SET totalAmount TO 0.
-		SET totalCapacity TO 0.
-		SET density TO 0.
-
-		FOR eachPart IN eachResource:PARTS {
-			FOR eachIndex IN RANGE(eachPart:RESOURCES:LENGTH) {
-				IF eachPart:RESOURCES[eachIndex]:NAME = eachResource:NAME SET index TO eachIndex.
-			}
-			SET density TO eachPart:RESOURCES[index]:DENSITY * 1000.
-			SET totalMass TO totalMass + eachPart:RESOURCES[index]:AMOUNT * density.
-			SET totalAmount TO totalAmount + eachPart:RESOURCES[index]:AMOUNT.
-			SET totalCapacity TO totalCapacity + eachPart:RESOURCES[index]:CAPACITY.
-		}
-		LOG eachResource:NAME + "," + eachResource:AMOUNT + "," + totalAmount + "," + eachResource:CAPACITY + "," + totalCapacity + "," + eachResource:AMOUNT * density + "," + totalMass + "," + density TO fileName.
+		FOR eachIndex IN RANGE(eachResource:PARTS[0]:RESOURCES:LENGTH) {IF eachResource:PARTS[0]:RESOURCES[eachIndex]:NAME = eachResource:NAME SET indexRes TO eachIndex.}
+		SET density TO eachResource:PARTS[0]:RESOURCES[indexRes]:DENSITY * 1000.
+		LOG eachResource:NAME + "," + eachResource:AMOUNT + "," + eachResource:CAPACITY + "," + eachResource:AMOUNT * density + "," + density TO fileName.
 	}
 	
 	CLEARSCREEN.
