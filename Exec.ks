@@ -1,11 +1,11 @@
 @LAZYGLOBAL OFF.
 
 PARAMETER ullage IS 5.												// the number of seconds the RSC thrusters need to be firing forward to
-																	//		make the main engine's fuel be stable
-																	//		only applicable in RSS, so disabled if in stock universe
+																							//		make the main engine's fuel be stable
+																							//		only applicable in RSS, so disabled if in stock universe
 PARAMETER useRCSforRotation IS FALSE.
-PARAMETER faceSun IS FALSE.											// during the waiting times, turn to face the sun
-																	//		intended to ensure that probes' solar panels are exposed to the Sun.
+PARAMETER faceSun IS FALSE.										// during the waiting times, turn to face the sun
+																							//		intended to ensure that probes' solar panels are exposed to the Sun.
 
 CLEARSCREEN.
 
@@ -24,44 +24,44 @@ IF errorCode = "None" {
 	updateShipInfoResources().											// update the shipInfo structure with current status of the ship
 	LOCAL oldRCS IS RCS.												// record the current status of RCS
 	LOCAL oldSAS IS SAS.												// record the current status of SAS
-	
+
 	SET RCS TO useRCSforRotation.										// set RCS to the allowed state for the rotations
 	SAS OFF.															// always turn SAS off, as it interferes with steering control
-	
+
 	SET mySteer TO SHIP:FACING.
 	SET useMySteer TO TRUE.
-	
+
 	LOCAL ND TO NEXTNODE.
 	LOCK ND TO NEXTNODE.
 	LOCAL dV_req TO ND:DELTAV:MAG.
-	
+
 	LOCAL Isp_stg IS LIST().
 	LOCAL T_stg IS LIST().
-	LOCAL m_dry_stg IS LIST().											// Mass of the empty stage (kg)
-	LOCAL m_wet_stg IS LIST().											// Mass of the fuelled stage (kg)
-	LOCAL v_e_stg IS LIST().											// Exhaust velocity (m/s)
-	LOCAL dV_avail_stg IS LIST().										// Delta V available in this stage (m/s)
-	LOCAL m_dot_stg IS LIST().											// Rate of change of mass for the engine (kg/s)
+	LOCAL m_dry_stg IS LIST().									// Mass of the empty stage (kg)
+	LOCAL m_wet_stg IS LIST().									// Mass of the fuelled stage (kg)
+	LOCAL v_e_stg IS LIST().										// Exhaust velocity (m/s)
+	LOCAL dV_avail_stg IS LIST().								// Delta V available in this stage (m/s)
+	LOCAL m_dot_stg IS LIST().									// Rate of change of mass for the engine (kg/s)
 	LOCAL dv_prev_stg IS LIST().
 	LOCAL dv_req_stage_stg IS LIST().
 	LOCAL stage_req_stg IS LIST().
 	LOCAL ign_after_t_0_stg IS LIST().
 	LOCAL dv_before_t_0_stg IS LIST().
 	LOCAL t_burn_req_stg IS LIST().
-	LOCAL t_ign IS 0.													// the burn delay before nominal time (s)
+	LOCAL t_ign IS 0.														// the burn delay before nominal time (s)
 	LOCAL t_total IS 0.													// the total burn duration (s)
-	
-	LOCAL e IS CONSTANT():E.            								// Base of natural log
-	LOCAL g_0 IS 9.80665.               								// Gravitational acceleration constant (m/s²)
-	LOCAL a_i IS 0.														// initial acceleration at the start of the burn (m/s^2)
-	LOCAL a_f IS 0.														// final acceleration at the end of the burn (m/s^2)
-	
+
+	LOCAL e IS CONSTANT():E.            				// Base of natural log
+	LOCAL g_0 IS 9.80665.            						// Gravitational acceleration constant (m/s²)
+	LOCAL a_i IS 0.															// initial acceleration at the start of the burn (m/s^2)
+	LOCAL a_f IS 0.															// final acceleration at the end of the burn (m/s^2)
+
 	LOCAL usedStages IS LIST().
 	FOR stageNumber IN RANGE(shipInfo["NumberOfStages"] - 1, -1) {
 		IF shipInfo["Stage " + stageNumber]["Isp"] <> 0 usedStages:ADD(shipInfo["Stage " + stageNumber]).
 	}
 	PRINT "There are a total of " + usedStages:LENGTH + " stages that can be used".
-	
+
 	LOCAL Isp IS 0.
 	LOCAL T IS 0.
 	LOCAL m_dry IS 0.
@@ -115,7 +115,7 @@ IF errorCode = "None" {
 
 	SET a_i TO usedStages[lowestUsedStage]["Thrust"] / usedStages[lowestUsedStage]["CurrentMass"].
 	SET a_f TO usedStages[highestUsedStage]["Thrust"]/(usedStages[highestUsedStage]["CurrentMass"]*e^(-dV_req_stage_stg[highestUsedStage]/v_e_stg[highestUsedStage])).
-	
+
 	IF connectionToKSC() {
 		LOCAL logMe IS LIST().
 		logMe:ADD(SHIP:NAME + ",").					// 0
@@ -179,7 +179,7 @@ IF errorCode = "None" {
 		ELSE PRINT "Will not turn to face the Sun".
 		PRINT "Burn duration: " + timeToString(t_burn_req , 2).
 	}
-	
+
 	// if called to face the sun and the node is more than 60 minutes away, turn to face the primary.
 	// turn on physics warp for the rotation if allowed
 	IF physicsWarpPerm {
@@ -203,7 +203,7 @@ IF errorCode = "None" {
 	// always turn off physics warp
 	SET KUNIVERSE:TIMEWARP:WARP TO 0.
 	SET KUNIVERSE:TIMEWARP:MODE TO "RAILS".
-	
+
 	// if ullage is not a concern, warp to 30 seconds before burntime
 	IF (isStockRockets() OR (ullage = 0)) {
 		warpToTime(TIME:SECONDS + ND:ETA - MAX(1.5*t_ign, 30)).
@@ -223,17 +223,17 @@ IF errorCode = "None" {
 			IF debug PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
 			LOCK mySteer TO ND:DELTAV.
 		} ELSE {IF debug PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).}
-		
+
 		IF physicsWarpPerm {
 			SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
 			SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
 		}
 		//now we need to wait until the burn vector and ship's facing are aligned
 		WAIT UNTIL ((ND:ETA <= t_ign + ullage) OR (ABS(ND:DELTAV:DIRECTION:PITCH - FACING:PITCH) < 0.15 AND ABS(ND:DELTAV:DIRECTION:YAW - FACING:YAW) < 0.01)).
-	
+
 		IF debug PRINT "Waiting until the ullage time, " + timeToString(ND:ETA - t_ign - ullage).
 		warpToTime(TIME:SECONDS + ND:ETA - t_ign - ullage).
-		
+
 		// use RCS to settle any ullage concerns.
 		IF (ullage <> 0) {
 			RCS ON.
@@ -242,7 +242,7 @@ IF errorCode = "None" {
 			IF debug PRINT "Waiting until the burn time, " + timeToString(ND:ETA - t_ign).
 			WAIT ullage.												// wait for the burn to start
 		}.
-		
+
 		// the main engines are starting, so turn off RCS for ullage
 		IF (ullage <> 0) {
 			RCS OFF.
@@ -250,16 +250,16 @@ IF errorCode = "None" {
 			IF debug PRINT "Ullage over, main engines starting".
 		}
 	}
-	
+
 	SET myThrottle TO 1.												// set the throttle to max
 	SET useMyThrottle TO TRUE.
 	LOCK mySteer TO ND:DELTAV.
-	
+
 	IF physicsWarpPerm AND t_total > 30 {								// only actually use physics warp if the burn duration is greater than 30 seconds
 		SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
 		SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
 	}
-	
+
 	LOCAL done TO FALSE.
 	//initial deltav
 	LOCAL DV0 TO ND:DELTAV.
@@ -275,7 +275,7 @@ IF errorCode = "None" {
 			IF debug PRINT "End burn, remaining dV " + ROUND(ND:DELTAV:MAG,1) + "m/s, vdot: " + ROUND(VDOT(DV0, ND:DELTAV),1).
 			SET done TO TRUE.
 		}
-		
+
 		// If we are nearing the end of the burn (less than 1 second), stop physics warp to allow for more precision
 		IF ND:DELTAV:MAG <= a_f AND physicsWarpPerm {
 			SET KUNIVERSE:TIMEWARP:WARP TO 0.
@@ -291,12 +291,12 @@ IF errorCode = "None" {
 
 	SET useMyThrottle TO FALSE.
 	SET useMySteer TO FALSE.
-	
+
 	SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
-	
+
 	endScript().
 	updateShipInfo().													// update the shipInfo structure with current status of the ship
-	
+
 	SET RCS TO oldRCS.													// restore the previous RCS state
 	SET SAS TO oldSAS.													// restore the previous SAS state
 	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
