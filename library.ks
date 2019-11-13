@@ -39,10 +39,10 @@ FUNCTION mergeLists {
 	PARAMETER list1.
 	PARAMETER list2.
 	LOCAL returnList IS LIST().
-	
+
 	FOR eachIndex IN RANGE(0, list1:LENGTH) returnList:ADD(list1[eachIndex]).
 	FOR eachIndex IN RANGE(0, list2:LENGTH) returnList:ADD(list2[eachIndex]).
-	
+
 	RETURN returnList.
 }
 
@@ -82,7 +82,7 @@ FUNCTION listArrayGRT {
 FUNCTION listParts {
 	LOCAL decouplerPartList IS LIST().
 	SET decouplerList TO LIST().
-	
+
 	SET partListTree TO LEXICON().
 	decouplerPartList:ADD(SHIP:PARTS[0]).
 	FOR eachPart IN SHIP:PARTS {
@@ -90,13 +90,13 @@ FUNCTION listParts {
 			decouplerPartList:ADD(eachPart).
 		}
 	}
-	
+
 	FOR eachIndex IN RANGE(0, decouplerPartList:LENGTH) {
 		decouplerList:ADD(LIST()).
 		IF eachIndex <> 0 decouplerList[eachIndex]:ADD(decouplerPartList[eachIndex]).
 		recursivePartSort(decouplerPartList[eachIndex], eachIndex).
 	}
-	
+
 	LOCAL hasDuplicates IS TRUE.
 	UNTIL hasDuplicates = FALSE {
 		FOR eachIndex IN RANGE(0, decouplerList:LENGTH) {
@@ -111,7 +111,7 @@ FUNCTION listParts {
 				}
 			}
 		}
-		
+
 		SET hasDuplicates TO FALSE.
 		FOR eachIndex IN RANGE(0, decouplerList:LENGTH) {
 			FOR eachSubIndex IN RANGE(0, decouplerList:LENGTH) {
@@ -123,7 +123,7 @@ FUNCTION listParts {
 			}
 		}
 	}
-	
+
 	LOCAL smallPartList IS LIST().
 	LOCAL addedStages IS 0.
 
@@ -146,9 +146,9 @@ FUNCTION recursivePartSort {
 	IF currentStage > 50 {
 		RETURN.
 	}
-	
+
 	IF NOT isDecoupler(examinePart) decouplerList[decouplerListIndex]:ADD(examinePart).
-	
+
 	FOR eachKid IN examinePart:CHILDREN {
 		IF NOT isDecoupler(eachKid) recursivePartSort(eachKid, decouplerListIndex, currentStage + 1).
 	}
@@ -184,66 +184,66 @@ FUNCTION updateShipInfo {
 	LOCAL engineListOld IS LIST().
 	LOCAL engineStat IS LIST().
 	LOCAL ignitedEngines IS LIST().
-	
+
 	listParts().
 	shipInfo:ADD("NumberOfStages", 0).
 	shipInfo:ADD("CurrentStage", LEXICON()).
-	
+
 	// for each of the stages, determine the parts, engines and sensors
 	FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
 		LOCAL stageInfo IS LEXICON().
 		stageInfo:ADD("Parts",partListTree["Stage " + stageNumber]).
-		
+
 		// Add a list of all of the engines in this stage.
 		stageInfo:ADD("Engines",LIST()).
 		FOR eachPart IN stageInfo["Parts"] { IF eachPart:TYPENAME = "Engine" stageInfo["Engines"]:ADD(eachPart).}
-		
+
 		// If there are no engines in this stage, use the engines from the previous stage
 		IF (stageInfo["Engines"]:LENGTH = 0) SET stageInfo["Engines"] TO engineListOld.
 		// If there are engines in this stage, replace the list of engines from the previous stage
 		ELSE {SET engineListOld TO stageInfo["Engines"].}
-		
+
 		// Add the Fuels list to the lexicon, but it will be filled out once the engine list has been finalized
 		stageInfo:ADD("Fuels", LIST()).
-		
+
 		stageInfo:ADD("Sensors",LIST()).
 		FOR eachPart IN stageInfo["Parts"] { IF eachPart:TYPENAME = "sensor" stageInfo["Sensors"]:ADD(eachPart).}
-		
+
 		// Add the engine-related values to the lexicon, but they will be added once the engine list has been finalized
 		stageInfo:ADD("Isp", 0).
 		stageInfo:ADD("Thrust", 0).
 		stageInfo:ADD("mDot", 0).
-		
+
 		// Add the resources from this stage
 		stageInfo:ADD("Resources", resourcesInParts(stageInfo["Parts"])).
-		
+
 		// add the various resource-related values to the lexicon, but they will be filled out by updateShipInfoCurrent
 		stageInfo:ADD("FuelMass", 0).
 		stageInfo:ADD("ResourceMass", 0).
-		
+
 		LOCAL dryMasses IS 0.
 		FOR eachPart IN stageInfo["Parts"] {SET dryMasses TO dryMasses + eachPart:DRYMASS * 1000.}
 		stageInfo:ADD("DryMass", dryMasses).
-		
+
 		stageInfo:ADD("PreviousMass",previousMass).
 		FOR eachPart IN stageInfo["Parts"] {SET previousMass TO previousMass + eachPart:MASS * 1000.}
-		
+
 		stageInfo:ADD("CurrentMass",previousMass).
-		
+
 		// Will be updated by updateShipInfoCurrent
 		stageInfo:ADD("DeltaV",0).
 		stageInfo:ADD("DeltaVPrev", 0).
-		
+
 		shipInfo:ADD(("Stage " + stageNumber), stageInfo).
 		SET shipInfo["NumberOfStages"] TO shipInfo["NumberOfStages"] + 1.
 	}
-	
+
 	LIST ENGINES IN engineListOld.
 	FOR eachEngine IN engineListOld {IF eachEngine:STAGE > highestStageEngine SET highestStageEngine TO eachEngine:STAGE.}
 	FOR eachEngine IN engineListOld {IF (eachEngine:IGNITION OR eachEngine:STAGE = highestStageEngine) ignitedEngines:ADD(eachEngine).}
 	// clear out the highest stage's Engines list, then add all of the active engines and engines with the highest stage number
 	SET shipInfo["Stage " + (shipInfo["NumberOfStages"] - 1)]["Engines"] TO ignitedEngines.
-	
+
 	SET shipInfo["CurrentStage"] TO shipInfo["Stage " + (shipInfo["NumberOfStages"] - 1)].
 
 	// for each of the stages, determine the parts, engines and sensors
@@ -348,7 +348,7 @@ FUNCTION logShipInfo {
 	LOG "" TO fileName.
 	LOG "Stage,Engine Count,Engine Type,Fuel Mass (kg),Isp (s),delta V (m/s)" TO fileName.
 	LOG deltaVLogList TO fileName.
-	
+
 	LOCAL density IS 0.
 	LOCAL indexRes IS 0.
 	LOG "Name,Amount (L),Capacity (L),Mass (kg),Density (kg/L)" TO fileName.
@@ -358,7 +358,7 @@ FUNCTION logShipInfo {
 		SET density TO eachResource:PARTS[0]:RESOURCES[indexRes]:DENSITY * 1000.
 		LOG eachResource:NAME + "," + eachResource:AMOUNT + "," + eachResource:CAPACITY + "," + eachResource:AMOUNT * density + "," + density TO fileName.
 	}
-	
+
 	CLEARSCREEN.
 	PRINT "Stage  Engines  Fuel Mass (kg)  Isp (s)  Delta V (m/s)".
 	PRINT deltaVDisplayList.
@@ -372,7 +372,7 @@ FUNCTION createResourcesHeader {
 	LOCAL fileName IS "0:" + SHIP:NAME + " Resources.csv".
 	LOCAL resourceList IS LIST().
 	SET resourceList TO SHIP:RESOURCES.
-	
+
 	LOCAL header IS "Mission Time,Timewarp Rate".
 	FOR eachResource IN resourceList {
 		IF loggedResources:CONTAINS(eachResource:NAME) SET header TO header + "," + eachResource:NAME + " Volume (L)," + eachResource:NAME + " Mass (kg)".
@@ -396,7 +396,7 @@ FUNCTION updateShipInfoResources {
 		stageInfo:REMOVE("CurrentMass").
 		stageInfo:REMOVE("DeltaV").
 		stageInfo:ADD("Resources", resourcesInParts(stageInfo["Parts"])).
-		
+
 		IF stageInfo["Resources"]:LENGTH = 0 {stageInfo["Resources"]:ADD("Placeholder",0).}
 
 		LOCAL fuelMass IS 0.
@@ -421,18 +421,18 @@ FUNCTION updateShipInfoResources {
 		LOCAL resourceMass IS 0.
 		FOR keys IN stageInfo["Resources"]:KEYS {SET resourceMass TO resourceMass + stageInfo["Resources"][keys].}
 		stageInfo:ADD("ResourceMass", resourceMass).
-		
+
 		stageInfo:ADD("PreviousMass", previousMass).
 		FOR p IN stageInfo["Parts"] {SET previousMass TO previousMass + p:MASS * 1000.}
 		stageInfo:ADD("CurrentMass", previousMass).
-		
+
 		LOCAL deltaV TO stageInfo["Isp"] * g_0 * LN(stageInfo["CurrentMass"]/(stageInfo["CurrentMass"] - stageInfo["FuelMass"])).
 		stageInfo:ADD("DeltaV", deltaV).
 		SET shipInfo["Stage " + stageNumber] TO stageInfo.
 	}
 	IF createLogFile {
 		LOCAL fileName IS "0:" + SHIP:NAME + " Resources.csv".
-		
+
 		LOCAL message IS TIME:SECONDS:TOSTRING() + "," + KUNIVERSE:TIMEWARP:RATE.
 		FOR eachResource IN SHIP:RESOURCES {
 			IF loggedResources:CONTAINS(eachResource:NAME) SET message TO message + "," + eachResource:AMOUNT + "," + eachResource:AMOUNT * eachResource:DENSITY*1000.
@@ -506,7 +506,7 @@ FUNCTION updateShipInfoCurrent {
 
 	current:ADD("TWR", current["Variable"]["TWR"] + current["Constant"]["TWR"]).
 	maximum:ADD("TWR", maximum["Variable"]["TWR"] + maximum["Constant"]["TWR"]).
-	
+
 	updateShipInfoResources(FALSE).
 	// determine the total mass of the resources used by the engines.
 	LOCAL fuelMass IS shipInfo["CurrentStage"]["FuelMass"].
@@ -535,9 +535,9 @@ FUNCTION updateShipInfoCurrent {
 		// IF shipInfo["Maximum"]["Variable"]["Thrust"] <> 0 SET thrustPCTThrust TO shipInfo["Current"]["Variable"]["Thrust"] / shipInfo["Maximum"]["Variable"]["Thrust"].
 		// SET thrustPCTThrust TO MIN(thrustPCTThrust, 0.999).
 		// SET thrustPCTThrust TO MAX(thrustPCTThrust, 0).
-		
+
 		// LOCAL message IS MISSIONTIME + "," + THROTTLE:TOSTRING.
-		
+
 		// FOR eachEngine IN shipInfo["CurrentStage"]["Engines"] {
 			// IF eachEngine:IGNITION AND NOT eachEngine:THROTTLELOCK AND eachEngine:GETMODULE("ModuleEnginesRF"):GETFIELD("current throttle") <> 100 {
 				// SET thrustPCTEnginesTop TO eachEngine:GETMODULE("ModuleEnginesRF"):GETFIELD("current throttle") * eachEngine:GETMODULE("ModuleEnginesRF"):GETFIELD("thrust").
@@ -550,7 +550,7 @@ FUNCTION updateShipInfoCurrent {
 		// ELSE SET thrustPCTEngines TO 0.
 		// SET thrustPCTEngines TO MIN(thrustPCTEngines, 0.999).
 		// SET thrustPCTEngines TO MAX(thrustPCTEngines, 0).
-		
+
 		// SET minThrottle TO (THROTTLE-thrustPCTEngines)/(1-thrustPCTEngines).
 	// }
 
@@ -604,6 +604,10 @@ FUNCTION getCurrentFuels {
 				IF NOT listOfFuels:CONTAINS("Kerosene") listOfFuels:ADD("Kerosene").
 				IF NOT listOfFuels:CONTAINS("LqdOxygen") listOfFuels:ADD("LqdOxygen").
 			}
+			IF eachEngine:NAME = "liquidEngineMiniRescale" {
+				IF NOT listOfFuels:CONTAINS("MMH") listOfFuels:ADD("MMH").
+				IF NOT listOfFuels:CONTAINS("NTO") listOfFuels:ADD("NTO").
+			}
 			IF NOT listOfFuels:CONTAINS("SolidFuel") AND eachEngine:TITLE:CONTAINS("Solid") {
 				listOfFuels:ADD("SolidFuel").
 			}
@@ -618,10 +622,10 @@ FUNCTION gravityTurn {
 	PARAMETER INITIAL_ANGLE TO 80.
 	PARAMETER END_ANGLE TO 5.
 	PARAMETER EXP TO 0.740740741.
-	
+
 	IF ALTITUDE < START_HEIGHT RETURN INITIAL_ANGLE.
 	IF ALTITUDE > END_HEIGHT RETURN END_ANGLE.
-	
+
 	RETURN ( 1 - ( ( ALTITUDE - START_HEIGHT) / ( END_HEIGHT - START_HEIGHT) ) ^ EXP ) * ( INITIAL_ANGLE - END_ANGLE ) + END_ANGLE.
 }
 
@@ -640,14 +644,14 @@ FUNCTION gravityTurn {
 FUNCTION heightPrediction {
 	PARAMETER lookAheadTime.
 	PARAMETER createLogFile IS FALSE.
-	
+
 	IF lookAheadTime < 1 {
 		LOCAL returnMe IS LEXICON("min",SHIP:GEOPOSITION:TERRAINHEIGHT).
 		returnMe:ADD("max",SHIP:GEOPOSITION:TERRAINHEIGHT).
 		returnMe:Add("avg",SHIP:GEOPOSITION:TERRAINHEIGHT).
 		RETURN returnMe.
 	}
-	
+
 	LOCAL startTime IS TIME:SECONDS.
 	LOCAL heightList IS LIST().
 
@@ -742,7 +746,7 @@ FUNCTION listFiles {
 FUNCTION waitUntilFinishedRotating {
 	// If the steering manager is not enabled, return immediately.
 	IF NOT STEERINGMANAGER:ENABLED RETURN.
-	
+
 	LOCAL previousRoll IS roll_for(SHIP).
 	LOCAL previousTime IS 0.
 	LOCAL rollRate IS 0.
@@ -783,7 +787,7 @@ FUNCTION findMinSlope {
 	LOCAL dataOriginal IS LIST().
 	LOCAL north IS SHIP:NORTH:VECTOR.
 	LOCAL east IS vcrs(centerPosition - SHIP:BODY:POSITION, north):NORMALIZED.
-	
+
 	LOCAL index IS 0.
 	FOR northOffset IN RANGE(-radius, radius + 1, delta) {
 		dataOriginal:ADD(LIST()).
@@ -813,7 +817,7 @@ FUNCTION findMinSlope {
 	LOCAL metersNorth IS "".
 	LOCAL metersEast IS "".
 	LOCAL currentMin IS 10000.
-	
+
 	LOCAL derivative IS 0.
 	FOR i IN RANGE(0, dataOriginal:LENGTH - 2) {
 		FOR j IN RANGE(0, dataOriginal:LENGTH - 2) {
@@ -842,7 +846,7 @@ FUNCTION findMinSlope {
 FUNCTION engineStats {
 	PARAMETER engineList.
 	IF (engineList:LENGTH = 0) RETURN LIST(0, 0, 0, 0, 0).
-	
+
 	LOCAL mDot_cur IS 0.												// Rate of change of mass for the primary engine, given current throttle (kg/s)
 	LOCAL mDot_max IS 0.												// Rate of change of mass for the primary engine, with throttle at 100% (kg/s)
 	LOCAL F_cur IS 0.													// Current thrust (N)
@@ -850,7 +854,7 @@ FUNCTION engineStats {
 	LOCAL pressure IS 0.												// Ambient atmospheric pressure (atmospheres)
 	LOCAL effectiveThrottle IS 0.
 	IF SHIP:BODY:ATM:EXISTS {SET pressure TO SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE).}
-	
+
 	IF isStockRockets() {
 		FOR eng IN engineList {
 			// If an engine cannot throttle, treat it as if the throttle is 1.0
@@ -881,9 +885,9 @@ FUNCTION engineStats {
 			}
 		}
 	}
-	
+
 	IF mDot_max = 0 RETURN LIST(0, F_cur, mDot_cur, F_max, mDot_max).
-	
+
 	RETURN LIST(F_max / (g_0 * mDot_max), F_cur, mDot_cur, F_max, mDot_max).
 }
 
@@ -901,7 +905,7 @@ FUNCTION engineStats {
 FUNCTION engineStatsRCS {
 	PARAMETER engineList.
 	IF (engineList:LENGTH = 0) RETURN LIST(0, 0, 0, 0, 0).
-	
+
 	LOCAL mDot_cur IS 0.												// Rate of change of mass for the primary engine, given current throttle (kg/s)
 	LOCAL mDot_max IS 0.												// Rate of change of mass for the primary engine, with throttle at 100% (kg/s)
 	LOCAL F_cur IS 0.													// Partial thrust (N)
@@ -911,7 +915,7 @@ FUNCTION engineStatsRCS {
 	LOCAL engISP IS 0.
 	LOCAL effectiveThrottle IS 0.
 	IF SHIP:BODY:ATM:EXISTS {SET pressure TO SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE).}
-	
+
 	IF isStockRockets() {
 		FOR eng IN engineList {
 			// The throttle equivalent is the magnitude of the CONTROL:TRANSLATION vector.
@@ -937,9 +941,9 @@ FUNCTION engineStatsRCS {
 			SET F_max TO F_max + engThrust * 1000.
 		}
 	}
-	
+
 	IF mDot_max = 0 RETURN LIST(0, F_cur, mDot_cur, F_max, mDot_max).
-	
+
 	RETURN LIST(F_max / (g_0 * mDot_max), F_cur, mDot_cur, F_max, mDot_max).
 }
 
@@ -960,7 +964,7 @@ function yaw_vector {
 
   local result is arctan2(trig_y, trig_x).
 
-  if result < 0 { 
+  if result < 0 {
     return 360 + result.
   } else {
     return result.
@@ -1003,7 +1007,7 @@ function yaw_for {
 
   local result is arctan2(trig_y, trig_x).
 
-  if result < 0 { 
+  if result < 0 {
     return 360 + result.
   } else {
     return result.
@@ -1030,7 +1034,7 @@ function pitch_for {
 //			roll of vector (scalar, degrees off of horizontal)
 function roll_for {
   parameter ves.
-  
+
   if vang(ship:facing:vector,ship:up:vector) < 0.2 { //this is the dead zone for roll when the ship is vertical
     return 0.
   } else {
@@ -1044,7 +1048,7 @@ function roll_for {
     } else {
       return raw - 90.
     }
-  } 
+  }
 }.
 
 // Create Node
@@ -1289,7 +1293,7 @@ FUNCTION engineInfo {
 			}
 		}
 	}
-	
+
 	LOCAL message IS "".
 	LOCAL count IS 0.
 	LOCAL maxLength IS 0.
@@ -1400,7 +1404,7 @@ FUNCTION stageFunction {
 FUNCTION resourcesInParts {
 	PARAMETER partList.
 	LOCAL resourceList IS LEXICON().
-	
+
 	// for each part in the specified stage
 	FOR eachPart IN partList {
 		// for each resource in the part
@@ -1427,12 +1431,12 @@ FUNCTION isLFFullThrust {
 	// If the currently active engines are at greater than 85% of available
 	// thrust, this function returns TRUE, otherwise FALSE.
 	PARAMETER unclampPercent IS 0.85.
-	
+
 	LOCAL totalThrust IS 0.0.
 	LOCAL currentThrust IS 0.0.
 	LOCAL myVariable TO LIST().
 	LIST ENGINES IN myVariable.
-	
+
 	// for each ignited engine, add up the current thrust and the target thrust of that engine.
 	FOR eng IN myVariable {
 		IF (eng:IGNITION) {
@@ -1440,9 +1444,9 @@ FUNCTION isLFFullThrust {
 			SET totalThrust TO totalThrust + eng:AVAILABLETHRUST.
 		}
 	}
-	
+
 	IF totalThrust = 0 SET totalThrust TO 1.
-	
+
 	RETURN (currentThrust / totalThrust) > unclampPercent.
 }
 
@@ -1452,17 +1456,17 @@ FUNCTION timeToString
 {
 	PARAMETER T IS 0.
 	PARAMETER digits IS 2.
-	
+
 	LOCAL hoursPerDay IS KUNIVERSE:HOURSPERDAY.
-	
+
 	IF T > hoursPerDay*60*60 {
 		RETURN ROUND( FLOOR ( T / (hoursPerDay*60*60) ) ) + "d " + ROUND( FLOOR ( MOD ( T, hoursPerDay*60*60) / (60*60) ) ) + "h " + ROUND( FLOOR ( MOD ( T, 60*60) / 60 ) ) + "m " + ROUND( MOD( T, 60), digits) + "s".
 	}.
-	
+
 	IF T > 60*60 {
 		RETURN ROUND( FLOOR ( T / (60*60) ) ) + "h " + ROUND( FLOOR ( MOD ( T, 60*60) / 60 ) ) + "m " + ROUND( MOD( T, 60), digits) + "s".
 	}.
-	
+
 	IF T > 60 {
 		RETURN ROUND( FLOOR ( T / 60 ) ) + "m " + ROUND( MOD( T, 60), digits) + "s".
 	}.
@@ -1475,14 +1479,14 @@ FUNCTION distanceToString
 {
 	PARAMETER dist IS 0.
 	PARAMETER digits IS 0.
-	
+
 	LOCAL isNegative IS FALSE.
 	LOCAL message IS "".
 	IF dist < 0 {
 		SET isNegative TO TRUE.
 		SET dist TO ABS(dist).
 	}
-	
+
 	IF dist < 1			    SET message TO ROUND(dist / 0.001        , digits) + " mm".
 	IF dist >= 1            SET message TO ROUND(dist / 1            , digits) + " m".
 	IF dist > 1000          SET message TO ROUND(dist / 1000         , digits) + " km".
@@ -1536,7 +1540,7 @@ FUNCTION desiredAzimuth
 {
 	PARAMETER targetAltitude.
 	PARAMETER targetInclination.
-	
+
 	LOCAL targetFinalVelocity IS SQRT(SHIP:BODY:MU / (SHIP:BODY:RADIUS + targetAltitude)).
 
 	// this is cheating a little bit - I just take the current orbital speed instead of calculating it based on longitude
@@ -1598,7 +1602,7 @@ FUNCTION startLinearTest
 	PARAMETER var2Delta IS 1, var2Start IS 0, var2Count IS 5.
 	PARAMETER repeats IS 2.
 	PARAMETER filename IS "0:/logs/Testing " + SHIPNAME + ".csv".
-	
+
 	LOCAL testValue IS 0.
 
 	IF NOT EXISTS(filename) {
@@ -1614,7 +1618,7 @@ FUNCTION startLinearTest
 			SET testValue TO (lines[lines:LENGTH - 3]:SPLIT(","))[0]:TONUMBER(-1) + 1.
 		}
 	}
-	
+
 	LOCAL results IS LIST().
     results:ADD(testValue).       																	//[0] testValue for endLinearTest
     results:ADD(var1Count * var2Count * repeats). 		     										//[1] final value to end testing at
@@ -1701,7 +1705,7 @@ FUNCTION endTest
 	}
 }
 
-// function that returns a value given the weights for a polynomial in the form of a + b*x + c*x^2 + d*x^3 + e*x^4 + ... 
+// function that returns a value given the weights for a polynomial in the form of a + b*x + c*x^2 + d*x^3 + e*x^4 + ...
 // passed an input (scalar) and a list of term weights (list)
 // returns a scalar
 FUNCTION evaluatePolynomial
@@ -1721,7 +1725,7 @@ FUNCTION evaluatePolynomial
 
 // Warp To Value
 // This function timewarps until the passed delegate returns a value that is less than the targetValue.
-// This function keeps track of the rate of change of the value, and varies the warp speed to maintain 
+// This function keeps track of the rate of change of the value, and varies the warp speed to maintain
 // 10 seconds or less of realtime remaining for each warp speed.
 // Note that the delegate passed must return a scalar, but can do other things as well.
 // Passed the following:
@@ -1743,13 +1747,13 @@ FUNCTION warpToValue
 	LOCAL newTime IS TIME:SECONDS.
 	LOCAL oldValue IS newValue.
 	LOCAL oldTime IS newTime.
-	
+
 	LOCAL delegateRate IS 1.
 	LOCAL realTimeLeft IS 10.
 	LOCAL firstTime IS TRUE.
 	LOCAL secondTime IS TRUE.
 //	LOG "Time,Old Time,New Value,Old Value,Delegate Rate,Real Time Left" TO "Warping.csv".
-	
+
 	// continue waiting until there is five seconds or less of real time remaining, or the delegate is less than the target value
 	UNTIL ((realTimeLeft < 5) AND (KUNIVERSE:TIMEWARP:RATE = 1)) AND newTime > startTime + 10 {
 		// if the rate is still changing, do nothing
@@ -1759,21 +1763,21 @@ FUNCTION warpToValue
 				SET newValue TO delegate().
 				// calculate the rate in terms of units per in-game second
 				IF (oldTime <> newTime) SET delegateRate TO (newValue - oldValue)/(newTime - oldTime).
-				
+
 				// calculate how long it will take to get to the target value in real-world seconds
 				IF (delegateRate <> 0) SET realTimeLeft TO (targetValue - newValue) / (delegateRate * KUNIVERSE:TIMEWARP:RATE).
 			}
-			
+
 			// warp slower, if not at min rate
 			IF (realTimeLeft < 2) AND (KUNIVERSE:TIMEWARP:RATE <> 1) {
 				SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP - 1.
 			}
-			
+
 			// warp faster, if not at max rate - this assumes that the next rate is 10x faster than the current rate
 			IF (realTimeLeft > 15) AND (KUNIVERSE:TIMEWARP:WARP <> KUNIVERSE:TimeWarp:RAILSRATELIST:LENGTH - 1) AND (KUNIVERSE:TIMEWARP:RATE <> maxWarpRate) {
 				SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP + 1.
 			}
-			
+
 //			LOG newTime + "," + oldTime + "," + newValue + "," + oldValue + "," + delegateRate + "," + realTimeLeft TO "Warping.csv".
 
 			// update the old values used in the rate calculations
@@ -1792,14 +1796,14 @@ FUNCTION warpToValue
 		}
 		WAIT 0.
 	}
-	
+
 	SET KUNIVERSE:timewarp:warp TO 0.
 	RETURN TIME:SECONDS - startTime.
 }
 
 // Warp To Value Physics
 // This function timewarps until the passed delegate returns a value that is less than the targetValue.
-// This function goes to the maximum physics warp rate (x4) and maintains that until the delegate returns less than targetValue. 
+// This function goes to the maximum physics warp rate (x4) and maintains that until the delegate returns less than targetValue.
 // Note that the delegate passed must return a scalar, but can do other things as well.
 // Note also that this function does not affect the ship directly at all. Delegate should be set to return a physical value
 //		that will change over time. Example: delegate returns angle between FORE and direction steering is locked to.
@@ -1816,7 +1820,7 @@ FUNCTION warpToValuePhysics
 	LOCAL firstTime IS TRUE.
 	LOCAL startTime IS TIME:SECONDS.
 	LOCAL oldMode IS KUNIVERSE:TIMEWARP:MODE.
-	
+
 	// continue waiting until the delegate returns less than targetValue
 	UNTIL (delegate() < targetValue) {
 		// if the rate is still changing, do nothing
@@ -1834,7 +1838,7 @@ FUNCTION warpToValuePhysics
 //		}
 		WAIT 0.
 	}
-	
+
 	SET KUNIVERSE:TIMEWARP:MODE TO oldMode.
 	SET KUNIVERSE:TIMEWARP:warp TO 0.
 	RETURN TIME:SECONDS - startTime.
@@ -1843,27 +1847,27 @@ FUNCTION warpToValuePhysics
 // Warp To Time
 // This function timewarps until the system time is the targetTime.
 // If there is an SOI change before the target time, the function will slow down for the SOI change.
-// This function keeps track of the rate of change of the value, and varies the warp speed to maintain 
+// This function keeps track of the rate of change of the value, and varies the warp speed to maintain
 // 10 seconds or less of realtime remaining for each warp speed.
 // Passed the following:
 //			target time (scalar, seconds from universe creation)
 // Returns the following:
 //			in-game time that was warped through (scalar, seconds)
 FUNCTION warpToTime
-{                                                                                                              
+{
 	PARAMETER targetTime.
 	PARAMETER recursionLevel IS 0.
-	
+
 	IF recursionLevel > 5 RETURN 0.
 
 // 	waitUntilFinishedRotating().
 	LOCAL startTime IS TIME:SECONDS.
 	LOCAL timeLeft IS targetTime - TIME:SECONDS.
-	
+
 	SET KUNIVERSE:TIMEWARP:RATE TO 0.
 	WAIT 0.5.
 	SET KUNIVERSE:TIMEWARP:MODE TO "RAILS".
-	
+
 	// if there is an SOI change before the target time, jump to the SOI change.
 	IF (SHIP:ORBIT:HASNEXTPATCH) AND ((targetTime - TIME:SECONDS) > ETA:TRANSITION) {
 		LOCAL oldBody IS SHIP:BODY:NAME.
@@ -1879,12 +1883,12 @@ FUNCTION warpToTime
 			IF KUNIVERSE:TIMEWARP:ISSETTLED {
 				// calculate how long it will take to get to the target value in real-world seconds
 				SET timeLeft TO (targetTime - TIME:SECONDS) / (KUNIVERSE:TIMEWARP:RATE).
-				
+
 				// warp slower, if not at min rate
 				IF (timeLeft < 1) AND (KUNIVERSE:TIMEWARP:RATE <> 1) {
 					SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP - 1.
 				}
-				
+
 				// warp faster, if not at max rate - this assumes that the next rate is 10x faster than the current rate
 				IF (timeLeft > 15) AND (KUNIVERSE:TIMEWARP:WARP <> KUNIVERSE:TimeWarp:RAILSRATELIST:LENGTH - 1) {
 					SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP + 1.
@@ -1893,7 +1897,7 @@ FUNCTION warpToTime
 			WAIT 0.
 		}
 	}
-	
+
 	SET KUNIVERSE:timewarp:warp TO 0.
 	RETURN TIME:SECONDS - startTime.
 }
@@ -1945,7 +1949,7 @@ FUNCTION timeToAltitude
     LOCAL desiredTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / desiredRadius) - 1) / ecc)).
     LOCAL currentTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / currentRadius) - 1) / ecc)).
 
-    // Step 2: calculate eccentric anomaly  
+    // Step 2: calculate eccentric anomaly
     LOCAL desiredEccentricAnomaly IS ARCCOS((ecc + desiredTrueAnomalyCos) / (1 + ecc * desiredTrueAnomalyCos)).
     LOCAL currentEccentricAnomaly IS ARCCOS((ecc + currentTrueAnomalyCos) / (1 + ecc * currentTrueAnomalyCos)).
 
@@ -1967,7 +1971,7 @@ FUNCTION timeToAltitude
 
     // Step 4: calculate time difference via mean motion
     LOCAL meanMotion IS Constant:PI * 2 / SHIP:ORBIT:PERIOD. // in deg/s
-	
+
     RETURN (desiredMeanAnomaly - currentMeanAnomaly) / meanMotion.
 }
 
@@ -2044,7 +2048,7 @@ FUNCTION closestApproach {
 	PARAMETER initialStepSize IS 10.
 	IF (initialGuess < TIME:SECONDS) SET initialGuess TO TIME:SECONDS.
 	IF NOT HASTARGET RETURN LIST(0, 0).
-	
+
 	LOCAL stepSize is initialStepSize.
 
 	FUNCTION distanceAtTime {
@@ -2053,7 +2057,7 @@ FUNCTION closestApproach {
 	}
 
 	LOCAL iteration IS 0.
-	
+
 //	LOG "Approach Time,Step Size,Distance At Approach,Distance At Approach + Step,Distance At Approach - Step,Iteration" TO "0:HillClimb.csv".
 	// Do the hill climbing
 	LOCAL approachTime is initialGuess.

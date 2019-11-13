@@ -7,7 +7,7 @@ LOCAL lastStockRockets IS FALSE.
 
 // Is Stock Universe
 // This function returns TRUE if the ship is operating in the stock KSP universe.
-// This is determined by the second body in the list of bodies: if it is Kerbin, this function return TRUE.
+// This is determined by reading the .settings file
 // Passed the following:
 //			no arguments
 // Returns the following:
@@ -33,6 +33,14 @@ FUNCTION isStockWorld {
 	}
 }
 
+// Is Stock Rockets
+// This function returns TRUE if the ship is composed of stock KSP parts only.
+// If this isn't true, code can take ullage, slower turn times, restricted power, etc. into account.
+// This is determined by reading the .settings file
+// Passed the following:
+//			no arguments
+// Returns the following:
+//			whether or not the ship uses only stock parts (bool)
 FUNCTION isStockRockets {
 	IF stockRocketsDetermined RETURN lastStockRockets.
 	LOCAL fileList IS LIST().
@@ -53,6 +61,12 @@ FUNCTION isStockRockets {
 	}
 }
 
+// Connection to KSC
+// This function returns TRUE if the archive is accessible.
+// Passed the following:
+//			no arguments
+// Returns the following:
+//			whether or not the ship uses only stock parts (bool)
 FUNCTION connectionToKSC {
 	RETURN HOMECONNECTION:ISCONNECTED.
 }
@@ -96,11 +110,11 @@ FUNCTION copyToLocal {
 		FOR f IN fileList:KEYS {
 			IF DELETEPATH(f).
 		}
-		
+
 		COMPILE "0:boot/boot.ks" TO "1:boot.ksm".
 //		SET CORE:BOOTFILENAME    TO "1:boot.ksm".
 		PRINT "Boot file name set to " + CORE:BOOTFILENAME.
-		
+
 		PRINT "Now compiling all scripts.".
 		CD("0:").
 		LIST FILES IN fileList.
