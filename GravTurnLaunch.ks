@@ -38,7 +38,7 @@ LOCAL mode IS 0.
 // Mode 6 - Maintain vertical speed of 0 m/s
 
 LOCAL yawValue IS 0.						// yaw adjustment factor for inclination tuning
-LOCAL PITCH_PID IS PIDLOOP(0.1, 0.25, 0.1).	// PID loop to control pitch
+LOCAL PITCH_PID IS PIDLOOP(0.1, 0.25, 0.5).	// PID loop to control pitch
 LOCAL YAW_PID IS PIDLOOP(1, 0.1, 50).		// PID loop to control yaw
 LOCAL gravTurnStart TO 1000.				// The altitude of the start of the gravity turn
 LOCAL gravTurnExponent TO 0.740740741.		// The exponent used in the calculation of the gravity turn
@@ -69,7 +69,7 @@ LOCAL modeStartYaw TO launchAzimuth.
 // whenever the mode changes, initialize things for the new mode.
 ON mode {
 	CLEARSCREEN.
-	
+
 	PRINT "Mode: " + mode AT (40, 0).
 
 	// Prelaunch - stage the LF engines
@@ -106,7 +106,7 @@ ON mode {
 		PRINT "Start at " + ROUND(gravTurnStart) + "   " AT (40, 2).
 		PRINT "End at " + ROUND(gravTurnEnd, 0) + " " AT (40, 3).
 	}
-	
+
 	// Horizontal flight
 	IF mode = 5 {
 		PRINT "Horizontal   " AT (40, 1).
@@ -134,7 +134,7 @@ UNTIL mode > 6 {
 		IF (delayForEngines) SET mode TO 1.
 		ELSE SET mode TO 2.
 	}
-	
+
 	// Engine ramp up
 	IF mode = 1 {
 		// if the active engines have reached full thrust, stage and switch modes
@@ -144,7 +144,7 @@ UNTIL mode > 6 {
 			stageFunction().
 		}
 	}
-	
+
 	// Vertical climb
 	IF mode = 2 {
 		SET mySteer TO HEADING(0, 90).
@@ -168,7 +168,7 @@ UNTIL mode > 6 {
 			}
 		}
 	}
-	
+
 	// Roll, continue climb
 	IF mode = 3 {
 		SET mySteer TO HEADING(launchAzimuth,90).
@@ -182,25 +182,25 @@ UNTIL mode > 6 {
 			SET YAW_PID:MINOUTPUT TO -YAW_PID:MAXOUTPUT.
 			SET YAW_PID:SETPOINT TO finalInclination.
 //			IF connectionToKSC() LOG "Mission Time,Mode,Surface Velocity Pitch,Inclination,Latitude,yawValue,Mode Start Yaw,Ship Yaw,YAW_PID:OUTPUT,YAW_PID:SETPOINT" TO "0:YawPID.csv".
-			
+
 			// reset the integral on the Yaw PID when the ship crosses the equator
 			WHEN (ABS(SHIP:GEOPOSITION:LAT) < 0.1) THEN {
 				SET modeStartYaw TO launchAzimuth.
 				YAW_PID:RESET().
 			}
-			
+
 			// When the atmosphere isn't really a concern anymore, let the PID have a little more freedom
 			WHEN ((SHIP:BODY:ATM:EXISTS) AND (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) < 0.25)) THEN {
 				PRINT "Loosening PID!".
 				SET PITCH_PID:MAXOUTPUT TO 15.
 				SET PITCH_PID:MINOUTPUT TO -15.
-				
+
 //				FOR f IN SHIP:MODULESNAMED("ProceduralFairingDecoupler") { f:DOEVENT("jettison fairing"). }
 			}
 			SET mode TO 4.
 		}
 	}
-	
+
 	// there are several things that apply to all of the "in flight" modes
 	IF (mode >= 4) {
 		updateShipInfoCurrent(FALSE).
@@ -216,7 +216,7 @@ UNTIL mode > 6 {
 			PRINT "Current Accel " + ROUND(shipInfo["Current"]["Accel"]/body_g, 4) + " g's      " AT (0, 13).
 			PRINT "Maximum Accel " + ROUND(shipInfo["Maximum"]["Accel"]/body_g, 4) + " g's      " AT (0, 14).
 		}
-		
+
 		// attempt at calculating the throttle to ensure maxGs acceleration at most
 		// note that maxGs is relative to sea level on THIS BODY, not Earth/Kerbin.
 		// desired throttle = (maxGs + body_g - accel from SRBs)/available accel from variable engines
@@ -236,7 +236,7 @@ UNTIL mode > 6 {
 			IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
 			ELSE stageFunction().
 		}
-		
+
 		// this should drop any boosters
 		LOCAL myVariable TO LIST().
 		LIST ENGINES IN myVariable.
@@ -248,14 +248,14 @@ UNTIL mode > 6 {
 				BREAK.
 			}
 		}
-		
+
 		// only call the PID if the ship is through a large portion of the gravity turn and the final inclination is not zero
 		IF (pitch_vector(SHIP:VELOCITY:SURFACE) < 45) AND (finalInclination = 0) {
 			IF (SHIP:GEOPOSITION:LAT > 0.0) SET yawValue TO YAW_PID:UPDATE( TIME:SECONDS, SHIP:ORBIT:INCLINATION).
 			IF (SHIP:GEOPOSITION:LAT < 0.0) SET yawValue TO -YAW_PID:UPDATE( TIME:SECONDS, SHIP:ORBIT:INCLINATION).
 		}
 		IF (finalInclination = 0) SET yawValue TO 0.
-		
+
 //		IF connectionToKSC() LOG TIME:SECONDS + "," + mode + "," + pitch_vector(SHIP:VELOCITY:SURFACE) + "," + SHIP:ORBIT:INCLINATION + "," + SHIP:GEOPOSITION:LAT + "," + yawValue + "," + modeStartYaw + "," + yaw_for(SHIP) + "," + YAW_PID:OUTPUT + "," + YAW_PID:SETPOINT TO "0:YawPID.csv".
 
 		IF (shipInfo["CurrentStage"]["ResourceMass"] < 1.0 ) {
@@ -271,7 +271,7 @@ UNTIL mode > 6 {
 //			logPID(PITCH_PID, "0:PitchPID.csv").
 			IF pitchValue < 0 SET pitchValue TO 0.
 			IF pitchValue > 90 SET pitchValue TO 90.
-			
+
 			// Start off the gravity turn going the direction given, then follow the current heading
 			SET mySteer TO HEADING (modeStartYaw + yawValue, pitchValue).
 			// when the gravity turn is done, start burning strictly horizontal and let the vertical speed drop
@@ -279,7 +279,7 @@ UNTIL mode > 6 {
 				SET mode TO 5.
 			}
 		}
-		
+
 		// Horizontal flight
 		IF mode = 5 {
 			// This needs to be updated every scan to keep the pitch at 0 as the craft moves around the planet
@@ -293,7 +293,7 @@ UNTIL mode > 6 {
 				SET mode to 6.
 			}
 		}
-		
+
 		// Maintain vertical speed
 		IF mode = 6 {
 			IF SHIP:BODY:ATM:EXISTS {
