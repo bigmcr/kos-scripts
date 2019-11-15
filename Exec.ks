@@ -62,6 +62,8 @@ IF errorCode = "None" {
 	}
 	PRINT "There are a total of " + usedStages:LENGTH + " stages that can be used".
 
+	LOCAL startTime IS MISSIONTIME.
+	LOCAL startStage IS STAGE:NUMBER.
 	LOCAL Isp IS 0.
 	LOCAL T IS 0.
 	LOCAL m_dry IS 0.
@@ -154,8 +156,20 @@ IF errorCode = "None" {
 			SET logMe[11] TO logMe[11] + dV_before_t_0_stg[stageNumber] + ",".
 			SET logMe[12] TO logMe[12] + t_burn_req_stg[stageNumber] + ",".
 		}
+		SET logMe[1] TO logMe[1] + "s,".
+		SET logMe[2] TO logMe[2] + "N,".
+		SET logMe[3] TO logMe[3] + "kg,".
+		SET logMe[4] TO logMe[4] + "kg,".
+		SET logMe[5] TO logMe[5] + "m/s,".
+		SET logMe[6] TO logMe[6] + "m/s,".
+		SET logMe[7] TO logMe[7] + "kg/s,".
+		SET logMe[8] TO logMe[8] + "m/s,".
+		SET logMe[9] TO logMe[9] + "m/s,".
+//
+		SET logMe[11] TO logMe[11] + "m/s,".
+		SET logMe[12] TO logMe[12] + "m/s,".
 		FOR message IN logMe {
-			IF connectionToKSC() LOG message TO "0:Maneuver.csv".
+			LOG message TO "0:Maneuver.csv".
 		}
 	}
 
@@ -286,8 +300,21 @@ IF errorCode = "None" {
 		WAIT 0.
 	}
 	SET myThrottle TO 0.
-	WAIT 0.
 	UNLOCK mySteer.
+	WAIT 0.
+
+	updateShipInfo().
+	IF connectionToKSC() {
+		LOCAL logMe IS LIST().
+		logMe:ADD("actual burn time," + (MISSIONTIME - startTime) + ",s").
+		logMe:ADD("stages used," + (STAGE:NUMBER - startStage + 1)).
+		logMe:ADD("dV left in burn," + ND:DELTAV:MAG + ",m/s").
+		logMe:ADD("dV left in ship," + ND:DELTAV:MAG + ",m/s").
+		logMe:ADD("final mass," + SHIP:MASS * 1000 + ",kg").
+		FOR message IN logMe {
+			LOG message TO "0:Maneuver.csv".
+		}
+	}
 
 	SET useMyThrottle TO FALSE.
 	SET useMySteer TO FALSE.
