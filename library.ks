@@ -1458,19 +1458,18 @@ FUNCTION timeToString
 	PARAMETER digits IS 2.
 
 	LOCAL hoursPerDay IS KUNIVERSE:HOURSPERDAY.
+	LOCAL days IS FLOOR ( T / (hoursPerDay*60*60) ).
+	LOCAL hours IS FLOOR ( MOD ( T, hoursPerDay*60*60) / (60*60) ).
+	LOCAL minutes IS FLOOR ( MOD ( T, 60*60) / 60 ).
+	LOCAL seconds IS ROUND( MOD( T, 60), digits).
+	LOCAL message IS "".
 
-	IF T > hoursPerDay*60*60 {
-		RETURN ROUND( FLOOR ( T / (hoursPerDay*60*60) ) ) + "d " + ROUND( FLOOR ( MOD ( T, hoursPerDay*60*60) / (60*60) ) ) + "h " + ROUND( FLOOR ( MOD ( T, 60*60) / 60 ) ) + "m " + ROUND( MOD( T, 60), digits) + "s".
-	}.
+	IF days <> 0 SET message TO message + days + "d ".
+	IF hours <> 0 SET message TO message + hours + "h ".
+	IF minutes <> 0 SET message TO message + minutes + "m ".
+	IF seconds <> 0 SET message TO message + seconds + "s ".
 
-	IF T > 60*60 {
-		RETURN ROUND( FLOOR ( T / (60*60) ) ) + "h " + ROUND( FLOOR ( MOD ( T, 60*60) / 60 ) ) + "m " + ROUND( MOD( T, 60), digits) + "s".
-	}.
-
-	IF T > 60 {
-		RETURN ROUND( FLOOR ( T / 60 ) ) + "m " + ROUND( MOD( T, 60), digits) + "s".
-	}.
-	RETURN ROUND(T , digits) + " s".
+	RETURN message.
 }
 
 // given a number, returns a string of the number broken down to Tm, Gm, Mm, km, meters or centimeters.
