@@ -678,44 +678,42 @@ FUNCTION heightPrediction {
 	RETURN LEXICON("min",minHeight,"max",averageHeight,"avg",averageHeight).
 }
 
-// Find the slope of the ground the given number of meters north and east of the ship.
-FUNCTION findGroundSlopeAngle {
-	PARAMETER distNorth IS 0.5.
-	PARAMETER distEast  IS 0.5.
-	IF distNorth = 0 SET distNorth TO 0.5.
-	IF distEast  = 0 SET distEast  TO 0.5.
-	LOCAL heightNorth IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distNorth*SHIP:NORTH:VECTOR):TERRAINHEIGHT - SHIP:GEOPOSITION:TERRAINHEIGHT.
-	LOCAL heightEast  IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distEast *   east_for(SHIP)):TERRAINHEIGHT - SHIP:GEOPOSITION:TERRAINHEIGHT.
-	LOCAL NSVector IS distNorth*SHIP:NORTH:VECTOR + heightNorth * SHIP:UP:VECTOR.
-	LOCAL EWVector IS distEast *east_for(SHIP)    + heightEast  * SHIP:UP:VECTOR.
-	LOCAL angleVector IS VCRS(NSVector, EWVector).
-	RETURN VANG( angleVector, SHIP:UP:VECTOR).
+// Return the vector pointing in the direction of downslope
+// Returns a Lexicon of several items related to the geometry of the ground below the ship.
+//     LEXICON[heading] - scalar - compass heading of downhill, in degrees
+//     LEXICON[slope] - scalar - slope of the ground, in degrees
+//     LEXICON[vector] - Vector - direction of downhill in a vector with length of 1 meter.
+FUNCTION findDownSlopeInfo {
+	PARAMETER northOffset IS 0.0.
+	PARAMETER eastOffset IS 0.0.
+	LOCAL distance IS 5.0.
+	LOCAL terrainHeight IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distance*SHIP:NORTH:VECTOR + distance*east_for(SHIP)):TERRAINHEIGHT.
+	LOCAL heightNorth IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + northOffset)*SHIP:NORTH:VECTOR):TERRAINHEIGHT - terrainHeight.
+	LOCAL heightEast  IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + eastOffset )*   east_for(SHIP)):TERRAINHEIGHT - terrainHeight.
+	LOCAL returnMe IS LEXICON().
+	returnMe:ADD("heading", ARCTAN2(heightNorth, heightEast) + 90).
+	returnMe:ADD("slope", ARCTAN2(V(heightNorth, heightEast, 0):MAG, V(distance + northOffset, distance + eastOffset, 0):MAG)).
+  returnMe:ADD("vector", 10*(SHIP:NORTH:VECTOR*ANGLEAXIS(-returnMe["slope"], east_for(ship)))*ANGLEAXIS(returnMe["heading"], SHIP:UP:VECTOR)).
+	RETURN returnMe.
 }
 
-// Find the slope of the ground the given number of meters north and east of the ship.
-FUNCTION findGroundSlopeDirection {
-	PARAMETER distNorth IS 0.5.
-	PARAMETER distEast  IS 0.5.
-	IF distNorth = 0 SET distNorth TO 0.5.
-	IF distEast  = 0 SET distEast  TO 0.5.
-	LOCAL heightNorth IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distNorth*SHIP:NORTH:VECTOR):TERRAINHEIGHT - SHIP:GEOPOSITION:TERRAINHEIGHT.
-	LOCAL heightEast  IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distEast *   east_for(SHIP)):TERRAINHEIGHT - SHIP:GEOPOSITION:TERRAINHEIGHT.
-	LOCAL NSVector IS distNorth*SHIP:NORTH:VECTOR + heightNorth * SHIP:UP:VECTOR.
-	LOCAL EWVector IS distEast *east_for(SHIP)    + heightEast  * SHIP:UP:VECTOR.
-	RETURN LOOKDIRUP(VCRS(NSVector, EWVector), SHIP:NORTH:VECTOR).
-}
-
-// Find the slope of the ground the given number of meters north and east of the ship.
-FUNCTION findGroundSlopeHeading {
-	PARAMETER distNorth IS 0.5.
-	PARAMETER distEast  IS 0.5.
-	IF distNorth = 0 SET distNorth TO 0.5.
-	IF distEast  = 0 SET distEast  TO 0.5.
-	LOCAL heightNorth IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distNorth*SHIP:NORTH:VECTOR):TERRAINHEIGHT - SHIP:GEOPOSITION:TERRAINHEIGHT.
-	LOCAL heightEast  IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distEast *   east_for(SHIP)):TERRAINHEIGHT - SHIP:GEOPOSITION:TERRAINHEIGHT.
-	LOCAL NSVector IS distNorth*SHIP:NORTH:VECTOR + heightNorth * SHIP:UP:VECTOR.
-	LOCAL EWVector IS distEast *east_for(SHIP)    + heightEast  * SHIP:UP:VECTOR.
-	RETURN yaw_vector(VCRS(NSVector, EWVector)).
+// Return the vector pointing in the direction of upslope
+// Returns a Lexicon of several items related to the geometry of the ground below the ship.
+//     LEXICON[heading] - scalar - compass heading of uphill, in degrees
+//     LEXICON[slope] - scalar - slope of the ground, in degrees
+//     LEXICON[vector] - Vector - direction of uphill in a vector with length of 1 meter.
+FUNCTION findUpSlopeInfo {
+	PARAMETER northOffset IS 0.0.
+	PARAMETER eastOffset IS 0.0.
+	LOCAL distance IS 5.0.
+	LOCAL terrainHeight IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distance*SHIP:NORTH:VECTOR + distance*east_for(SHIP)):TERRAINHEIGHT.
+	LOCAL heightNorth IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + northOffset)*SHIP:NORTH:VECTOR):TERRAINHEIGHT - terrainHeight.
+	LOCAL heightEast  IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + eastOffset )*   east_for(SHIP)):TERRAINHEIGHT - terrainHeight.
+	LOCAL returnMe IS LEXICON().
+	returnMe:ADD("heading", ARCTAN2(heightNorth, heightEast) - 90).
+	returnMe:ADD("slope", ARCTAN2(V(heightNorth, heightEast, 0):MAG, V(distance + northOffset, distance + eastOffset, 0):MAG)).
+  returnMe:ADD("vector", 10*(SHIP:NORTH:VECTOR*ANGLEAXIS(-returnMe["slope"], east_for(ship)))*ANGLEAXIS(returnMe["heading"], SHIP:UP:VECTOR)).
+	RETURN returnMe.
 }
 
 FUNCTION listFiles {
@@ -999,7 +997,7 @@ function east_for {
 function yaw_for {
   parameter ves.
 
-  local pointing is ves:facing:forevector.
+  local pointing is ves:FACING:FOREVECTOR.
   local east is east_for(ves).
 
   local trig_x is vdot(ves:north:vector, pointing).
@@ -1450,12 +1448,14 @@ FUNCTION isLFFullThrust {
 	RETURN (currentThrust / totalThrust) > unclampPercent.
 }
 
-// given a number, returns a string of the number broken down to days, hours, minutes, seconds.
-// example: given 90090.124 (seconds), the function will return "1 d, 1 h, 1 m, 30.12 s"
+// given a time in seconds, returns a string of the time broken down to days, hours, minutes, seconds.
+// example: given 90090.124 (seconds) and in the realistic universe,
+//		the function will return "1 d, 1 h, 1 m, 30.12 s"
 FUNCTION timeToString
 {
 	PARAMETER T IS 0.
 	PARAMETER digits IS 2.
+	IF digits < 0 SET digits TO 0.
 
 	LOCAL hoursPerDay IS KUNIVERSE:HOURSPERDAY.
 	LOCAL days IS FLOOR ( T / (hoursPerDay*60*60) ).
@@ -1478,6 +1478,19 @@ FUNCTION distanceToString
 {
 	PARAMETER dist IS 0.
 	PARAMETER digits IS 0.
+	IF digits < 0 SET digits TO 0.
+
+	IF dist:TYPENAME <> "scalar" {
+		CLEARSCREEN.
+		PRINT "distanceToString passed a " + dist:TYPENAME + " instead of a scalar for dist".
+		PRINT 1/0.
+	}
+
+	IF digits:TYPENAME <> "scalar" {
+		CLEARSCREEN.
+		PRINT "distanceToString passed a " + digits:TYPENAME + " instead of a scalar for digits".
+		PRINT 1/0.
+	}
 
 	LOCAL isNegative IS FALSE.
 	LOCAL message IS "".

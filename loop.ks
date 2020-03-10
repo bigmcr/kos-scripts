@@ -86,7 +86,7 @@ ON updateScreen {
 	IF SHIP:ORBIT:SEMIMAJORAXIS > 0 PRINT timeToString(SHIP:ORBIT:PERIOD, 0):PADLEFT(12) AT (4, 6).
 	ELSE							PRINT "TTP " + timeToString(ETA:PERIAPSIS, 0):PADLEFT(12) AT (0,6).
 	PRINT distanceToString(SHIP:ORBIT:SEMIMAJORAXIS, 4):PADLEFT(11) AT (4, 7).
-	
+
 	PRINT useMySteer:TOSTRING:PADLEFT(5) AT (43, 0).
 	PRINT useMyThrottle:TOSTRING:PADLEFT(5) AT (43, 1).
 	PRINT ROUND(shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"], 0):TOSTRING:PADLEFT(5) AT (43, 2).
@@ -95,7 +95,7 @@ ON updateScreen {
 
 	// print the current input from the operator
 	PRINT inputString AT (0, 10).
-	
+
 	// display any messages from the loop program
 	PRINT loopMessage AT (40, 10).
 	IF previousCommands:LENGTH > 0 PRINT previousCommands[previousCommands:LENGTH - 1]:PADRIGHT(29) AT (51, 1).
@@ -140,20 +140,18 @@ ON useMyThrottle {
 
 SET mySteer TO SHIP:FACING.
 SET myThrottle TO 0.
-RCS OFF.
-SAS OFF.
 
 UNTIL done {
 	SET tempChar TO "".
 	SET count TO count + 1.
 	IF TERMINAL:INPUT:HASCHAR {
 		SET tempChar TO TERMINAL:INPUT:GETCHAR().
-		
+
 		// if the operator entered the "Enter" key, attempt to interperet the input
 		IF tempChar = TERMINAL:INPUT:ENTER {
 			// for keeping track of if we sucessfully did something based on the command
 			SET commandValid TO FALSE.
-			
+
 			// ignore the operator hitting the enter key if nothing is present in inputString
 			IF inputString <> "" {
 				// if the operator entered a script name followed by arguments, handle the arguments correctly, up to six arguments
@@ -164,7 +162,7 @@ UNTIL done {
 					// otherwise, leave the argument as a string
 					PRINT "InputStringList has Length " + inputStringList:LENGTH.
 					debugString(inputString).
-					
+
 					// if the first item in inputStringList is one of the statuses of the ship (debug, RCS, solar, etc) toggle it
 					IF inputStringList[0] = "debug" {
 						IF inputStringList[1] = "On" SET debug TO TRUE.
@@ -443,16 +441,16 @@ UNTIL done {
 							}
 						} ELSE {SET commandValid TO TRUE. SET loopMessage TO "Must have a target set.".}
 					} ELSE
-					
+
 					// if inputString is DistanceToTargetOrbitalPlane
 					IF inputString = "distTgtPlane" {SET loopMessage TO ROUND(distanceToTargetOrbitalPlane(), 4) + " km to target's orbital plane". SET commandValid TO TRUE.} ELSE
-					
+
 					// if inputString is "exit", leave the loop
 					IF inputString = "exit" {endScript(). SET done TO TRUE.} ELSE
-					
+
 					// if inputString is "reboot", reboot the processor
 					IF inputString = "reboot" OR inputString = "reboot." {debugString("Reboot"). REBOOT.} ELSE
-					
+
 					// if inputString is "updateScripts", delete all scripts on the local drive and update them from KSC
 					IF inputString = "updateScripts" {
 						SET commandValid TO TRUE.
@@ -461,13 +459,13 @@ UNTIL done {
 							SET loopMessage TO "Updated all scripts from the archive".
 						} ELSE SET loopMessage TO "Not connected to KSC - cannot update scripts".
 					} ELSE
-					
+
 					// if inputString is "listfiles", display a list of all files on the current volume
 					if inputString = "listfiles" OR inputString = "listfile" {
 						SET commandValid TO TRUE.
 						listFiles().
 					} ELSE
-					
+
 					// if inputString is apoapsis, periapsis or transition, timewarp to the appropriate place in orbit
 					IF inputString = "apoapsis" OR inputString = "apo" {
 						SET commandValid TO TRUE.
@@ -490,14 +488,14 @@ UNTIL done {
 							SET loopMessage TO "Warped to transition - 10 seconds".
 						} ELSE SET loopMessage TO "Orbit has no transition!".
 					} ELSE
-					
+
 					// if inputString is stage, trigger the staging function
 					IF inputString = "stage" {
 						stageFunction().
 						SET commandValid TO TRUE.
 						SET loopMessage TO "Manually Staged!".
 					} ELSE
-					
+
 					IF inputString = "local" {
 						SET commandValid TO TRUE.
 						IF connectionToKSC() {
@@ -507,7 +505,7 @@ UNTIL done {
 						SWITCH TO 1.
 						SET runLocal TO TRUE.
 					} ELSE
-					
+
 					IF inputString = "remote" OR inputString = "archive" {
 						SET commandValid TO TRUE.
 						IF connectionToKSC() {
@@ -516,18 +514,18 @@ UNTIL done {
 							SET loopMessage TO "Switched to running on the archive".
 						} ELSE SET loopMessage TO "KSC not accessible".
 					} ELSE
-					
+
 					// if inputString is "lock" or "unlock", perform the appropriate command on mySteer.
 					IF inputString = "lock" OR inputString = "lockS" {
 						SET useMySteer TO TRUE.
 						SET loopMessage TO "Steering locked to mySteer".
 						SET commandValid TO TRUE.
-					} ELSE 
+					} ELSE
 					IF inputString = "unlock" OR inputString = "unlockS" {
 						SET useMySteer TO FALSE.
 						SET loopMessage TO "Steering unlocked".
 						SET commandValid TO TRUE.
-					} ELSE 
+					} ELSE
 					// if inputString is "lockT" or "unlockT", perform the appropriate command on myThrottle.
 					IF inputString = "lockT" {
 						SET useMyThrottle TO TRUE.
@@ -539,13 +537,13 @@ UNTIL done {
 						SET loopMessage TO "Throttle unlocked".
 						SET commandValid TO TRUE.
 					} ELSE
-					
+
 					IF inputString = "hide" {
 						core:part:getmodule("kOSProcessor"):doevent("Close Terminal").
 						SET loopMessage TO "Terminal Hidden".
 						SET commandValid TO TRUE.
 					}
-					
+
 					// if inputString is stageInfo, recalculate the staging information for the ship, and log it to a file
 					IF inputString = "stageUpdate" {
 						updateShipInfo().
@@ -560,21 +558,21 @@ UNTIL done {
 						SET commandValid TO TRUE.
 						SET loopMessage TO SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv has been created.".
 					} ELSE
-					
+
 					// is inputString is "logActions", "log actions" or "actions", trigger the log all actions function
 					IF inputString = "logAction" OR inputString = "log actions" OR inputString = "actions" {
 						LogAllActions().
 						SET commandValid TO TRUE.
 						SET loopMessage TO "Action file created!".
 					} ELSE
-					
+
 					// is inputString is "logParts", "log parts" or "parts", trigger the log all parts function
 					IF inputString = "logParts" OR inputString = "log parts" OR inputString = "parts" {
 						LogAllParts().
 						SET commandValid TO TRUE.
 						SET loopMessage TO "Part file created!".
 					} ELSE
-					
+
 					// if inputString is any of the planet names, point toward that planet
 					SET foundBody TO "".
 					FOR bod in bodList {
@@ -587,7 +585,7 @@ UNTIL done {
 						SET commandValid TO TRUE.
 						SET loopMessage TO "Steering locked to facing the " + foundBody:NAME.
 					} ELSE
-					
+
 					// if inputString is "List Bodies", create and log to a file on the archive a list of all bodies and their properties.
 					IF inputString = "List bodies" {
 						LOG "Name,Description,Mass,Radius,Rotation Period,MU,SOI Radius" TO "Bodies.csv".
@@ -598,14 +596,14 @@ UNTIL done {
 						SET commandValid TO TRUE.
 						SET loopMessage TO "Bodies.csv file created!".
 					} ELSE
-					
+
 					// if inputString is "body" point toward the body you are orbiting
 					IF inputString = "body" {SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO SHIP:BODY:DIRECTION. SET commandValid TO TRUE. SET loopMessage TO "Steering locked to facing " + SHIP:BODY:NAME.} ELSE
-					
+
 					// Kill command - stops all control of the vehicle
 					// intended to allow the operator to stop after entering one of the above commands
 					IF inputString = "kill" {endScript(). SET commandValid TO TRUE. SET loopMessage TO "Steering unlocked".} ELSE
-					
+
 					IF inputString = "release" {
 						IF (core:part:getmodule("kOSProcessor"):HASACTION("Open Terminal")) {
 							CLEARSCREEN. PRINT "Opening the terminal". WAIT 0.5.

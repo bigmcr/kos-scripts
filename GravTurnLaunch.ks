@@ -58,6 +58,13 @@ CLEARSCREEN.
 
 SAS OFF.
 RCS OFF.
+DEPLOYDRILLS OFF.
+GEAR OFF.
+LADDERS OFF.
+IF SHIP:BODY:ATM:EXISTS {
+	PANELS OFF.
+	RADIATORS OFF.
+}
 
 // when the periapsis gets above ground, set timewarp back to normal
 WHEN PERIAPSIS > 0 AND physicsWarpPerm THEN {
@@ -150,12 +157,6 @@ UNTIL mode > 6 {
 		SET mySteer TO HEADING(0, 90).
 		IF ALT:RADAR > 100 {
 			SET gravTurnStart TO ALTITUDE.
-			GEAR OFF.
-			LADDERS OFF.
-			IF SHIP:BODY:ATM:EXISTS {
-				PANELS OFF.
-				RADIATORS OFF.
-			}
 
 			// If there is no atmosphere on this body, start the grav turn more quickly
 			IF NOT SHIP:BODY:ATM:EXISTS SET mode TO 4.

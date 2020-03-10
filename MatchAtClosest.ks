@@ -13,8 +13,8 @@ LOCAL interceptToTarget IS VECDRAW(V(0,0,0), V(0,0,0), GREEN, "Guidance", 1, MAP
 AG1 OFF.
 
 UNTIL AG1 {
-	IF useOrbitingBody	SET approach TO closestApproach(TIME:SECONDS + SHIP:BODY:ORBIT:PERIOD / 2, SHIP:BODY:ORBIT:PERIOD / 10).
-	ELSE 				SET approach TO closestApproach(TIME:SECONDS + SHIP:ORBIT:PERIOD / 2, SHIP:ORBIT:PERIOD / 10).
+	IF useOrbitingBody	SET approach TO closestApproach(TIME:SECONDS + SHIP:BODY:ORBIT:PERIOD / 4, SHIP:BODY:ORBIT:PERIOD / 10).
+	ELSE 				SET approach TO closestApproach(TIME:SECONDS + SHIP:ORBIT:PERIOD / 4, SHIP:ORBIT:PERIOD / 10).
 	PRINT "Closest approach: " + distanceToString(approach[1], 3) + "     " AT (0, 2).
 	SET shipToIntercept:SHOW TO MAPVIEW.
 	SET interceptToTarget:SHOW TO MAPVIEW.

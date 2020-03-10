@@ -44,3 +44,5 @@ FUNCTION getOffset {
 		// }
 	}
 }
+
+SET loopMessage TO "Circularization burn created".
