@@ -405,8 +405,18 @@ UNTIL done {
 					IF inputString = "normal" 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO VCRS(SHIP:VELOCITY:ORBIT, SHIP:BODY:POSITION). 									SET commandValid TO TRUE. SET loopMessage TO "Steering locked to normal".} ELSE
 					IF inputString = "antinormal" 					{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO -VCRS(SHIP:VELOCITY:ORBIT, SHIP:BODY:POSITION). 								SET commandValid TO TRUE. SET loopMessage TO "Steering locked to antinormal".} ELSE
 					IF inputString = "srfPrograde" OR inputString = "srfPro" 		{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO VELOCITY:SURFACE. 			SET commandValid TO TRUE. SET loopMessage TO "Steering locked to surface prograde".} ELSE
-					IF inputString = "srfRetrograde" OR inputString = "srfRetro" 	{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO -VELOCITY:SURFACE. 			SET commandValid TO TRUE. SET loopMessage TO "Steering locked to surface retrograde".} ELSE
-					IF inputString = "landLift"										{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO HEADING(yaw_vector(-SHIP:VELOCITY:SURFACE), pitch_for(SHIP)). SET commandValid TO TRUE. SET loopMessage TO "Steering locked to 15 degrees above horizon.".} ELSE
+					IF inputString = "srfRetrograde" OR inputString = "srfRetro" {
+							SET useMySteer TO TRUE.
+							SAS OFF.
+							LOCK mySteer TO {
+								IF (VELOCITY:SURFACE:MAG < 1.0)
+									RETURN SHIP:UP:VECTOR.
+								ELSE
+									RETURN -VELOCITY:SURFACE.
+								}
+							SET commandValid TO TRUE.
+							SET loopMessage TO "Steering locked to surface retrograde".
+					} ELSE IF inputString = "landLift"										{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO HEADING(yaw_vector(-SHIP:VELOCITY:SURFACE), pitch_for(SHIP)). SET commandValid TO TRUE. SET loopMessage TO "Steering locked to 15 degrees above horizon.".} ELSE
 					IF inputString = "maneuver" AND HASNODE 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO NEXTNODE:DELTAV:DIRECTION. 	SET commandValid TO TRUE. SET loopMessage TO "Steering locked to maneuver".} ELSE
 					IF (inputString = "target") OR (inputString = "antitarget") OR (inputString = "targetretro") OR (inputString = "targetpro") {
 						IF HASTARGET {
