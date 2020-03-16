@@ -14,8 +14,14 @@ GLOBAL useMyThrottle IS FALSE.
 GLOBAL augerList IS SHIP:PARTSTITLEDPATTERN("Auger").
 GLOBAL smelterList IS SHIP:PARTSTITLEDPATTERN("Smelter").
 GLOBAL minThrottle IS 0.
+GLOBAL steeringVisible IS TRUE.
+GLOBAL steeringVectorsVisible IS TRUE.
+LOCK steeringVectorsVisible TO (NOT MAPVIEW AND steeringVisible).
+GLOBAL facingVector   IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN SHIP:FACING:VECTOR * 10.}           , RED,   "                 Facing", 1).
+GLOBAL guidanceVector IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN STEERINGMANAGER:TARGET:VECTOR * 10.}, GREEN, "Guidance               ", 1).
 LOCAL shipInfoCurrentLoggingStarted IS FALSE.
 LOCAL logPhysicsTimeStamp IS 0.
+GLOBAL bounds IS SHIP:BOUNDS.
 
 LOCK timeSinceLaunch TO MISSIONTIME - missionTimeOffset.
 
@@ -267,6 +273,7 @@ FUNCTION updateShipInfo {
 	SET shipInfo["CurrentStage"] TO shipInfo["Stage " + (shipInfo["NumberOfStages"] - 1)].
 	SET augerList TO SHIP:PARTSTITLEDPATTERN("Auger").
 	SET smelterList TO SHIP:PARTSTITLEDPATTERN("Smelter").
+	updateBounds().
 }
 
 // Log Ship Info
@@ -1354,11 +1361,7 @@ FUNCTION engineInfo {
 // Returns the following:
 //			current height above ground (scalar, meters)
 FUNCTION heightAboveGround {
-	LOCAL minPosition IS 0.
-	FOR p IN shipInfo["CurrentStage"]["Parts"] {
-		IF ((SHIP:UP:VECTOR * p:POSITION) < minPosition AND p:POSITION:MAG < 50) SET minPosition TO SHIP:UP:VECTOR * p:POSITION.
-	}
-	RETURN minPosition + ALTITUDE - SHIP:GEOPOSITION:TERRAINHEIGHT.
+	RETURN bounds:BOTTOMALTRADAR.
 }
 
 // Stage Function
@@ -1373,7 +1376,7 @@ FUNCTION heightAboveGround {
 FUNCTION stageFunction {
 	PARAMETER waitTime IS 0.5.
 	PARAMETER forceLongWait IS FALSE.
-	LOCAL stageInAtm IS ((SHIP:BODY:ATM:EXISTS) AND (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) > 0.25) AND (SHIP:VELOCITY:SURFACE:MAG > 10.0)).
+	LOCAL stageInAtm IS ((SHIP:BODY:ATM:EXISTS) AND (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) > 0.05) AND (SHIP:VELOCITY:SURFACE:MAG > 10.0)).
 	IF stageInAtm {
 		PRINT "Staging in atmosphere!".
 	}
@@ -1593,128 +1596,11 @@ FUNCTION killEngines
 	}.
 }
 
-// Start Linear Test
-// This function reads an integer from a file and calculates the value of two variables based on inputs.
-// If the file does not exist, it creates a blank file with column headers and starting information in it.
-// This function is intended to be used with End Linear Test, which would end the test that this starts.
-// Default values eventually result in testValue ranging from 1 to 50, with variable 1 going from 0 to 20
-//			in increments of 5, and variable 2 going from 0 to 4 in increments of 1.
-// Passed the following
-//			parameters of the two variables (change per test, start value, how many unique tests to run) (all scalar values)
-//			number of times to run through all possible unique iterations of variable 1 and varaible 2 (scalar value)
-//			filename to read from and write to (string)
-// Returns list of the following:
-//			current test value (scalar)
-//			final test value (scalar)
-//			first calculated value (scalar)
-//			second calculated value (scalar)
-FUNCTION startLinearTest
+// Function that updates the stpred BOUNDS from the ship.
+// It should be called when the geometry of the ship changes.
+FUNCTION updateBounds
 {
-	PARAMETER var1Delta IS 5, var1Start IS 0, var1Count IS 5.
-	PARAMETER var2Delta IS 1, var2Start IS 0, var2Count IS 5.
-	PARAMETER repeats IS 2.
-	PARAMETER filename IS "0:/logs/Testing " + SHIPNAME + ".csv".
-
-	LOCAL testValue IS 0.
-
-	IF NOT EXISTS(filename) {
-		LOG "Test number,Variable 1,Variable 2,MET,Time Since Launch,Periapsis,Apoapsis,Mass,Altitude,Vertical Speed,Orbital Speed,Latitude,Longitude,,Start Lat," + SHIP:GEOPOSITION:LAT + ",Start Long," + SHIP:GEOPOSITION:LNG + ",Body:," + BODY:NAME TO filename.
-	} ELSE {
-		LOCAL CONTENTS_AS_STRING TO OPEN(filename):READALL:STRING.
-
-		LOCAL lines IS CONTENTS_AS_STRING:SPLIT(CHAR(10)).
-
-		IF (lines[lines:LENGTH - 1]):LENGTH = 0 {
-			SET testValue TO (lines[lines:LENGTH - 2]:SPLIT(","))[0]:TONUMBER(-1) + 1.
-		} ELSE {
-			SET testValue TO (lines[lines:LENGTH - 3]:SPLIT(","))[0]:TONUMBER(-1) + 1.
-		}
-	}
-
-	LOCAL results IS LIST().
-    results:ADD(testValue).       																	//[0] testValue for endLinearTest
-    results:ADD(var1Count * var2Count * repeats). 		     										//[1] final value to end testing at
-    results:ADD(FLOOR(MOD(testValue, var1Count * var2Count) / var2Count) * var1Delta + var1Start).	//[2] first calculated variable
-    results:ADD(MOD(testValue, var1Count) * var2Delta + var2Start).									//[3] second calculated variable
-
-	RETURN results.
-}
-
-// End Linear Test
-// This function writes an integer to a file along with all of the current ship parameters. It then reverts the ship back to the previous quicksave.
-// This function is intended to be used with Start Linear Test, which would start the test that this ends.
-// Passed the following:
-//			current test value (scalar)
-//			final test value (scalar)
-//			first calculated value (scalar)
-//			second calculated value (scalar)
-//			filename to write to (string)
-// Returns the following:
-//			None
-FUNCTION endLinearTest
-{
-	PARAMETER testValue.
-	PARAMETER maxValue.
-	PARAMETER var1Value.
-	PARAMETER var2Value.
-	PARAMETER filename IS "0:/logs/Testing " + SHIPNAME + ".csv".
-	LOG testValue + "," + var1Value + "," + var2Value + "," + MISSIONTIME + "," + timeSinceLaunch() + "," + PERIAPSIS + "," + APOAPSIS + "," + SHIP:MASS + "," + ALTITUDE + "," + VERTICALSPEED + "," + SHIP:VELOCITY:ORBIT:MAG + "," + SHIP:GEOPOSITION:LAT + "," + SHIP:GEOPOSITION:LNG TO filename.
-
-	IF testValue > maxValue AND KUNIVERSE:CANREVERTTOEDITOR {
-		LOG "Testing done!" TO filename.
-		KUNIVERSE:REVERTTOEDITOR().
-	}
-	IF KUNIVERSE:CANREVERTTOLAUNCH {
-		KUNIVERSE:REVERTTOLAUNCH().
-	} ELSE {
-	  PRINT "Cannot revert to launch or editor.".
-	}
-
-	// IF testValue < maxValue {
-		// CLEARSCREEN.
-		// PRINT KUNIVERSE:QUICKSAVELIST().
-		// KUNIVERSE:QUICKLOADFROM("quicksave").
-	// }
-	LOG "Testing done!" TO filename.
-}
-
-FUNCTION startTest
-{
-	PARAMETER delta IS 1.
-	PARAMETER startValue IS -10.
-	PARAMETER filename IS "0:/logs/Testing " + SHIPNAME + ".csv".
-	IF NOT EXISTS(filename) {
-		LOG "Test Value,MET,Periapsis,Apoapsis,Mass,Altitude,Vertical Speed,Orbital Speed,Latitude,Longitude,,Start Lat," + SHIP:GEOPOSITION:LAT + ",Start Long," + SHIP:GEOPOSITION:LNG TO filename.
-	}
-	LOCAL CONTENTS_AS_STRING TO OPEN(filename):READALL:STRING.
-
-	LOCAL lines IS CONTENTS_AS_STRING:SPLIT(CHAR(10)).
-	LOCAL testValue IS 0.
-
-	IF (lines[lines:LENGTH - 1]):LENGTH = 0 {
-		SET testValue TO (lines[lines:LENGTH - 2]:SPLIT(","))[0]:TONUMBER(startValue).
-	} ELSE {
-		SET testValue TO (lines[lines:LENGTH - 3]:SPLIT(","))[0]:TONUMBER(startValue).
-	}
-	RETURN testValue + delta.
-}
-
-FUNCTION endTest
-{
-	PARAMETER testValue.
-	PARAMETER maxValue IS 100.
-	PARAMETER filename IS "0:/logs/Testing " + SHIPNAME + ".csv".
-	LOG testValue + "," + timeSinceLaunch() + "," + PERIAPSIS + "," + APOAPSIS + "," + SHIP:MASS + "," + ALTITUDE + "," + VERTICALSPEED + "," + SHIP:VELOCITY:ORBIT:MAG + "," + SHIP:GEOPOSITION:LAT + "," + SHIP:GEOPOSITION:LNG TO filename.
-
-	IF testValue > maxValue AND KUNIVERSE:CANREVERTTOEDITOR {
-		LOG "Testing done!" TO filename.
-		KUNIVERSE:REVERTTOEDITOR().
-	}
-	IF KUNIVERSE:CANREVERTTOLAUNCH {
-		KUNIVERSE:REVERTTOLAUNCH().
-	} ELSE {
-	  PRINT "Cannot revert to launch or editor.".
-	}
+	SET bounds TO SHIP:BOUNDS.
 }
 
 // function that returns a value given the weights for a polynomial in the form of a + b*x + c*x^2 + d*x^3 + e*x^4 + ...
@@ -1996,6 +1882,7 @@ FUNCTION timeToAltitude
 FUNCTION endScript {
 	SAS OFF.
 	RCS OFF.
+	SET steeringVisible TO FALSE.
 	UNLOCK useMySteer.
 	SET useMySteer TO FALSE.
 	UNLOCK mySteer.

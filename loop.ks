@@ -23,7 +23,6 @@ LOCAL previousTIme IS TIME:SECONDS.
 LOCAL done IS FALSE.
 LOCAL errorValue IS 999.
 LOCAL showOrbital IS TRUE.
-
 LOCAL commandValid TO FALSE.
 LOCAL coreHighlight TO HIGHLIGHT(core:part, MAGENTA).
 SET coreHighlight:ENABLED TO FALSE.
@@ -290,8 +289,7 @@ UNTIL done {
 							COMPILE "0:" + inputStringList[1] + ".ks" TO "1:" + inputStringList[1] + ".ksm".
 							IF EXISTS("1:" + inputStringList[1] + ".ksm") SET loopMessage TO "File compiled and copied.".
 							ELSE SET loopMessage TO "File was not copied correctly!".
-						}
-						ELSE SET loopMessage TO "No connection to KSC, cannot copy script".
+						} SET loopMessage TO "No connection to KSC, cannot copy script".
 						SET commandValid TO TRUE.
 					} ELSE IF ((inputStringList[0] = "ISRU") OR (inputStringList[0] = "CONVERTER")) {
 						IF inputStringList[1] = "On" ISRU ON.
@@ -314,8 +312,8 @@ UNTIL done {
 						IF inputStringList[1] = "Off" {deactivateDishAntennae(). SET loopMessage TO "Dish antennae have been deactivated.".}
 						SET commandValid TO TRUE.
 					} ELSE IF ((inputStringList[0] = "SteeringVectors") OR (inputStringList[0] = "Steering")) {
-						IF inputStringList[1] = "On" {SET steeringVectorsVisible TO TRUE. SET loopMessage TO "Steering Vectors visible.".}
-						IF inputStringList[1] = "Off" {SET steeringVectorsVisible TO FALSE. SET loopMessage TO "Steering Vectors invisible.".}
+						IF inputStringList[1] = "On" {SET steeringVisible TO TRUE. SET loopMessage TO "Steering Vectors visible.".}
+						IF inputStringList[1] = "Off" {SET steeringVisible TO FALSE. SET loopMessage TO "Steering Vectors invisible.".}
 						SET commandValid TO TRUE.
 					} ELSE IF (inputStringList[0] = "highlight") {
 						IF inputStringList[1] = "On" SET coreHighlight:ENABLED TO TRUE.
@@ -323,6 +321,7 @@ UNTIL done {
 						IF (inputStringList[1] = "Toggle") OR (inputStringList[1] = "T") SET coreHighlight:ENABLED TO NOT coreHighlight:ENABLED.
 						SET loopMessage TO "Core highlighting is currently " + coreHighlight:ENABLED.
 						SET commandValid TO TRUE.
+					} ELSE IF (inputStringList[0] = "facing" OR inputStringList[0] = "vectors") {
 					} ELSE IF (inputStringList[0] = "warpToAltitude") {
 						IF ((inputStringList[1]:TONUMBER(-1) <> -1) OR (inputStringList[1] = "")) {
 							LOCAL warpAltitude IS inputStringList[1]:TONUMBER(10000).
@@ -408,12 +407,13 @@ UNTIL done {
 					IF inputString = "srfRetrograde" OR inputString = "srfRetro" {
 							SET useMySteer TO TRUE.
 							SAS OFF.
-							LOCK mySteer TO {
+							LOCAL srfRetro IS {
 								IF (VELOCITY:SURFACE:MAG < 1.0)
 									RETURN SHIP:UP:VECTOR.
 								ELSE
 									RETURN -VELOCITY:SURFACE.
-								}
+								}.
+							LOCK mySteer TO srfRetro().
 							SET commandValid TO TRUE.
 							SET loopMessage TO "Steering locked to surface retrograde".
 					} ELSE IF inputString = "landLift"										{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO HEADING(yaw_vector(-SHIP:VELOCITY:SURFACE), pitch_for(SHIP)). SET commandValid TO TRUE. SET loopMessage TO "Steering locked to 15 degrees above horizon.".} ELSE
@@ -600,8 +600,8 @@ UNTIL done {
 					IF inputString = "List bodies" {
 						LOG "Name,Description,Mass,Radius,Rotation Period,MU,SOI Radius" TO "Bodies.csv".
 						FOR bod in bodList {
-							IF (bod:NAME = "Sun" OR bod:NAME = "Kerbol") {LOG bod:NAME + "," + bod:DESCRIPTION:REPLACE(",","") + "," + bod:MASS + "," + bod:RADIUS + "," + bod:ROTATIONPERIOD + "," + bod:MU + ",infinite" TO "0:Bodies.csv".}
-							ELSE LOG bod:NAME + "," + bod:DESCRIPTION:REPLACE(",","") + "," + bod:MASS + "," + bod:RADIUS + "," + bod:ROTATIONPERIOD + "," + bod:MU + "," + bod:SOIRADIUS TO "0:Bodies.csv".
+							IF (bod:NAME = "Sun" OR bod:NAME = "Kerbol") {LOG bod:NAME + "," + bod:DESCRIPTION:REPLACE(",","") + "," + bod:MASS + "," + bod:RADIUS + "," + bod:ROTATIONPERIOD + "," + bod:MU + ",infinite" TO "Bodies.csv".}
+							ELSE LOG bod:NAME + "," + bod:DESCRIPTION:REPLACE(",","") + "," + bod:MASS + "," + bod:RADIUS + "," + bod:ROTATIONPERIOD + "," + bod:MU + "," + bod:SOIRADIUS TO "Bodies.csv".
 						}
 						SET commandValid TO TRUE.
 						SET loopMessage TO "Bodies.csv file created!".
@@ -662,6 +662,8 @@ UNTIL done {
 		// otherwise, add the character to the input string
 		ELSE {
 			SET inputString TO inputString + tempChar.
+			SET facingVector:SHOW TO steeringVectorsVisible.
+			SET guidanceVector:SHOW TO steeringVectorsVisible.
 			TOGGLE updateScreen.
 		}
 	}

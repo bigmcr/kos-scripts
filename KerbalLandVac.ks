@@ -209,7 +209,7 @@ UNTIL mode > 5 {
 		PRINT "VSpeed SP = " + ROUND(T_PID:SETPOINT, 2) + "    " AT (40, 1).
 		PRINT "Slope = " + ROUND(groundSlope, 2) + "     " AT (40, 2).
 		PRINT "               " AT (40, 3).
-		PRINT "Slope < 2.5    " AT (40, 4).
+		PRINT "Slope < 5.0    " AT (40, 4).
 		SET T_PID:SETPOINT TO 0.0.
 		SET H_PID:SETPOINT TO 10.0.
 
@@ -226,7 +226,7 @@ UNTIL mode > 5 {
 	  SET downslopeSpeedVecDraw:VEC TO MIN(3, ABS(downslopeSpeed))*downslopeDirection.
 	  SET sideSpeedVecDraw:VEC TO MIN(3, ABS(sideSpeed))*sideDirection.
 
-		IF (groundSlope < 2.5) advanceMode().
+		IF (aboveGround < 500 OR groundSlope < 5.0) advanceMode().
 	}
 	// Mode 4 - Maintain Vertical Speed at setpoint until height above ground is less than 5 meters
 	// Note that the steering is limited to a pitch of 70 degrees at minimum. This cancels the last horizontal velocity
@@ -238,8 +238,8 @@ UNTIL mode > 5 {
 //		SET T_PID:SETPOINT TO aboveGround / -200.
 		IF (aboveGround > 1000) SET T_PID:SETPOINT TO -20.
 		ELSE IF (aboveGround > 50) SET T_PID:SETPOINT TO -10.
-		ELSE IF (aboveGround > 25) SET T_PID:SETPOINT TO -1.
-		ELSE IF (aboveGround < 5) advanceMode().
+		ELSE IF (aboveGround > 25) {SET T_PID:SETPOINT TO -1. SET KUNIVERSE:TIMEWARP:WARP TO 0.}
+		ELSE IF (aboveGround < 2) {advanceMode().}
 		SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 		IF GROUNDSPEED < 0.1 SET mySteer TO HEADING (0, 90).
 		ELSE SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(70, velocityPitch)).
@@ -250,7 +250,9 @@ UNTIL mode > 5 {
 	}
 	// Mode 5 - Vertical Drop to the ground - use RCS for stabilization
 	IF mode = 5 {
-		IF startTime <> 0 SET startTime TO TIME:SECONDS.
+		IF startTime = 0 {
+			SET startTime TO TIME:SECONDS.
+		}
 		RCS ON.
 		PRINT "Vertical Drop    " AT (40, 1).
 		PRINT "AGL = " + ROUND(aboveGround) + "       " AT (40, 2).
@@ -258,7 +260,7 @@ UNTIL mode > 5 {
 		PRINT "SrfSpd < 0.5     " AT (40, 4).
 		SET myThrottle TO 0.
 		SET mySteer TO SHIP:UP.
-		IF (TIME:SECONDS > startTime + 30) AND (VELOCITY:SURFACE:MAG < 0.5) advanceMode().
+		IF (TIME:SECONDS > startTime + 5) AND (VELOCITY:SURFACE:MAG < 0.5) advanceMode().
 	}
 	WAIT 0.
 }
@@ -270,5 +272,5 @@ SET useMyThrottle TO FALSE.
 
 endScript().
 
-IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Landed on the " + SHIP:BODY:NAME.
+IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Landed on " + SHIP:BODY:NAME.
 ELSE SET loopMessage TO "Something went wrong - still moving relative to surface of " + SHIP:BODY:NAME.
