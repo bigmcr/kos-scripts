@@ -7,6 +7,9 @@ IF SHIP:BODY:ATM:EXISTS {
 	SET altitudeTarget TO SHIP:BODY:ATM:HEIGHT - 5000.
 }
 
-RUNPATH("GravTurnLaunch", finalInclination, FALSE, 10, altitudeTarget, initialStage, maxGs).
-RUNPATH("Circ", "apo").
-RUNPATH("Exec").
+IF VELOCITY:SURFACE:MAG > 1.0 SET loopMessage TO "Already moving over the surface!".
+ELSE {
+	RUNPATH("GravTurnLaunch", finalInclination, FALSE, 10, altitudeTarget, initialStage, maxGs).
+	RUNPATH("Circ", "apo").
+	RUNPATH("Exec").
+}

@@ -408,7 +408,7 @@ UNTIL done {
 							SET useMySteer TO TRUE.
 							SAS OFF.
 							LOCAL srfRetro IS {
-								IF (VELOCITY:SURFACE:MAG < 1.0)
+								IF (GROUNDSPEED < 1.0)
 									RETURN SHIP:UP:VECTOR.
 								ELSE
 									RETURN -VELOCITY:SURFACE.

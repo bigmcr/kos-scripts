@@ -1376,7 +1376,9 @@ FUNCTION heightAboveGround {
 FUNCTION stageFunction {
 	PARAMETER waitTime IS 0.5.
 	PARAMETER forceLongWait IS FALSE.
-	LOCAL stageInAtm IS ((SHIP:BODY:ATM:EXISTS) AND (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) > 0.05) AND (SHIP:VELOCITY:SURFACE:MAG > 10.0)).
+	LOCAL stageInAtm IS ((SHIP:BODY:ATM:EXISTS) AND
+											 (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) / SHIP:BODY:ATM:SEALEVELPRESSURE > 0.05) AND
+											 (SHIP:VELOCITY:SURFACE:MAG > 10.0)).
 	IF stageInAtm {
 		PRINT "Staging in atmosphere!".
 	}
@@ -1649,7 +1651,6 @@ FUNCTION warpToValue
 	LOCAL delegateRate IS 1.
 	LOCAL realTimeLeft IS 10.
 	LOCAL firstTime IS TRUE.
-	LOCAL secondTime IS TRUE.
 //	LOG "Time,Old Time,New Value,Old Value,Delegate Rate,Real Time Left" TO "Warping.csv".
 
 	// continue waiting until there is five seconds or less of real time remaining, or the delegate is less than the target value
@@ -1763,7 +1764,7 @@ FUNCTION warpToTime
 	LOCAL timeLeft IS targetTime - TIME:SECONDS.
 
 	SET KUNIVERSE:TIMEWARP:RATE TO 0.
-	WAIT 0.5.
+	WAIT 0.1.
 	SET KUNIVERSE:TIMEWARP:MODE TO "RAILS".
 
 	// if there is an SOI change before the target time, jump to the SOI change.

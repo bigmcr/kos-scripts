@@ -78,6 +78,7 @@ LOCAL sideDirection IS 0.
 LOCAL downslopeSpeed IS 0.
 LOCAL sideSpeed IS 0.
 LOCAL headingSteeringAdjust IS 0.
+LOCAL minPitch IS 70.
 
 LOCAL downslopeVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), YELLOW, "Down Slope Direction", 1.0, TRUE, 0.2).
 
@@ -193,7 +194,7 @@ UNTIL mode > 5 {
 		PRINT "VSpeed SP = " + ROUND(T_PID:SETPOINT, 2) + "    " AT (40, 1).
 		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 2).
 		PRINT "               " AT (40, 3).
-		PRINT "AGL < 1000     " AT (40, 4).
+		PRINT "AGL < 1000        " AT (40, 4).
 //		IF (aboveGround > 1000) SET T_PID:SETPOINT TO aboveGround / -200.
 		IF (aboveGround > 50000) SET T_PID:SETPOINT TO -1000.
 		ELSE IF (aboveGround > 10000) SET T_PID:SETPOINT TO -200.
@@ -214,7 +215,8 @@ UNTIL mode > 5 {
 		SET H_PID:SETPOINT TO 10.0.
 
 	  SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		SET headingSteeringAdjust TO - 2 * sideSpeed.
+		IF H_PID:OUTPUT < 0 SET headingSteeringAdjust TO - 2 * sideSpeed.
+		ELSE SET headingSteeringAdjust TO 2 * sideSpeed.
 		IF headingSteeringAdjust > 30 SET headingSteeringAdjust TO 30.
 		IF headingSteeringAdjust < 30 SET headingSteeringAdjust TO -30.
 	  SET mySteer TO HEADING (groundSlopeHeading + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, downslopeSpeed)).
@@ -233,17 +235,17 @@ UNTIL mode > 5 {
 	IF mode = 4 {
 		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 1).
 		PRINT "Slope = " + ROUND(groundSlope,2) + "     " AT (40, 2).
-		PRINT "               " AT (40, 3).
+		PRINT "minPitch = " + minPitch + "     " AT (40, 3).
 		PRINT "AGL < 5        " AT (40, 4).
-//		SET T_PID:SETPOINT TO aboveGround / -200.
-		IF (aboveGround > 1000) SET T_PID:SETPOINT TO -20.
-		ELSE IF (aboveGround > 50) SET T_PID:SETPOINT TO -10.
-		ELSE IF (aboveGround > 25) {SET T_PID:SETPOINT TO -1. SET KUNIVERSE:TIMEWARP:WARP TO 0.}
+		IF (aboveGround > 1000) {SET T_PID:SETPOINT TO -20. SET minPitch TO 45.}
+		ELSE IF (aboveGround > 50) {SET T_PID:SETPOINT TO -10. SET minPitch TO 70.}
+		ELSE IF (aboveGround > 25) {SET T_PID:SETPOINT TO -1. SET KUNIVERSE:TIMEWARP:WARP TO 0. SET minPitch TO 85.}
 		ELSE IF (aboveGround < 2) {advanceMode().}
 		SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		IF GROUNDSPEED < 0.1 SET mySteer TO HEADING (0, 90).
-		ELSE SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(70, velocityPitch)).
+		IF GROUNDSPEED < 0.25 SET mySteer TO HEADING (0, 90).
+		ELSE SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
 		GEAR ON.
+		LIGHTS ON.
 		SET downslopeDirectionVecDraw:SHOW TO FALSE.
 		SET downslopeSpeedVecDraw:SHOW TO FALSE.
 		SET sideSpeedVecDraw:SHOW TO FALSE.
