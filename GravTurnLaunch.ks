@@ -8,9 +8,7 @@ PARAMETER gravTurnEnd IS 150000.			// The altitude of the end of the gravity tur
 PARAMETER initialStage IS TRUE.				// Whether or not to trigger the initial stage
 PARAMETER maxGs IS 2.						// maximum number of G's that the ship should go under
 
-LOCAL steeringVectorsVisible IS NOT MAPVIEW.
-LOCAL facingVector   IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN SHIP:FACING:VECTOR * 10.}           , RED,   "                 Facing", 1, steeringVectorsVisible).
-LOCAL guidanceVector IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN STEERINGMANAGER:TARGET:VECTOR * 10.}, GREEN, "Guidance               ", 1, steeringVectorsVisible).
+SET steeringVisible TO TRUE.		// Turn on the steering vectors
 
 ON MAPVIEW {
 	SET facingVector:SHOW TO NOT MAPVIEW AND NOT SHIP:CONTROL:NEUTRAL.
@@ -191,7 +189,7 @@ UNTIL mode > 6 {
 			}
 
 			// When the atmosphere isn't really a concern anymore, let the PID have a little more freedom
-			WHEN ((SHIP:BODY:ATM:EXISTS) AND (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) < 0.25)) THEN {
+			WHEN ((SHIP:BODY:ATM:EXISTS) AND (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) < 0.10)) THEN {
 				PRINT "Loosening PID!".
 				SET PITCH_PID:MAXOUTPUT TO 15.
 				SET PITCH_PID:MINOUTPUT TO -15.
