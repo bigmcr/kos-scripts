@@ -391,6 +391,43 @@ UNTIL done {
 						endScript().
 						SET commandValid TO TRUE.
 					}
+					IF inputstring = "OrbitalParams" {
+						CLEARSCREEN.
+						LOCAL exportFileName IS "0:OrbitalParams.csv".
+						PRINT "Name: " + SHIP:ORBIT:NAME.
+						PRINT "Apoapsis: " + distanceToString(SHIP:ORBIT:APOAPSIS).
+						PRINT "Periapsis: " + distanceToString(SHIP:ORBIT:PERIAPSIS).
+						PRINT "Body: " + SHIP:ORBIT:BODY:NAME.
+						PRINT "Body mu: " + ROUND(SHIP:ORBIT:BODY:MU, 2) + "^3/s^2".
+						PRINT "Period: " + timeToString(SHIP:ORBIT:PERIOD).
+						PRINT "Inclination: " + ROUND(SHIP:ORBIT:INCLINATION, 2) + " deg".
+						PRINT "Eccentricity: " + ROUND(SHIP:ORBIT:ECCENTRICITY, 4) + " ".
+						PRINT "Semimajor Axis: " + distanceToString(SHIP:ORBIT:SEMIMAJORAXIS).
+						PRINT "Semimajor Axis: " + distanceToString(SHIP:ORBIT:SEMIMINORAXIS).
+						PRINT "Longitude of Ascending Node: " + ROUND(SHIP:ORBIT:LAN, 2) + " deg".
+						PRINT "Argument of Periapsis: " + ROUND(SHIP:ORBIT:ARGUMENTOFPERIAPSIS, 2) + " deg".
+						PRINT "True Anomoly: " + ROUND(SHIP:ORBIT:TRUEANOMALY, 4) + " deg".
+						PRINT "Mean Anomoly at Epoch: " + ROUND(SHIP:ORBIT:MEANANOMALYATEPOCH, 4) + " deg".
+						PRINT "Position R: " + distanceToString(SHIP:BODY:POSITION:MAG + SHIP:ORBIT:POSITION:MAG, 4).
+						PRINT "Velocity: " + distanceToString(SHIP:ORBIT:VELOCITY:ORBIT:MAG, 4) +	"/s ".
+						LOG "Name," + SHIP:ORBIT:NAME TO exportFileName.
+						LOG "Apoapsis," + (SHIP:ORBIT:APOAPSIS) + ",m" TO exportFileName.
+						LOG "Periapsis," + (SHIP:ORBIT:PERIAPSIS) + ",m" TO exportFileName.
+						LOG "Body," + SHIP:ORBIT:BODY:NAME TO exportFileName.
+						LOG "Body mu," + SHIP:ORBIT:BODY:MU + ",m^3/s^2" TO exportFileName.
+						LOG "Period," + SHIP:ORBIT:PERIOD + ",s" TO exportFileName.
+						LOG "Inclination," + SHIP:ORBIT:INCLINATION + ",deg" TO exportFileName.
+						LOG "Eccentricity," + SHIP:ORBIT:ECCENTRICITY TO exportFileName.
+						LOG "Semimajor Axis," + SHIP:ORBIT:SEMIMAJORAXIS + ",m" TO exportFileName.
+						LOG "Semimajor Axis," + SHIP:ORBIT:SEMIMINORAXIS + ",m" TO exportFileName.
+						LOG "Longitude of Ascending Node," + SHIP:ORBIT:LAN + ",deg" TO exportFileName.
+						LOG "Argument of Periapsis," + SHIP:ORBIT:ARGUMENTOFPERIAPSIS + ",deg" TO exportFileName.
+						LOG "True Anomoly," + SHIP:ORBIT:TRUEANOMALY + ",deg" TO exportFileName.
+						LOG "Mean Anomoly at Epoch," + SHIP:ORBIT:MEANANOMALYATEPOCH + ",deg" TO exportFileName.
+						LOG "Position R," + (SHIP:BODY:POSITION:MAG + SHIP:ORBIT:POSITION:MAG) + ",m" TO exportFileName.
+						LOG "Velocity," + SHIP:ORBIT:VELOCITY:ORBIT:MAG +	",m/s " TO exportFileName.
+						WAIT 5.
+					}
 					// if inputString is any of the orbital directions, turn to face that direction
 					IF inputString = "hold" 						{SET useMySteer TO TRUE. SAS OFF. SET mySteer TO SHIP:FACING. 																	SET commandValid TO TRUE. SET loopMessage TO "Steering held at current".} ELSE
 					IF inputString = "up" 							{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO LOOKDIRUP(SHIP:UP:VECTOR, -SHIP:NORTH:VECTOR). 								SET commandValid TO TRUE. SET loopMessage TO "Steering locked to up".} ELSE
