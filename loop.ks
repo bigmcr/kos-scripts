@@ -331,6 +331,53 @@ UNTIL done {
 							SET loopMessage TO "Warped to altitude of " + ROUND(ALTITUDE).
 							SET commandValid TO TRUE.
 						}
+					} ELSE IF (inputStringList[0] = "target") {
+						IF HASTARGET {
+							IF inputStringList[1] = "" {
+								SET useMySteer TO TRUE.
+								SAS OFF.
+								LOCK mySteer TO TARGET:POSITION.
+								SET commandValid TO TRUE.
+								IF TARGET:TYPENAME = "Part" OR TARGET:TYPENAME = "DockingPort" SET loopMessage TO "Steering locked to " + TARGET:TITLE + " on " + TARGET:SHIP:NAME.
+								ELSE SET loopMessage TO "Steering locked to " + TARGET:NAME.
+							}
+							IF inputStringList[1] = "anti" {
+								SET useMySteer TO TRUE.
+								SAS OFF.
+								LOCK mySteer TO -TARGET:POSITION.
+								SET commandValid TO TRUE.
+								SET loopMessage TO "Steering locked to anti target".
+							}
+							IF inputStringList[1] = "retro" OR inputStringList[0] = "retrograde" {
+								SET useMySteer TO TRUE.
+								SAS OFF.
+								LOCK mySteer TO (TARGET:VELOCITY:ORBIT - SHIP:VELOCITY:ORBIT).
+								SET commandValid TO TRUE.
+								SET loopMessage TO "Steering locked to target retrograde".
+							}
+							IF inputStringList[1] = "pro" OR inputStringList[0] = "prograde" {
+								SET useMySteer TO TRUE.
+								SAS OFF.
+								LOCK mySteer TO (SHIP:VELOCITY:ORBIT - TARGET:VELOCITY:ORBIT).
+								SET commandValid TO TRUE.
+								SET loopMessage TO "Steering locked to target prograde".
+							}
+							IF inputStringList[1] = "facing" {
+								SET useMySteer TO TRUE.
+								SAS OFF.
+								LOCK mySteer TO (-TARGET:FACING:VECTOR):DIRECTION.
+								SET commandValid TO TRUE.
+								SET loopMessage TO "Steering locked to target facing".
+							}
+							IF inputStringList[1] = "antifacing" {
+								SET useMySteer TO TRUE.
+								SAS OFF.
+								LOCK mySteer TO (TARGET:FACING:VECTOR):DIRECTION.
+								SET commandValid TO TRUE.
+								SET loopMessage TO "Steering locked to target facing".
+							}
+						} ELSE {SET commandValid TO TRUE. SET loopMessage TO "Must have a target set.".}
+
 					// if there is a valid script, process the arguments for it
 					} ELSE IF EXISTS(inputStringList[0]) {
 						FOR arg IN RANGE(1, inputStringList:LENGTH) {
@@ -455,39 +502,6 @@ UNTIL done {
 							SET loopMessage TO "Steering locked to surface retrograde".
 					} ELSE IF inputString = "landLift"										{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO HEADING(yaw_vector(-SHIP:VELOCITY:SURFACE), pitch_for(SHIP)). SET commandValid TO TRUE. SET loopMessage TO "Steering locked to 15 degrees above horizon.".} ELSE
 					IF inputString = "maneuver" AND HASNODE 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO NEXTNODE:DELTAV:DIRECTION. 	SET commandValid TO TRUE. SET loopMessage TO "Steering locked to maneuver".} ELSE
-					IF (inputString = "target") OR (inputString = "antitarget") OR (inputString = "targetretro") OR (inputString = "targetpro") {
-						IF HASTARGET {
-							IF inputString = "target" {
-								SET useMySteer TO TRUE.
-								SAS OFF.
-								LOCK mySteer TO TARGET:POSITION.
-								SET commandValid TO TRUE.
-								IF TARGET:TYPENAME = "Part" OR TARGET:TYPENAME = "DockingPort" SET loopMessage TO "Steering locked to " + TARGET:TITLE + " on " + TARGET:SHIP:NAME.
-								ELSE SET loopMessage TO "Steering locked to " + TARGET:NAME.
-							}
-							IF inputString = "antitarget" {
-								SET useMySteer TO TRUE.
-								SAS OFF.
-								LOCK mySteer TO -TARGET:POSITION.
-								SET commandValid TO TRUE.
-								SET loopMessage TO "Steering locked to anti target".
-							}
-							IF inputString = "targetretro" {
-								SET useMySteer TO TRUE.
-								SAS OFF.
-								LOCK mySteer TO (TARGET:VELOCITY:ORBIT - SHIP:VELOCITY:ORBIT).
-								SET commandValid TO TRUE.
-								SET loopMessage TO "Steering locked to target retrograde".
-							}
-							IF inputString = "targetpro" {
-								SET useMySteer TO TRUE.
-								SAS OFF.
-								LOCK mySteer TO (SHIP:VELOCITY:ORBIT - TARGET:VELOCITY:ORBIT).
-								SET commandValid TO TRUE.
-								SET loopMessage TO "Steering locked to target prograde".
-							}
-						} ELSE {SET commandValid TO TRUE. SET loopMessage TO "Must have a target set.".}
-					} ELSE
 
 					// if inputString is DistanceToTargetOrbitalPlane
 					IF inputString = "distTgtPlane" {SET loopMessage TO ROUND(distanceToTargetOrbitalPlane(), 4) + " km to target's orbital plane". SET commandValid TO TRUE.} ELSE
@@ -699,10 +713,10 @@ UNTIL done {
 		// otherwise, add the character to the input string
 		ELSE {
 			SET inputString TO inputString + tempChar.
-			SET facingVector:SHOW TO steeringVectorsVisible.
-			SET guidanceVector:SHOW TO steeringVectorsVisible.
 			TOGGLE updateScreen.
 		}
+		SET facingVector:SHOW TO steeringVectorsVisible.
+		SET guidanceVector:SHOW TO steeringVectorsVisible.
 	}
 	IF count > 50 {
 		SET count TO 1.
