@@ -1461,6 +1461,8 @@ FUNCTION timeToString
 	PARAMETER T IS 0.
 	PARAMETER digits IS 2.
 	IF digits < 0 SET digits TO 0.
+	LOCAL isNegative IS FALSE.
+	IF T < 0 SET T TO -T.
 
 	LOCAL hoursPerDay IS KUNIVERSE:HOURSPERDAY.
 	LOCAL days IS FLOOR ( T / (hoursPerDay*60*60) ).
@@ -1469,6 +1471,7 @@ FUNCTION timeToString
 	LOCAL seconds IS ROUND( MOD( T, 60), digits).
 	LOCAL message IS "".
 
+	IF isNegative SET message TO message + "-".
 	IF days <> 0 SET message TO message + days + "d ".
 	IF hours <> 0 SET message TO message + hours + "h ".
 	IF minutes <> 0 SET message TO message + minutes + "m ".
