@@ -112,7 +112,7 @@ FUNCTION copyToLocal {
 		}
 
 		COMPILE "0:boot/boot.ks" TO "1:boot.ksm".
-//		SET CORE:BOOTFILENAME    TO "1:boot.ksm".
+		SET CORE:BOOTFILENAME    TO "1:boot.ksm".
 		PRINT "Boot file name set to " + CORE:BOOTFILENAME.
 
 		PRINT "Now compiling all scripts.".
