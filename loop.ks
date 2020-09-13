@@ -276,7 +276,15 @@ UNTIL done {
 							}
 						}
 						SET commandValid TO TRUE.
-					} ELSE IF (inputStringList[0] = "node") {
+						} ELSE IF (inputStringList[0] = "point") {
+							IF (inputStringList[1]:TONUMBER(errorValue) <> errorValue) AND (inputStringList[2]:TONUMBER(errorValue) <> errorValue) {
+								SET useMySteer TO TRUE.
+								SAS OFF.
+								SET mySteer TO HEADING(inputStringList[1]:TONUMBER(errorValue), inputstringList[2]:TONUMBER(errorValue)).
+								SET commandValid TO TRUE.
+								SET loopMessage TO "Steering held to (" + inputStringList[1] + "," + inputStringList[2] + ")".
+							}
+						} ELSE IF (inputStringList[0] = "node") {
 						IF inputStringList:LENGTH = 2 {ADD NODE(TIME:SECONDS + 60,								0,								0, inputStringList[1]:TONUMBER(0)).}
 						IF inputStringList:LENGTH = 3 {ADD NODE(TIME:SECONDS + 60,								0, inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
 						IF inputStringList:LENGTH = 4 {ADD NODE(TIME:SECONDS + 60, inputStringList[3]:TONUMBER(0), inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
