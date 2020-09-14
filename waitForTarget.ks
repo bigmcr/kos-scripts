@@ -68,7 +68,7 @@ FUNCTION helperFunction
 			SET completedScans TO completedScans + 1.
 		}
 		PRINT "Completed Scans: " + completedScans + "       " AT (0, 19).
-		PRINT "Speed Toward Plane " + distanceToString(distanceRate, 1) + "/s   " AT (0, 20).
+		PRINT "Speed Toward Plane " + distanceToString(distanceRate * 1000, 1) + "/s   " AT (0, 20).
 		PRINT "Real Time Left " + timeToString(realTimeLeft, 2) + " s     " AT (0, 21).
 		PRINT "Real Time Rate " + ROUND(KUNIVERSE:TIMEWARP:RATE, 2) + " s/s   " AT (0, 22).
 		PRINT "Distance from Plane " + distanceToString(newDistance * 1000, 1) + "    " AT (0, 23).
@@ -83,12 +83,22 @@ IF NOT HASTARGET PRINT "Please select a target vessel or body in the same SOI.".
 
 UNTIL HASTARGET WAIT 0.1.
 
-IF TARGET:BODY = SHIP:BODY {
+LOCAL hasError TO FALSE.
+IF TARGET:BODY <> SHIP:BODY {
+	SET loopMessage TO "Target is not in the same SOI as the ship".
+	SET hasError TO TRUE.
+}
+
+IF TARGET:ORBIT:INCLINATION < SHIP:GEOPOSITION:LAT {
+	SET loopMessage TO "Launch site does not intersect orbital plane of target!".
+	SET hasError TO TRUE.
+}
+
+
+IF NOT hasError {
 	PRINT SHIP:NAME + " will wait until " + ROUND(offset,2) + " km from the instant launch window.".
 	helperFunction().
 	IF distanceToTargetOrbitalPlane() < 0 {
 		SET loopMessage TO "Dist: " + ROUND(-distanceToTargetOrbitalPlane()) + " km south. Inc: " + ROUND(-TARGET:ORBIT:INCLINATION, 4).
 	} ELSE SET loopMessage TO "Dist: " + ROUND(distanceToTargetOrbitalPlane()) + " km north. Inc: " + ROUND(TARGET:ORBIT:INCLINATION, 4).
-} ELSE {
-	SET loopMessage TO "Target is not in the same SOI as the ship".
 }
