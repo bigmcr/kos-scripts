@@ -1,6 +1,6 @@
 CLEARSCREEN.
 
-GLOBAL runLocal TO NOT connectionToKSC().
+GLOBAL runLocal TO TRUE.
 IF runLocal {
 	PRINT "Boot script running locally".
 	SWITCH TO 1.
