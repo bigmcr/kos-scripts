@@ -311,6 +311,7 @@ UNTIL mode > 6 {
 		// periapsis is within 1 km of current altitude (burn is complete)
 		// apoapsis is greater than 10 minutes away AND periapsis is greater than 10 minutes away
 		//		AND altitude is greater than 100,000 meters AND vertical speed is positive
+		//		AND periapsis is above ground
 		IF (SHIP:VELOCITY:ORBIT:SQRMAGNITUDE*0.999 > SHIP:BODY:MU/(ALTITUDE + SHIP:BODY:RADIUS)) {
 			SET endMessage TO "Final orbital velocity met".
 			SET mode TO 7.
@@ -319,7 +320,9 @@ UNTIL mode > 6 {
 			SET endMessage TO "Peri > Alt - 1km".
 			SET mode TO 7.
 		}
-		IF (ETA:APOAPSIS > 10*60 AND ETA:PERIAPSIS > 10*60 AND ALTITUDE > 100000 AND VERTICALSPEED > 0) {
+		LOCAL endAltitude IS 100000.
+		IF SHIP:BODY:ATM:EXISTS SET endAltitude TO SHIP:BODY:ATM:HEIGHT.
+		IF (ETA:APOAPSIS > 10*60 AND ETA:PERIAPSIS > 10*60 AND ALTITUDE > endAltitude AND VERTICALSPEED > 0 AND PERIAPSIS > 0) {
 			SET endMessage TO "Complicated exit".
 			SET mode to 7.
 		}
