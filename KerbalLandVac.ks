@@ -25,6 +25,7 @@ LOCAL vAccel IS 0.
 LOCAL aboveGround IS heightAboveGround().
 LOCAL update IS 0.
 LOCAL mode TO 1.
+LOCAL cancelHoriz IS TRUE.
 
 UNLOCK mySteer.
 UNLOCK myThrottle.
@@ -204,7 +205,7 @@ UNTIL mode > 5 {
 		IF GROUNDSPEED < 0.1 SET mySteer TO HEADING (0, 90).
 		ELSE SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(70, velocityPitch)).
 	}
-	// Mode 3 - Maintain height above ground with 10 m/s horizontal speed in the direction of downslope until slope is less than 7.5 degrees
+	// Mode 3 - Maintain height above ground with 10 m/s horizontal speed in the direction of downslope until slope is less than 5.0 degrees
 	// Note that the steering is limited to a pitch of 85 degrees at minimum. This limits the remaining horizontal velocity
 	IF mode = 3 {
 		PRINT "VSpeed SP = " + ROUND(T_PID:SETPOINT, 2) + "    " AT (40, 1).
@@ -230,8 +231,8 @@ UNTIL mode > 5 {
 
 		IF (aboveGround < 500 OR groundSlope < 5.0) advanceMode().
 	}
-	// Mode 4 - Maintain Vertical Speed at setpoint until height above ground is less than 5 meters
-	// Note that the steering is limited to a pitch of 70 degrees at minimum. This cancels the last horizontal velocity
+	// Mode 4 - Maintain Vertical Speed at setpoint until height above ground is less than 2 meters
+	// Note that the steering is limited in patch based on height above ground. This cancels the last horizontal velocity
 	IF mode = 4 {
 		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 1).
 		PRINT "Slope = " + ROUND(groundSlope,2) + "     " AT (40, 2).
@@ -242,7 +243,9 @@ UNTIL mode > 5 {
 		ELSE IF (aboveGround > 25) {SET T_PID:SETPOINT TO -1. SET KUNIVERSE:TIMEWARP:WARP TO 0. SET minPitch TO 85.}
 		ELSE IF (aboveGround < 2) {advanceMode().}
 		SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		IF GROUNDSPEED < 0.25 SET mySteer TO HEADING (0, 90).
+		IF cancelHoriz AND GROUNDSPEED < 0.25 SET cancelHoriz TO FALSE.
+		IF NOT cancelHoriz AND GROUNDSPEED > 0.5 SET cancelHoriz TO TRUE.
+		IF NOT cancelHoriz SET mySteer TO HEADING (0, 90).
 		ELSE SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
 		GEAR ON.
 		LIGHTS ON.
