@@ -6,6 +6,7 @@ PRINT "Apoapsis " + distanceToString(localOrbit:APOAPSIS, 4).
 PRINT "Periapsis " + distanceToString(localOrbit:PERIAPSIS, 4).
 PRINT "Orbited Body " + localOrbit:BODY:NAME.
 PRINT "Orbited Body MU " + BODY:MU + ",m^3/s^2".
+PRINT "Orbited Body Radius " + distanceToString(BODY:Radius, 4).
 PRINT "Period " + timeToString(localOrbit:PERIOD, 4).
 PRINT "Inclination " + ROUND(localOrbit:INCLINATION, 4).
 PRINT "Eccentricity " + ROUND(localOrbit:ECCENTRICITY, 4).
@@ -32,6 +33,7 @@ IF connectionToKSC() {
   LOG "Periapsis," + localOrbit:PERIAPSIS + ",m"  TO fileName.
   LOG "Orbited Body," + localOrbit:BODY:NAME TO fileName.
   LOG "Orbited Body MU," + BODY:MU + ",m^3/s^2" TO fileName.
+  LOG "Orbited Body Radius," + BODY:Radius + ",m" TO fileName.
   LOG "Period," + localOrbit:PERIOD + ",s"  TO fileName.
   LOG "Inclination," + localOrbit:INCLINATION + ",deg" TO fileName.
   LOG "Eccentricity," + localOrbit:ECCENTRICITY TO fileName.
