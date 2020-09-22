@@ -183,7 +183,7 @@ IF errorCode = "None" {
 		}
 		PRINT "Burn Delay, " + timeToString(t_ign, 2).
 		PRINT "Total Burntime, " + timeToString(t_total, 2).
-		PRINT "initial accel " + ROUND(a_i, 2 ) + " m/s^s   final accel " + ROUND(a_f, 2) + " m/s^s".
+		PRINT "initial accel " + distanceToString(a_i, 2 ) + "/s^s   final accel " + distanceToString(a_f, 2) + "/s^s".
 	} ELSE {
 		PRINT "Running Execute Next Node".
 		IF useRCSforRotation PRINT "Will use RCS for rotation".
@@ -286,7 +286,7 @@ IF errorCode = "None" {
 		// cut the throttle as soon as our nd:deltaV and initial deltaV start facing opposite directions
 		IF VDOT(DV0, ND:DELTAV) < 0
 		{
-			IF debug PRINT "End burn, remaining dV " + ROUND(ND:DELTAV:MAG,1) + "m/s, vdot: " + ROUND(VDOT(DV0, ND:DELTAV),1).
+			IF debug PRINT "End burn, remaining dV " + distanceToString(ND:DELTAV:MAG, 1) + "/s, vdot: " + ROUND(VDOT(DV0, ND:DELTAV),1).
 			SET done TO TRUE.
 		}
 
@@ -327,7 +327,7 @@ IF errorCode = "None" {
 	SET RCS TO oldRCS.													// restore the previous RCS state
 	SET SAS TO oldSAS.													// restore the previous SAS state
 	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
-	SET loopMessage TO "Node executed correctly! " + ROUND(ND:DELTAV:MAG, 1) + " m/s left.".
+	SET loopMessage TO "Node executed correctly! " + distanceToString(ND:DELTAV:MAG, 1) + "/s left.".
 } ELSE {
 	SET loopMessage TO errorCode.
 	PRINT errorCode.
