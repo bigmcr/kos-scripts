@@ -506,7 +506,7 @@ UNTIL done {
 							SET useMySteer TO TRUE.
 							SAS OFF.
 							LOCAL srfRetro IS {
-								IF (GROUNDSPEED < 1.0)
+								IF (GROUNDSPEED < 0.25)
 									RETURN SHIP:UP:VECTOR.
 								ELSE
 									RETURN -VELOCITY:SURFACE.
@@ -729,9 +729,9 @@ UNTIL done {
 			SET inputString TO inputString + tempChar.
 			TOGGLE updateScreen.
 		}
-		SET facingVector:SHOW TO steeringVectorsVisible.
-		SET guidanceVector:SHOW TO steeringVectorsVisible.
 	}
+	SET facingVector:SHOW TO steeringVectorsVisible AND useMySteer.
+	SET guidanceVector:SHOW TO steeringVectorsVisible AND useMySteer.
 	IF count > 50 {
 		SET count TO 1.
 		TOGGLE updateScreen.
