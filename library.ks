@@ -2051,22 +2051,23 @@ FUNCTION weightedAverage {
 
 FUNCTION processScalarParameter {
 	PARAMETER para.
+	PARAMETER errorValueScalar = errorValue.
 	IF para:TYPENAME = "Scalar" RETURN para.
 	IF para:TYPENAME = "String" {
-		LOCAL returnNumber IS errorValue.
+		LOCAL returnNumber IS errorValueScalar.
 		IF para:ENDSWITH("k") {
-			SET returnNumber TO para:REPLACE("k", ""):TONUMBER(errorValue).
-			IF returnNumber <> errorValue RETURN returnNumber * 1000.0.
+			SET returnNumber TO para:REPLACE("k", ""):TONUMBER(errorValueScalar).
+			IF returnNumber <> errorValueScalar RETURN returnNumber * 1000.0.
 		}
 		IF para:ENDSWITH("M") {
-			SET returnNumber TO para:REPLACE("M", ""):TONUMBER(errorValue).
-			IF returnNumber <> errorValue RETURN returnNumber * 1000000.0.
+			SET returnNumber TO para:REPLACE("M", ""):TONUMBER(errorValueScalar).
+			IF returnNumber <> errorValueScalar RETURN returnNumber * 1000000.0.
 		}
 		IF para:ENDSWITH("G") {
-			SET returnNumber TO para:REPLACE("G", ""):TONUMBER(errorValue).
-			IF returnNumber <> errorValue RETURN returnNumber * 1000000000.0.
+			SET returnNumber TO para:REPLACE("G", ""):TONUMBER(errorValueScalar).
+			IF returnNumber <> errorValueScalar RETURN returnNumber * 1000000000.0.
 		}
 		RETURN returnNumber.
 	}
-	RETURN errorValue.
+	RETURN errorValueScalar.
 }
