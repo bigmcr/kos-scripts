@@ -5,6 +5,8 @@ CLEARSCREEN.
 PARAMETER finalAltitude.    // Final Altitude above sea level. Does NOT include BODY:RADIUS
 PARAMETER acknowledge IS FALSE.
 
+SET finalAltitude TO processScalarParameter(finalAltitude, BODY:POSITION:MAG).
+
 LOCAL errorCode IS "None".
 IF (finalAltitude < SHIP:ORBIT:PERIAPSIS) AND (finalAltitude > SHIP:ORBIT:APOAPSIS) SET errorCode TO "Apo > Final Alt > Peri".
 IF SHIP:ORBIT:TRANSITION <> "Final" SET errorCode TO "Transition occures!".
