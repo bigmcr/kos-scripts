@@ -60,7 +60,8 @@ IF errorCode = "None" {
 	FOR stageNumber IN RANGE(shipInfo["NumberOfStages"] - 1, -1) {
 		IF shipInfo["Stage " + stageNumber]["Isp"] <> 0 usedStages:ADD(shipInfo["Stage " + stageNumber]).
 	}
-	PRINT "There are a total of " + usedStages:LENGTH + " stages that can be used".
+	IF usedStages:LENGTH <> 0 PRINT "There are a total of " + usedStages:LENGTH + " stages that can be used".
+	ELSE PRINT "There are a total of " + usedStages:LENGTH + " stage that can be used".
 
 	LOCAL startTime IS MISSIONTIME.
 	LOCAL startStage IS STAGE:NUMBER.
