@@ -80,12 +80,14 @@ LOCAL landingArrow IS VECDRAW(V(0,0,0), flatSpot:POSITION, BLUE, "Landing Direct
 LOCAL velocityArrow IS VECDRAW(V(0,0,0), flatSpot:POSITION, RED, "Velocity", 1.0, FALSE, 0.2).
 LOCAL aimingArrow IS VECDRAW(V(0,0,0), flatSpot:POSITION, GREEN, "Aiming", 1.0, FALSE, 0.2).
 LOCAL loggingStarted IS FALSE.
+LOCAL downslopeInfo IS findDownSlopeInfo().
 
 UNTIL mode > 5 {
 	PRINT "Mode " + mode AT (40, 0).
 	SET aboveGround TO heightAboveGround().
 	SET velocityPitch TO pitch_vector(-VELOCITY:SURFACE).
 	IF (TIME:SECONDS <> oldTime) {
+		SET downslopeInfo TO findDownSlopeInfo(10, 10).
 		SET hAccel TO (GROUNDSPEED - oldHSpeed)/(TIME:SECONDS - oldTime).
 		SET vAccel TO (VERTICALSPEED - oldVSpeed)/(TIME:SECONDS - oldTime).
 		SET flatSpotDistancePrev TO flatSpotDistance.
@@ -101,15 +103,15 @@ UNTIL mode > 5 {
 		IF (ABS(vAccel) > 0.05) {
 			SET timeToVSpeedZero TO ABS (VERTICALSPEED / vAccel).
 		} ELSE SET timeToVSpeedZero TO 0.
-		
+
 		IF hAccel < 0 SET loggingStarted TO TRUE.
-		
+
 		PRINT "Horizontal Speed " + ROUND(GROUNDSPEED, 2) + " m/s     " AT (0, 0).
 		PRINT "Horizontal Acceleration " + ROUND(hAccel, 2) + " m/s^2    " AT (0, 1).
 		PRINT "Vertical Speed " + ROUND(VERTICALSPEED, 2) + " m/s    " AT (0, 2).
 		PRINT "Vertical Acceleration " + ROUND(vAccel, 2) + " m/s^2    " AT (0, 3).
 		PRINT "Time to Horizontal Zero " + ROUND(timeToHSpeedZero, 2) + " s    " AT (0, 4).
-		PRINT "Slope of Ground " + ROUND(findGroundSlopeAngle(), 2) + " deg     " AT (0, 5).
+		PRINT "Slope of Ground " + ROUND(downslopeInfo["slope"], 2) + " deg     " AT (0, 5).
 		PRINT "Distance to Target " + distanceToString(flatSpot:POSITION:MAG) + "       " AT (0, 6).
 
 		LOCAL message IS missionTime.
@@ -120,7 +122,7 @@ UNTIL mode > 5 {
 		SET message TO message + "," + vAccel.
 		SET message TO message + "," + timeToHSpeedZero.
 		SET message TO message + "," + aboveGround.
-		SET message TO message + "," + findGroundSlopeAngle().
+		SET message TO message + "," + downslopeInfo["slope"].
 		SET message TO message + "," + pitchPID:SETPOINT.
 		SET message TO message + "," + T_PID:SETPOINT.
 		SET message TO message + "," + pitch_for(SHIP).
