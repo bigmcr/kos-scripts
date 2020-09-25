@@ -2051,7 +2051,7 @@ FUNCTION weightedAverage {
 
 FUNCTION processScalarParameter {
 	PARAMETER para.
-	PARAMETER errorValueScalar = errorValue.
+	PARAMETER errorValueScalar IS errorValue.
 	IF para:TYPENAME = "Scalar" RETURN para.
 	IF para:TYPENAME = "String" {
 		LOCAL returnNumber IS errorValueScalar.
