@@ -112,7 +112,7 @@ FUNCTION copyToLocal {
 		}
 
 		COMPILE "0:boot/boot.ks" TO "1:boot.ksm".
-		SET CORE:BOOTFILENAME    TO "1:boot.ksm".
+		SET CORE:BOOTFILENAME    TO "/boot.ksm".
 		PRINT "Boot file name set to " + CORE:BOOTFILENAME.
 
 		PRINT "Now compiling all scripts.".
@@ -148,7 +148,7 @@ FUNCTION copyToLocal {
 	}
 }
 
-WAIT 1.
+WAIT 0.25.
 
 IF KUNIVERSE:TIMEWARP:RATE < 100 core:part:getmodule("kOSProcessor"):doevent("Open Terminal").
 SET TERMINAL:BRIGHTNESS TO 1.
