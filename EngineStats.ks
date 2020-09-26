@@ -5,7 +5,7 @@ LIST ENGINES IN engineList.
 LOCAL engineCount IS 0.
 LOCAL engineStats IS LEXICON().
 LOCAL engineStat IS LEXICON().
-LOCAL pressure IS 1.0.
+LOCAL pressure IS SHIP:BODY:ATM:ALTITUDEPRESSURE(SHIP:BODY:POSITION:MAG - SHIP:BODY:RADIUS).
 
 FOR eachEngine IN engineList {
 	SET engineStat TO LEXICON().
@@ -50,8 +50,8 @@ IF engineStats:LENGTH > 0 {
 		}
 		SET message TO message + CHAR(10).
 	}
-	SET message TO message + "Throttle," + THROTTLE.
-	SET message TO message + "Pressure," + pressure + ",atms".
+	SET message TO message + "Throttle," + THROTTLE + CHAR(10).
+	SET message TO message + "Pressure," + pressure + ",atms" + CHAR(10).
 }
 CLEARSCREEN.
 PRINT "Engines.csv created on the archive".
