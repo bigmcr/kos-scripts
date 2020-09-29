@@ -730,14 +730,14 @@ UNTIL done {
 			TOGGLE updateScreen.
 		}
 	}
-	SET facingVector:SHOW TO steeringVectorsVisible AND useMySteer.
-	SET guidanceVector:SHOW TO steeringVectorsVisible AND useMySteer.
+	SET facingVector:SHOW TO steeringVectorsVisible AND useMySteer AND NOT MAPVIEW.
+	SET guidanceVector:SHOW TO steeringVectorsVisible AND useMySteer AND NOT MAPVIEW.
 	IF count > 50 {
 		SET count TO 1.
 		TOGGLE updateScreen.
 	}
 	IF useMyThrottle SET myThrottle TO 0.
-	WAIT 0.
+	WAIT 0.1.
 }
 
 CLEARSCREEN.
