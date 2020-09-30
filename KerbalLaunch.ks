@@ -1,6 +1,6 @@
 PARAMETER finalInclination IS 0.					// The initial heading to launch at
 PARAMETER altitudeTarget IS 20000.			// The desired final altitude
-PARAMETER maxGs IS 2.
+PARAMETER maxGs IS 1.5.
 PARAMETER initialStage IS TRUE.				// Whether or not to trigger the stage function to start with
 
 IF SHIP:BODY:ATM:EXISTS {
