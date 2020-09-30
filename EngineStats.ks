@@ -10,21 +10,21 @@ LOCAL pressure IS SHIP:BODY:ATM:ALTITUDEPRESSURE(SHIP:BODY:POSITION:MAG - SHIP:B
 FOR eachEngine IN engineList {
 	SET engineStat TO LEXICON().
 	engineStat:ADD("TITLE", eachEngine:TITLE).
-	engineStat:ADD("THRUSTLIMIT", eachEngine:THRUSTLIMIT).
-	engineStat:ADD("MAXTHRUST", eachEngine:MAXTHRUST).
-	engineStat:ADD("MAXTHRUSTAT(pressure)", eachEngine:MAXTHRUSTAT(pressure)).
-	engineStat:ADD("THRUST", eachEngine:THRUST).
-	engineStat:ADD("AVAILABLETHRUST", eachEngine:AVAILABLETHRUST).
-	engineStat:ADD("AVAILABLETHRUSTAT(pressure)", eachEngine:AVAILABLETHRUSTAT(pressure)).
-	engineStat:ADD("POSSIBLETHRUST", eachEngine:POSSIBLETHRUST).
-	engineStat:ADD("POSSIBLETHRUSTAT(pressure)", eachEngine:POSSIBLETHRUSTAT(pressure)).
-	engineStat:ADD("FUELFLOW", eachEngine:FUELFLOW).
-	engineStat:ADD("ISP", eachEngine:ISP).
-	engineStat:ADD("ISPAT(pressure)", eachEngine:ISPAT(pressure)).
-	engineStat:ADD("VACUUMISP", eachEngine:VACUUMISP).
-	engineStat:ADD("VISP", eachEngine:VISP).
-	engineStat:ADD("SEALEVELISP", eachEngine:SEALEVELISP).
-	engineStat:ADD("SLISP", eachEngine:SLISP).
+	engineStat:ADD("THRUSTLIMIT", eachEngine:THRUSTLIMIT + ",%").
+	engineStat:ADD("MAXTHRUST", eachEngine:MAXTHRUST + ",kN").
+	engineStat:ADD("MAXTHRUSTAT(pressure)", eachEngine:MAXTHRUSTAT(pressure) + ",kN").
+	engineStat:ADD("THRUST", eachEngine:THRUST + ",kN").
+	engineStat:ADD("AVAILABLETHRUST", eachEngine:AVAILABLETHRUST + ",kN").
+	engineStat:ADD("AVAILABLETHRUSTAT(pressure)", eachEngine:AVAILABLETHRUSTAT(pressure) + ",kN").
+	engineStat:ADD("POSSIBLETHRUST", eachEngine:POSSIBLETHRUST + ",kN").
+	engineStat:ADD("POSSIBLETHRUSTAT(pressure)", eachEngine:POSSIBLETHRUSTAT(pressure) + ",kN").
+	engineStat:ADD("FUELFLOW", eachEngine:FUELFLOW + ",kg/s").
+	engineStat:ADD("ISP", eachEngine:ISP + ",s").
+	engineStat:ADD("ISPAT(pressure)", eachEngine:ISPAT(pressure) + ",s").
+	engineStat:ADD("VACUUMISP", eachEngine:VACUUMISP + ",s").
+	engineStat:ADD("VISP", eachEngine:VISP + ",s").
+	engineStat:ADD("SEALEVELISP", eachEngine:SEALEVELISP + ",s").
+	engineStat:ADD("SLISP", eachEngine:SLISP + ",s").
 	engineStat:ADD("FLAMEOUT", eachEngine:FLAMEOUT).
 	engineStat:ADD("IGNITION", eachEngine:IGNITION).
 	engineStat:ADD("ALLOWRESTART", eachEngine:ALLOWRESTART).
@@ -36,7 +36,7 @@ FOR eachEngine IN engineList {
 	engineStats:ADD(eachEngine:UID, engineStat).
 }
 
-LOCAL message IS "".
+LOCAL message IS "Unique ID".
 
 IF engineStats:LENGTH > 0 {
 	FOR eachEngine IN engineStats:KEYS {
