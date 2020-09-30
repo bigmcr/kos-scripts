@@ -854,11 +854,11 @@ FUNCTION engineStats {
 
 	LOCAL mDot_cur IS 0.												// Rate of change of mass for the primary engine, given current throttle (kg/s)
 	LOCAL mDot_max IS 0.												// Rate of change of mass for the primary engine, with throttle at 100% (kg/s)
-	LOCAL F_cur IS 0.													// Current thrust (N)
-	LOCAL F_max IS 0.													// Full thrust (N)
-	LOCAL pressure IS 0.												// Ambient atmospheric pressure (atmospheres)
+	LOCAL F_cur IS 0.														// Current thrust (N)
+	LOCAL F_max IS 0.														// Full thrust (N)
+	LOCAL pressure IS 0.												// Ambient atmospheric pressure (atmospheres) Default to 0.
 	LOCAL effectiveThrottle IS 0.
-	IF SHIP:BODY:ATM:EXISTS {SET pressure TO SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE).}
+	IF SHIP:BODY:ATM:EXISTS SET pressure TO SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE).
 
 	IF isStockRockets() {
 		FOR eng IN engineList {
@@ -866,16 +866,16 @@ FUNCTION engineStats {
 			IF eng:THROTTLELOCK SET effectiveThrottle TO 1.
 			ELSE SET effectiveThrottle TO THROTTLE.
 
-			SET mDot_cur TO mDot_cur + eng:THRUST         * 1000 / (g_0 * eng:ISPAT(pressure)) * (eng:THRUSTLIMIT / 100.0) * effectiveThrottle.
-			SET mDot_max TO mDot_max + eng:POSSIBLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)) * (eng:THRUSTLIMIT / 100.0).
-			SET F_cur TO F_cur + eng:THRUST         * 1000 * (eng:THRUSTLIMIT / 100.0) * effectiveThrottle.
-			SET F_max TO F_max + eng:POSSIBLETHRUST * 1000 * (eng:THRUSTLIMIT / 100.0).
+			SET mDot_cur TO mDot_cur + eng:THRUST         * 1000 / (g_0 * eng:ISPAT(pressure)) * effectiveThrottle.
+			SET mDot_max TO mDot_max + eng:POSSIBLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)).
+			SET F_cur TO F_cur + eng:THRUST         * 1000 * effectiveThrottle.
+			SET F_max TO F_max + eng:POSSIBLETHRUST * 1000.
 		}
 	} ELSE {
 		FOR eng IN engineList {
 			IF eng:IGNITION AND eng:HASMODULE("ModuleEnginesRF") {
 					SET mDot_cur TO mDot_cur + eng:GETMODULE("ModuleEnginesRF"):GETFIELD("thrust") * 1000 / (g_0 * eng:ISPAT(pressure)).
-					SET mDot_max TO mDot_max + eng:POSSIBLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)) * (eng:THRUSTLIMIT / 100.0).
+					SET mDot_max TO mDot_max + eng:POSSIBLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)).
 					SET F_cur TO F_cur + eng:GETMODULE("ModuleEnginesRF"):GETFIELD("thrust") * 1000.
 					SET F_max TO F_max + eng:POSSIBLETHRUST * 1000 * (eng:THRUSTLIMIT / 100.0).
 			} ELSE {
@@ -883,10 +883,10 @@ FUNCTION engineStats {
 				IF eng:THROTTLELOCK SET effectiveThrottle TO 1.
 				ELSE SET effectiveThrottle TO THROTTLE.
 
-				SET mDot_cur TO mDot_cur + eng:THRUST         * 1000 / (g_0 * eng:ISPAT(pressure)) * (eng:THRUSTLIMIT / 100.0) * effectiveThrottle.
-				SET mDot_max TO mDot_max + eng:POSSIBLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)) * (eng:THRUSTLIMIT / 100.0).
-				SET F_cur TO F_cur + eng:THRUST         * 1000 * (eng:THRUSTLIMIT / 100.0) * effectiveThrottle.
-				SET F_max TO F_max + eng:POSSIBLETHRUST * 1000 * (eng:THRUSTLIMIT / 100.0).
+				SET mDot_cur TO mDot_cur + eng:THRUST         * 1000 / (g_0 * eng:ISPAT(pressure)) * effectiveThrottle.
+				SET mDot_max TO mDot_max + eng:POSSIBLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)).
+				SET F_cur TO F_cur + eng:THRUST         * 1000 * effectiveThrottle.
+				SET F_max TO F_max + eng:POSSIBLETHRUST * 1000.
 			}
 		}
 	}
