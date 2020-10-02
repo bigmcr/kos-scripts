@@ -5,7 +5,7 @@ CLEARSCREEN.
 PARAMETER finalAltitude.    // Final Altitude above sea level. Does NOT include BODY:RADIUS
 PARAMETER acknowledge IS FALSE.
 
-IF (finalAltitude = "target" OR finalAltitude = "t") AND HASTARGET SET finalAltitude TO TARGET:ORBIT:SEMIMAJORAXIS - TARGET:BODY:RADIUS.
+IF (finalAltitude:TYPENAME = "String" AND (finalAltitude = "target" OR finalAltitude = "tar") AND HASTARGET SET finalAltitude TO TARGET:ORBIT:SEMIMAJORAXIS - TARGET:BODY:RADIUS.
 ELSE SET finalAltitude TO processScalarParameter(finalAltitude, BODY:POSITION:MAG).
 
 LOCAL errorCode IS "None".
@@ -50,11 +50,12 @@ IF errorcode = "None" {
     LOCAL fileName IS "0:Hohmann Transfers.csv".
     LOG "TIME:SECONDS," + TIME:SECONDS + ",s" TO fileName.
     LOG "ETA:PERIAPSIS," + ETA:PERIAPSIS + ",s" TO fileName.
-    LOG "ETA:APOAPSIS," + ETA:PERIAPSIS + ",s" TO fileName.
+    LOG "ETA:APOAPSIS," + ETA:APOAPSIS + ",s" TO fileName.
     LOG "nodeTime," + nodeTime + ",s" TO fileName.
     LOG "r_1," + r_1 + ",m" TO fileName.
     LOG "r_2," + r_2 + ",m" TO fileName.
     LOG "Body mu," + mu + ",m^3/s^2" TO fileName.
+    LOG "Body radius," + BODY:RADIUS + ",m" TO fileName.
     LOG "Current SMA," + currentSMA + ",m" TO fileName.
     LOG "Transfer SMA," + transferSMA + ",m" TO fileName.
     LOG "Orbital Speed Pre Transfer Burn Measured," + currentSpeed + ",m/s" TO fileName.
