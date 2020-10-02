@@ -5,7 +5,7 @@ CLEARSCREEN.
 PARAMETER finalAltitude.    // Final Altitude above sea level. Does NOT include BODY:RADIUS
 PARAMETER acknowledge IS FALSE.
 
-IF (finalAltitude:TYPENAME = "String" AND (finalAltitude = "target" OR finalAltitude = "tar") AND HASTARGET SET finalAltitude TO TARGET:ORBIT:SEMIMAJORAXIS - TARGET:BODY:RADIUS.
+IF (finalAltitude:TYPENAME = "String" AND (finalAltitude = "target" OR finalAltitude = "tar")) AND HASTARGET SET finalAltitude TO TARGET:ORBIT:SEMIMAJORAXIS - TARGET:BODY:RADIUS.
 ELSE SET finalAltitude TO processScalarParameter(finalAltitude, BODY:POSITION:MAG).
 
 LOCAL errorCode IS "None".
