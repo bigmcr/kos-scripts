@@ -648,12 +648,12 @@ UNTIL done {
 						SET loopMessage TO "Part file created!".
 					} ELSE
 
-					// if inputString is any of the planet names, point toward that planet
-					SET foundBody TO "".
-					FOR bod in bodList {
-						IF inputString = bod:NAME AND foundBody = "" {SET foundBody TO bod.}
-					}
-					IF foundBody <> "" {
+					IF inputstring = "Sun" {
+						// point toward the Sun, defined as the body that isn't orbiting something.
+						SET foundBody TO SHIP:BODY.
+						UNTIL NOT foundBody:HASBODY {
+							SET foundBody TO foundBody:BODY.
+						}
 						SET useMySteer TO TRUE.
 						SAS OFF.
 						LOCK mySteer TO LOOKDIRUP(foundBody:DIRECTION:VECTOR, SHIP:UP:VECTOR).
