@@ -1810,46 +1810,43 @@ FUNCTION timeToLongitude
 // Returns time in seconds to the next time SHIP crosses the input altitude or 0 if input altitude is never crossed
 FUNCTION timeToAltitude
 {
-    PARAMETER desiredAltitude.
+  PARAMETER desiredAltitude.
 
-    // return 0 if never reach altitude
-    IF desiredAltitude < SHIP:PERIAPSIS OR desiredAltitude > SHIP:APOAPSIS RETURN 0.
+  // return 0 if never reach altitude
+  IF desiredAltitude < SHIP:PERIAPSIS OR desiredAltitude > SHIP:APOAPSIS RETURN 0.
 
-    // query constants
-    LOCAL ecc IS SHIP:ORBIT:ECCENTRICITY.
-    IF ecc = 0 SET ecc TO 0.00001. // ensure no divide by 0
-    LOCAL sma IS SHIP:ORBIT:SEMIMAJORAXIS.
-    LOCAL desiredRadius IS desiredAltitude + SHIP:BODY:RADIUS.
-    LOCAL currentRadius IS SHIP:ALTITUDE + SHIP:BODY:RADIUS.
+  // query constants
+  LOCAL ecc IS SHIP:ORBIT:ECCENTRICITY.
+  IF ecc = 0 SET ecc TO 0.00001. // ensure no divide by 0
+  LOCAL sma IS SHIP:ORBIT:SEMIMAJORAXIS.
+  LOCAL desiredRadius IS desiredAltitude + SHIP:BODY:RADIUS.
+  LOCAL currentRadius IS SHIP:ALTITUDE + SHIP:BODY:RADIUS.
 
-    // Step 1: get true anomaly (bounds required for numerical errors near apsides)
-    LOCAL desiredTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / desiredRadius) - 1) / ecc)).
-    LOCAL currentTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / currentRadius) - 1) / ecc)).
+  // Step 1: get true anomaly (bounds required for numerical errors near apsides)
+  LOCAL desiredTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / desiredRadius) - 1) / ecc)).
+  LOCAL currentTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / currentRadius) - 1) / ecc)).
 
-    // Step 2: calculate eccentric anomaly
-    LOCAL desiredEccentricAnomaly IS ARCCOS((ecc + desiredTrueAnomalyCos) / (1 + ecc * desiredTrueAnomalyCos)).
-    LOCAL currentEccentricAnomaly IS ARCCOS((ecc + currentTrueAnomalyCos) / (1 + ecc * currentTrueAnomalyCos)).
+  // Step 2: calculate eccentric anomaly
+  LOCAL desiredEccentricAnomaly IS ARCCOS((ecc + desiredTrueAnomalyCos) / (1 + ecc * desiredTrueAnomalyCos)).
+  LOCAL currentEccentricAnomaly IS ARCCOS((ecc + currentTrueAnomalyCos) / (1 + ecc * currentTrueAnomalyCos)).
 
-    // Step 3: calculate mean anomaly
-    LOCAL desiredMeanAnomaly IS Constant:DegToRad * desiredEccentricAnomaly - ecc * SIN( desiredEccentricAnomaly).
-    LOCAL currentMeanAnomaly IS Constant:DegToRad * currentEccentricAnomaly - ecc * SIN( currentEccentricAnomaly).
-	IF ETA:APOAPSIS > ETA:PERIAPSIS
-	{
+  // Step 3: calculate mean anomaly
+  LOCAL desiredMeanAnomaly IS Constant:DegToRad * desiredEccentricAnomaly - ecc * SIN( desiredEccentricAnomaly).
+  LOCAL currentMeanAnomaly IS Constant:DegToRad * currentEccentricAnomaly - ecc * SIN( currentEccentricAnomaly).
+	IF ETA:APOAPSIS > ETA:PERIAPSIS {
 		SET currentMeanAnomaly TO Constant:PI * 2 - currentMeanAnomaly.
-	}.
-    IF desiredAltitude < SHIP:ALTITUDE
-    {
-        SET desiredMeanAnomaly TO Constant:PI * 2 - desiredMeanAnomaly.
-    }
-    ELSE IF desiredAltitude > SHIP:ALTITUDE AND ETA:APOAPSIS > ETA:PERIAPSIS
-    {
-        SET desiredMeanAnomaly TO Constant:PI * 2 + desiredMeanAnomaly.
-    }.
+	}
+  IF desiredAltitude < SHIP:ALTITUDE {
+      SET desiredMeanAnomaly TO Constant:PI * 2 - desiredMeanAnomaly.
+  }
+  ELSE IF desiredAltitude > SHIP:ALTITUDE AND ETA:APOAPSIS > ETA:PERIAPSIS {
+      SET desiredMeanAnomaly TO Constant:PI * 2 + desiredMeanAnomaly.
+  }
 
-    // Step 4: calculate time difference via mean motion
-    LOCAL meanMotion IS Constant:PI * 2 / SHIP:ORBIT:PERIOD. // in deg/s
+  // Step 4: calculate time difference via mean motion
+  LOCAL meanMotion IS Constant:PI * 2 / SHIP:ORBIT:PERIOD. // in deg/s
 
-    RETURN (desiredMeanAnomaly - currentMeanAnomaly) / meanMotion.
+  RETURN (desiredMeanAnomaly - currentMeanAnomaly) / meanMotion.
 }
 
 // End Script
