@@ -1,11 +1,103 @@
+@LAZYGLOBAL OFF.
 CLEARSCREEN.
 
+LOCAL recursiveLogName IS "0:findZeroSecantLog.csv".
+
+FUNCTION findZeroSecant {
+  PARAMETER delegate.
+  PARAMETER X1.
+  PARAMETER X2.
+  PARAMETER tolerance.
+  PARAMETER iteration IS 0.
+
+  IF ((iteration = 10) OR (delegate:TYPENAME <> "UserDelegate")) RETURN delegate(X1).
+
+  LOCAL F1 IS delegate(X1).
+  LOCAL F2 IS delegate(X2).
+  LOCAL X3 IS 0.
+  IF (F1 <> 0) OR (F2 <> 0) SET X3 TO (X2 * F1 - X1 * F2) / (F1 - F2).
+  LOCAL F3 IS delegate(X3).
+
+  IF ABS(F3) < tolerance RETURN X3.
+  RETURN  findZeroSecant(delegate, X2, X3, tolerance, iteration + 1).
+}
+
+// given the mean anomaly (in degrees), returns true anomaly (in degrees)
+FUNCTION meanToTrueAnomaly {
+  PARAMETER meanAnomaly.
+  PARAMETER eccentricity.
+
+  // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
+  IF eccentricity = 0 RETURN meanAnomaly.
+
+  // Convert to radians for calculations.
+  SET meanAnomaly TO CONSTANT:DegToRad * meanAnomaly.
+
+  // Note that this function requires angles to be in radians
+  LOCAL functionDelegate IS {PARAMETER E. RETURN E - eccentricity*SIN(CONSTANT:RadToDeg * E) - meanAnomaly.}.
+
+//  LOG "X1,F1,X2,F2,X3,F3,Tolerance,Iterations" TO recursiveLogName.
+  LOCAL eccentricAnomaly IS findZeroSecant(functionDelegate, meanAnomaly, meanAnomaly + CONSTANT:PI/32, 0.0000001).
+  LOCAL trueAnomaly IS ARCTAN2(COS(CONSTANT:RadToDeg * eccentricAnomaly) - eccentricity, SQRT(1-eccentricity*eccentricity)*SIN(CONSTANT:RadToDeg * eccentricAnomaly)).
+  UNTIL trueAnomaly >= 0 {
+    SET trueAnomaly TO trueAnomaly + 360.0.
+  }
+
+  RETURN trueAnomaly.
+}
+
+// given the true anomaly (in degrees), returns mean anomaly (in degrees)
+FUNCTION trueToMeanAnomaly {
+  PARAMETER trueAnomaly.
+  PARAMETER eccentricity.
+
+  // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
+  IF eccentricity = 0 RETURN trueAnomaly.
+
+  // Convert to radians for calculations.
+  SET trueAnomaly TO CONSTANT:DegToRad * trueAnomaly.
+
+  LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCCOS((eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly))).
+  LOCAL meanAnomaly IS eccentricAnomaly * CONSTANT:DegToRad - eccentricity * SIN(eccentricAnomaly).
+  RETURN CONSTANT:RadToDeg * meanAnomaly.
+}
+
+FUNCTION phaseAngleOfOrbits {
+  PARAMETER orbit1.
+  PARAMETER orbit2.
+  PARAMETER timeFromNow IS 0.
+
+  LOCAL shipEcc IS orbit1:ECCENTRICITY.
+  LOCAL targetEcc IS orbit2:ECCENTRICITY.
+
+  LOCAL shipTrueAnomaly IS orbit1:LAN + orbit1:ARGUMENTOFPERIAPSIS + orbit1:TRUEANOMALY.
+  LOCAL targetTrueAnomaly IS orbit2:LAN + orbit2:ARGUMENTOFPERIAPSIS + orbit2:TRUEANOMALY.
+
+  LOCAL shipMeanAnomaly IS trueToMeanAnomaly(shipTrueAnomaly, shipEcc).
+  LOCAL targetMeanAnomaly IS trueToMeanAnomaly(targetTrueAnomaly, targetEcc).
+
+  LOCAL shipMeanMotion IS 360.0 / orbit1:PERIOD.
+  LOCAL targetMeanMotion IS 360.0 / orbit1:PERIOD.
+
+  LOCAL shipFinalMeanAnomaly IS shipMeanAnomaly + timeFromNow * shipMeanMotion.
+  LOCAL targetFinalMeanAnomaly IS targetMeanAnomaly + timeFromNow * targetMeanMotion.
+
+  LOCAL shipFinalTrueAnomaly IS meanToTrueAnomaly(shipFinalMeanAnomaly, shipEcc).
+  LOCAL targetFinalTrueAnomaly IS meanToTrueAnomaly(targetFinalMeanAnomaly, targetEcc).
+
+  LOCAL relativePhase IS (targetFinalTrueAnomaly - shipFinalTrueAnomaly) - 360 * floor((targetFinalTrueAnomaly - shipFinalTrueAnomaly)/360).
+
+  RETURN relativePhase.
+}
+
 // calculate and create nodes for a Hohmann transfer orbit to the specified altitude.
-// Creates nodes for the initial transfer burn and the circularization burn.
+// Creates nodes for the initial transfer burn only.
 PARAMETER finalAltitude.    // Final Altitude above sea level. Does NOT include BODY:RADIUS
 PARAMETER acknowledge IS FALSE.
 
-IF (finalAltitude:TYPENAME = "String" AND (finalAltitude = "target" OR finalAltitude = "tar")) AND HASTARGET SET finalAltitude TO TARGET:ORBIT:SEMIMAJORAXIS - TARGET:BODY:RADIUS.
+LOCAL transferToTarget IS (finalAltitude:TYPENAME = "String" AND (finalAltitude = "target" OR finalAltitude = "tar")) AND HASTARGET.
+
+IF transferToTarget SET finalAltitude TO TARGET:ORBIT:SEMIMAJORAXIS - TARGET:BODY:RADIUS.
 ELSE SET finalAltitude TO processScalarParameter(finalAltitude, BODY:POSITION:MAG).
 
 LOCAL errorCode IS "None".
@@ -18,13 +110,13 @@ IF errorcode = "None" {
   LOCAL nodeTime IS TIME:SECONDS + 60.
 
   // If the final altitude is above the current orbit, set the burn to happen at the periapsis.
-  IF finalAltitude < SHIP:ORBIT:PERIAPSIS {
+  IF NOT transferToTarget AND finalAltitude < SHIP:ORBIT:PERIAPSIS {
     SET nodeTime TO TIME:SECONDS + ETA:PERIAPSIS.
     SET r_1 TO SHIP:ORBIT:PERIAPSIS + SHIP:BODY:RADIUS.
   }
 
   // If the final altitude is below the current orbit, set the burn to happen at the apoapsis.
-  IF finalAltitude > SHIP:ORBIT:APOAPSIS {
+  IF NOT transferToTarget AND finalAltitude > SHIP:ORBIT:APOAPSIS {
     SET nodeTime TO TIME:SECONDS + ETA:APOAPSIS.
     SET r_1 TO SHIP:ORBIT:APOAPSIS + SHIP:BODY:RADIUS.
   }
@@ -37,6 +129,60 @@ IF errorcode = "None" {
   LOCAL deltaV1 IS orbitalSpeedPostTransferBurn - VELOCITY:ORBIT:MAG.
   LOCAL currentSpeed IS VELOCITYAT(SHIP, nodeTime):ORBIT:MAG.
 
+  LOCAL shipPhase IS 0.
+  LOCAL targetPhase IS 0.
+  LOCAL relativePhase IS 0.
+  LOCAL desiredPhase IS (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
+  LOCAL logFileName IS "0:PhaseAngle.csv".
+  PRINT "Desired phase: " + ROUND(desiredPhase, 4) AT (0, 3).
+
+  LOCAL smallerPeriod IS MIN(SHIP:ORBIT:PERIOD, TARGET:ORBIT:PERIOD).
+
+  LOCAL bestYetTime IS SHIP:ORBIT:PERIOD.
+  LOCAL bestYetPhase IS 360.
+  LOCAL bestYetTime2 IS SHIP:ORBIT:PERIOD.
+  LOCAL bestYetPhase2 IS 360.
+  LOCAL bestYetTime3 IS SHIP:ORBIT:PERIOD.
+  LOCAL bestYetPhase3 IS 360.
+
+  LOG "Time,bestYetPhase,desiredPhase" TO recursiveLogName.
+  FROM {LOCAL timeGuess IS 0.} UNTIL timeGuess > 1.02 STEP {SET timeGuess TO timeGuess + 0.2.} DO {
+    SET relativePhase TO phaseAngleOfOrbits(SHIP:ORBIT, TARGET:ORBIT, timeGuess * smallerPeriod).
+    IF ABS( desiredPhase - relativePhase) < bestYetPhase {
+      SET bestYetTime TO timeGuess.
+      SET bestYetPhase TO ABS( desiredPhase - relativePhase).
+    }
+    PRINT "Time: " + timeGuess + " phase angle " + ROUND(relativePhase, 1) + " degrees, Best Yet Phase Angle " + ROUND(bestYetPhase, 1).
+    LOG timeGuess + "," + bestYetPhase + "," + desiredPhase TO recursiveLogName.
+  }
+
+  FROM {LOCAL timeGuess IS bestYetTime - 0.2.} UNTIL timeGuess > bestYetTime + 0.2 STEP {SET timeGuess TO timeGuess + 0.025.} DO {
+    SET relativePhase TO phaseAngleOfOrbits(SHIP:ORBIT, TARGET:ORBIT, timeGuess * smallerPeriod).
+    IF ABS( desiredPhase - relativePhase) < bestYetPhase2 {
+      SET bestYetTime2 TO timeGuess.
+      SET bestYetPhase2 TO ABS( desiredPhase - relativePhase).
+    }
+    PRINT "Time: " + timeGuess + " phase angle " + ROUND(relativePhase, 1) + " degrees, Best Yet Phase Angle " + ROUND(bestYetPhase2, 1).
+    LOG timeGuess + "," + bestYetPhase2 + "," + desiredPhase TO recursiveLogName.
+  }
+
+  FROM {LOCAL timeGuess IS bestYetTime2 - 0.025.} UNTIL timeGuess > bestYetTime2 + 0.025 STEP {SET timeGuess TO timeGuess + 0.001.} DO {
+    SET relativePhase TO phaseAngleOfOrbits(SHIP:ORBIT, TARGET:ORBIT, timeGuess * smallerPeriod).
+    IF ABS( desiredPhase - relativePhase) < bestYetPhase3 {
+      SET bestYetTime3 TO timeGuess.
+      SET bestYetPhase3 TO ABS( desiredPhase - relativePhase).
+    }
+    PRINT "Time: " + timeGuess + " phase angle " + ROUND(relativePhase, 1) + " degrees, Best Yet Phase Angle " + ROUND(bestYetPhase3, 1).
+    LOG timeGuess + "," + bestYetPhase3 + "," + desiredPhase TO recursiveLogName.
+  }
+
+  // If we are transferring to the target, set the burn to happen at the appropriate phase angle
+  IF transferToTarget {
+    // First, calculate half of the period of the transfer orbit.
+    SET nodeTime TO TIME:SECONDS + bestYetTime3 * smallerPeriod.
+    SET r_1 TO (SHIP:POSITIONAT(nodeTime) - SHIP:BODY:POSITION):MAG..
+  }
+
   PRINT "r_1: " + distanceToString(r_1, 4).
   PRINT "r_2: " + distanceToString(r_2, 4).
   PRINT "Current SMA: " + distanceToString(currentSMA, 4).
@@ -46,7 +192,7 @@ IF errorcode = "None" {
   PRINT "Orbital Speed Post Transfer Burn: " + distanceToString(orbitalSpeedPostTransferBurn, 4) + "/s".
   PRINT "Transfer Burn Delta V: " + distanceToString(deltaV1, 4) + "/s".
 
-  IF connectionToKSC() {
+  IF FALSE { // connectionToKSC()
     LOCAL fileName IS "0:Hohmann Transfers.csv".
     LOG "TIME:SECONDS," + TIME:SECONDS + ",s" TO fileName.
     LOG "ETA:PERIAPSIS," + ETA:PERIAPSIS + ",s" TO fileName.
@@ -55,7 +201,9 @@ IF errorcode = "None" {
     LOG "r_1," + r_1 + ",m" TO fileName.
     LOG "r_2," + r_2 + ",m" TO fileName.
     LOG "Body mu," + mu + ",m^3/s^2" TO fileName.
-    LOG "Body radius," + BODY:RADIUS + ",m" TO fileName.
+    LOG "Current Ship True Anomaly," + ORBIT:TRUEANOMALY + ",s" TO fileName.
+    IF transferToTarget LOG "Current Target True Anomaly," + TARGET:ORBIT:TRUEANOMALY +",s" TO fileName.
+    LOG "Desired phase," + desiredPhase +",s" TO fileName.
     LOG "Current SMA," + currentSMA + ",m" TO fileName.
     LOG "Transfer SMA," + transferSMA + ",m" TO fileName.
     LOG "Orbital Speed Pre Transfer Burn Measured," + currentSpeed + ",m/s" TO fileName.
@@ -65,9 +213,9 @@ IF errorcode = "None" {
     LOG "" TO fileName.
 
   }
-  LOCAL transferNode to NODE( nodeTime, 0, 0, deltaV1).
-  ADD transferNode.
+  ADD NODE( nodeTime, 0, 0, deltaV1).
 
+  SET loopMessage TO "Node created for Hohmann transfer".
 } ELSE {
   SET loopMessage TO errorCode.
 }
