@@ -285,8 +285,10 @@ UNTIL done {
 								SET loopMessage TO "Steering held to (" + inputStringList[1] + "," + inputStringList[2] + ")".
 						}
 					} ELSE IF (inputStringList[0] = "node") AND (inputstringList[1] = "delete") {
-						REMOVE NEXTNODE.
-						SET loopMessage TO "Removed next node".
+						IF HASNODE {
+							REMOVE NEXTNODE.
+							SET loopMessage TO "Removed next node".
+						} ELSE SET loopMessage TO "No next node to delete!".
 						SET commandValid TO TRUE.
 					} ELSE IF (inputStringList[0] = "node") {
 						// note that NODE has syntax of (radial, normal, prograde).
