@@ -129,58 +129,58 @@ IF errorcode = "None" {
   LOCAL deltaV1 IS orbitalSpeedPostTransferBurn - VELOCITY:ORBIT:MAG.
   LOCAL currentSpeed IS VELOCITYAT(SHIP, nodeTime):ORBIT:MAG.
 
-  LOCAL shipPhase IS 0.
-  LOCAL targetPhase IS 0.
   LOCAL relativePhase IS 0.
   LOCAL desiredPhase IS (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
   LOCAL logFileName IS "0:PhaseAngle.csv".
   PRINT "Desired phase: " + ROUND(desiredPhase, 4) AT (0, 3).
 
-  LOCAL smallerPeriod IS MIN(SHIP:ORBIT:PERIOD, TARGET:ORBIT:PERIOD).
-
-  LOCAL bestYetTime IS SHIP:ORBIT:PERIOD.
-  LOCAL bestYetPhase IS 360.
-  LOCAL bestYetTime2 IS SHIP:ORBIT:PERIOD.
-  LOCAL bestYetPhase2 IS 360.
-  LOCAL bestYetTime3 IS SHIP:ORBIT:PERIOD.
-  LOCAL bestYetPhase3 IS 360.
-
-  LOG "Time,bestYetPhase,desiredPhase" TO recursiveLogName.
-  FROM {LOCAL timeGuess IS 0.} UNTIL timeGuess > 1.02 STEP {SET timeGuess TO timeGuess + 0.2.} DO {
-    SET relativePhase TO phaseAngleOfOrbits(SHIP:ORBIT, TARGET:ORBIT, timeGuess * smallerPeriod).
-    IF ABS( desiredPhase - relativePhase) < bestYetPhase {
-      SET bestYetTime TO timeGuess.
-      SET bestYetPhase TO ABS( desiredPhase - relativePhase).
-    }
-    PRINT "Time: " + timeGuess + " phase angle " + ROUND(relativePhase, 1) + " degrees, Best Yet Phase Angle " + ROUND(bestYetPhase, 1).
-    LOG timeGuess + "," + bestYetPhase + "," + desiredPhase TO recursiveLogName.
-  }
-
-  FROM {LOCAL timeGuess IS bestYetTime - 0.2.} UNTIL timeGuess > bestYetTime + 0.2 STEP {SET timeGuess TO timeGuess + 0.025.} DO {
-    SET relativePhase TO phaseAngleOfOrbits(SHIP:ORBIT, TARGET:ORBIT, timeGuess * smallerPeriod).
-    IF ABS( desiredPhase - relativePhase) < bestYetPhase2 {
-      SET bestYetTime2 TO timeGuess.
-      SET bestYetPhase2 TO ABS( desiredPhase - relativePhase).
-    }
-    PRINT "Time: " + timeGuess + " phase angle " + ROUND(relativePhase, 1) + " degrees, Best Yet Phase Angle " + ROUND(bestYetPhase2, 1).
-    LOG timeGuess + "," + bestYetPhase2 + "," + desiredPhase TO recursiveLogName.
-  }
-
-  FROM {LOCAL timeGuess IS bestYetTime2 - 0.025.} UNTIL timeGuess > bestYetTime2 + 0.025 STEP {SET timeGuess TO timeGuess + 0.001.} DO {
-    SET relativePhase TO phaseAngleOfOrbits(SHIP:ORBIT, TARGET:ORBIT, timeGuess * smallerPeriod).
-    IF ABS( desiredPhase - relativePhase) < bestYetPhase3 {
-      SET bestYetTime3 TO timeGuess.
-      SET bestYetPhase3 TO ABS( desiredPhase - relativePhase).
-    }
-    PRINT "Time: " + timeGuess + " phase angle " + ROUND(relativePhase, 1) + " degrees, Best Yet Phase Angle " + ROUND(bestYetPhase3, 1).
-    LOG timeGuess + "," + bestYetPhase3 + "," + desiredPhase TO recursiveLogName.
-  }
-
   // If we are transferring to the target, set the burn to happen at the appropriate phase angle
   IF transferToTarget {
-    // First, calculate half of the period of the transfer orbit.
+    LOCAL smallerPeriod IS MIN(SHIP:ORBIT:PERIOD, TARGET:ORBIT:PERIOD).
+
+    LOCAL bestYetTime IS SHIP:ORBIT:PERIOD.
+    LOCAL bestYetPhase IS 360.
+
+    SET desiredPhase TO (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
+    LOG "Time,bestYetPhase,desiredPhase" TO recursiveLogName.
+    FROM {LOCAL timeGuess IS 0.} UNTIL timeGuess > 1.02 STEP {SET timeGuess TO timeGuess + 0.2.} DO {
+      SET relativePhase TO phaseAngleOfOrbits(SHIP:ORBIT, TARGET:ORBIT, timeGuess * smallerPeriod).
+      IF ABS( desiredPhase - relativePhase) < bestYetPhase {
+        SET bestYetTime TO timeGuess.
+        SET bestYetPhase TO ABS( desiredPhase - relativePhase).
+      }
+    }
+    SET r_1 TO (POSITIONAT(SHIP, TIME:SECONDS + bestYetTime * smallerPeriod) - SHIP:BODY:POSITION):MAG.
+    SET desiredPhase TO (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
+    LOG bestYetTime + "," + bestYetPhase + "," + desiredPhase + "," + r_1 TO recursiveLogName.
+
+    LOCAL bestYetTime2 IS SHIP:ORBIT:PERIOD.
+    LOCAL bestYetPhase2 IS 360.
+    FROM {LOCAL timeGuess IS bestYetTime - 0.2.} UNTIL timeGuess > bestYetTime + 0.2 STEP {SET timeGuess TO timeGuess + 0.025.} DO {
+      SET relativePhase TO phaseAngleOfOrbits(SHIP:ORBIT, TARGET:ORBIT, timeGuess * smallerPeriod).
+      IF ABS( desiredPhase - relativePhase) < bestYetPhase2 {
+        SET bestYetTime2 TO timeGuess.
+        SET bestYetPhase2 TO ABS( desiredPhase - relativePhase).
+      }
+    }
+    SET r_1 TO (POSITIONAT(SHIP, TIME:SECONDS + bestYetTime2 * smallerPeriod) - SHIP:BODY:POSITION):MAG.
+    SET desiredPhase TO (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
+    LOG bestYetTime2 + "," + bestYetPhase2 + "," + desiredPhase + "," + r_1 TO recursiveLogName.
+
+    LOCAL bestYetTime3 IS SHIP:ORBIT:PERIOD.
+    LOCAL bestYetPhase3 IS 360.
+    FROM {LOCAL timeGuess IS bestYetTime2 - 0.025.} UNTIL timeGuess > bestYetTime2 + 0.025 STEP {SET timeGuess TO timeGuess + 0.001.} DO {
+      SET relativePhase TO phaseAngleOfOrbits(SHIP:ORBIT, TARGET:ORBIT, timeGuess * smallerPeriod).
+      IF ABS( desiredPhase - relativePhase) < bestYetPhase3 {
+        SET bestYetTime3 TO timeGuess.
+        SET bestYetPhase3 TO ABS( desiredPhase - relativePhase).
+      }
+    }
+    SET r_1 TO (POSITIONAT(SHIP, TIME:SECONDS + bestYetTime3 * smallerPeriod) - SHIP:BODY:POSITION):MAG.
+    SET desiredPhase TO (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
+    LOG bestYetTime3 + "," + bestYetPhase3 + "," + desiredPhase + "," + r_1 TO recursiveLogName.
+
     SET nodeTime TO TIME:SECONDS + bestYetTime3 * smallerPeriod.
-    SET r_1 TO (SHIP:POSITIONAT(nodeTime) - SHIP:BODY:POSITION):MAG..
   }
 
   PRINT "r_1: " + distanceToString(r_1, 4).
@@ -192,7 +192,7 @@ IF errorcode = "None" {
   PRINT "Orbital Speed Post Transfer Burn: " + distanceToString(orbitalSpeedPostTransferBurn, 4) + "/s".
   PRINT "Transfer Burn Delta V: " + distanceToString(deltaV1, 4) + "/s".
 
-  IF FALSE { // connectionToKSC()
+  IF connectionToKSC() {
     LOCAL fileName IS "0:Hohmann Transfers.csv".
     LOG "TIME:SECONDS," + TIME:SECONDS + ",s" TO fileName.
     LOG "ETA:PERIAPSIS," + ETA:PERIAPSIS + ",s" TO fileName.
@@ -201,9 +201,9 @@ IF errorcode = "None" {
     LOG "r_1," + r_1 + ",m" TO fileName.
     LOG "r_2," + r_2 + ",m" TO fileName.
     LOG "Body mu," + mu + ",m^3/s^2" TO fileName.
-    LOG "Current Ship True Anomaly," + ORBIT:TRUEANOMALY + ",s" TO fileName.
-    IF transferToTarget LOG "Current Target True Anomaly," + TARGET:ORBIT:TRUEANOMALY +",s" TO fileName.
-    LOG "Desired phase," + desiredPhase +",s" TO fileName.
+    LOG "Current Ship True Anomaly," + ORBIT:TRUEANOMALY + ",deg" TO fileName.
+    IF transferToTarget LOG "Current Target True Anomaly," + TARGET:ORBIT:TRUEANOMALY +",deg" TO fileName.
+    LOG "Desired phase," + desiredPhase +",deg" TO fileName.
     LOG "Current SMA," + currentSMA + ",m" TO fileName.
     LOG "Transfer SMA," + transferSMA + ",m" TO fileName.
     LOG "Orbital Speed Pre Transfer Burn Measured," + currentSpeed + ",m/s" TO fileName.
