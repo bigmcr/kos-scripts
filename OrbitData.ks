@@ -1,11 +1,12 @@
 CLEARSCREEN.
+PARAMETER logToFile IS FALSE.
 PARAMETER localOrbit IS SHIP:ORBIT.
 
 PRINT "Name " + localOrbit:NAME.
 PRINT "Apoapsis " + distanceToString(localOrbit:APOAPSIS, 4).
 PRINT "Periapsis " + distanceToString(localOrbit:PERIAPSIS, 4).
 PRINT "Orbited Body " + localOrbit:BODY:NAME.
-PRINT "Orbited Body MU " + BODY:MU + ",m^3/s^2".
+PRINT "Orbited Body MU " + BODY:MU + " m^3/s^2".
 PRINT "Orbited Body Radius " + distanceToString(BODY:Radius, 4).
 PRINT "Period " + timeToString(localOrbit:PERIOD, 4).
 PRINT "Inclination " + ROUND(localOrbit:INCLINATION, 4).
@@ -25,7 +26,7 @@ IF localOrbit:HASNEXTPATCH {
   PRINT "Next Patch ETA " + timeToString(localOrbit:NEXTPATCHETA).
 }
 
-IF connectionToKSC() {
+IF connectionToKSC() AND logToFile {
   LOCAL fileName IS "0:Orbits.csv".
   LOG SHIP:NAME TO fileName.
   LOG "Name," + localOrbit:NAME TO fileName.
