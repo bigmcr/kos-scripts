@@ -56,10 +56,11 @@ ON updateScreen {
 //	PRINT "INC  000.000 deg                                                                " AT (0, 5).
 //	PRINT "PER 9999.000 sec                                                                " AT (0, 6).
 //	PRINT "SMA 999.9999 km                                                                 " AT (0, 7).
-//	PRINT "                                                                                " AT (0, 8).
-//	PRINT "CURRENT INPUT                           LOOP MESSAGE                            " AT (0, 9).
-//	PRINT "                                                                                " AT (0, 10).
-//	PRINT "--------------------------------------------------------------------------------" AT (0, 11).
+//	PRINT "ECC 0.000000                                                                    " AT (0, 8).
+//	PRINT "                                                                                " AT (0, 9).
+//	PRINT "CURRENT INPUT                           LOOP MESSAGE                            " AT (0, 10).
+//	PRINT "                                                                                " AT (0, 11).
+//	PRINT "--------------------------------------------------------------------------------" AT (0, 12).
 	PRINT "      Value     KSP Conn        Auto Steer        Previous Commands             " AT (0, 0).
 	PRINT "PIT             Local           Auto Throt                                      " AT (0, 1).
 	PRINT "ROL             Y/P RPM         dV Left                                         " AT (0, 2).
@@ -68,10 +69,11 @@ ON updateScreen {
 	PRINT "INC          deg                                                                " AT (0, 5).
 	PRINT "PER                                                                             " AT (0, 6).
 	PRINT "SMA                                                                             " AT (0, 7).
-	PRINT "                                                                                " AT (0, 8).
-	PRINT "Current Input                           Loop Message                            " AT (0, 9).
-	PRINT "                                                                                " AT (0, 10).
-	PRINT "--------------------------------------------------------------------------------" AT (0, 11).
+	PRINT "ECC                                                                             " AT (0, 8).
+	PRINT "                                                                                " AT (0, 9).
+	PRINT "Current Input                           Loop Message                            " AT (0, 10).
+	PRINT "                                                                                " AT (0, 11).
+	PRINT "--------------------------------------------------------------------------------" AT (0, 12).
 
 	PRINT ROUND(pointing["pitch"], 2):TOSTRING:PADLEFT(7) AT (4, 1).
 	PRINT ROUND(pointing["roll"], 2):TOSTRING:PADLEFT(7) AT (4, 2).
@@ -85,6 +87,7 @@ ON updateScreen {
 	IF SHIP:ORBIT:SEMIMAJORAXIS > 0 PRINT timeToString(SHIP:ORBIT:PERIOD, 0):PADLEFT(12) AT (4, 6).
 	ELSE							PRINT "TTP " + timeToString(ETA:PERIAPSIS, 0):PADLEFT(12) AT (0,6).
 	PRINT distanceToString(SHIP:ORBIT:SEMIMAJORAXIS, 4):PADLEFT(11) AT (4, 7).
+	PRINT ROUND(SHIP:ORBIT:ECCENTRICITY, 6):TOSTRING:PADLEFT(8) AT (4, 8).
 
 	PRINT useMySteer:TOSTRING:PADLEFT(5) AT (43, 0).
 	PRINT useMyThrottle:TOSTRING:PADLEFT(5) AT (43, 1).
@@ -93,10 +96,10 @@ ON updateScreen {
 	ELSE PRINT "  N/A" AT (43, 3).
 
 	// print the current input from the operator
-	PRINT inputString AT (0, 10).
+	PRINT inputString AT (0, 11).
 
 	// display any messages from the loop program
-	PRINT loopMessage AT (40, 10).
+	PRINT loopMessage AT (40, 11).
 	IF previousCommands:LENGTH > 0 PRINT previousCommands[previousCommands:LENGTH - 1]:PADRIGHT(29) AT (51, 1).
 	IF previousCommands:LENGTH > 1 PRINT previousCommands[previousCommands:LENGTH - 2]:PADRIGHT(29) AT (51, 2).
 	IF previousCommands:LENGTH > 2 PRINT previousCommands[previousCommands:LENGTH - 3]:PADRIGHT(29) AT (51, 3).
@@ -337,7 +340,10 @@ UNTIL done {
 						IF (inputStringList[1] = "Toggle") OR (inputStringList[1] = "T") SET coreHighlight:ENABLED TO NOT coreHighlight:ENABLED.
 						SET loopMessage TO "Core highlighting is currently " + coreHighlight:ENABLED.
 						SET commandValid TO TRUE.
-					} ELSE IF (inputStringList[0] = "facing" OR inputStringList[0] = "vectors") {
+					} ELSE IF (inputStringList[0] = "nameship" OR inputStringList[0] = "rename") {
+						SET SHIP:NAME TO inputStringList[1].
+						SET loopMessage TO "Ship renamed to " + SHIP:NAME.
+						SET commandValid TO TRUE.
 					} ELSE IF (inputStringList[0] = "warpToAltitude") {
 						IF ((inputStringList[1]:TONUMBER(-1) <> -1) OR (inputStringList[1] = "")) {
 							LOCAL warpAltitude IS inputStringList[1]:TONUMBER(10000).
@@ -409,7 +415,6 @@ UNTIL done {
 						}
 						IF runLocal {
 							PRINT "Running " + inputStringList[0] + " with " + argList:LENGTH + " arguments".
-							WAIT 1.0.		// pause long enough for the operator to see that there is something on screen
 							debugString("Running " + inputStringList[0] + " locally with " + argList:LENGTH + " arguments").
 							IF (argList:LENGTH = 1) RUNPATH(inputStringList[0] + ".ksm", argList[0]).
 							IF (argList:LENGTH = 2) RUNPATH(inputStringList[0] + ".ksm", argList[0], argList[1]).
@@ -421,7 +426,6 @@ UNTIL done {
 							debugString("Compiling " + inputStringList[0]).
 							compileScript(inputStringList[0]).
 							PRINT "Compiling and running " + inputStringList[0] + " with " + argList:LENGTH + " arguments".
-							WAIT 1.0.		// pause long enough for the operator to see that there is something on screen
 							debugString("Running compiled " + inputStringList[0] + " off the archive with " + argList:LENGTH + " arguments").
 							FOR arg IN RANGE(0, argList:LENGTH) {
 								debugString("Argument " + (arg) + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME).
@@ -453,43 +457,6 @@ UNTIL done {
 						RUNPATH("0:KSM Files/" + inputString + ".ksm").
 						endScript().
 						SET commandValid TO TRUE.
-					}
-					IF inputstring = "OrbitalParams" {
-						CLEARSCREEN.
-						LOCAL exportFileName IS "0:OrbitalParams.csv".
-						PRINT "Name: " + SHIP:ORBIT:NAME.
-						PRINT "Apoapsis: " + distanceToString(SHIP:ORBIT:APOAPSIS).
-						PRINT "Periapsis: " + distanceToString(SHIP:ORBIT:PERIAPSIS).
-						PRINT "Body: " + SHIP:ORBIT:BODY:NAME.
-						PRINT "Body mu: " + ROUND(SHIP:ORBIT:BODY:MU, 2) + "^3/s^2".
-						PRINT "Period: " + timeToString(SHIP:ORBIT:PERIOD).
-						PRINT "Inclination: " + ROUND(SHIP:ORBIT:INCLINATION, 2) + " deg".
-						PRINT "Eccentricity: " + ROUND(SHIP:ORBIT:ECCENTRICITY, 4) + " ".
-						PRINT "Semimajor Axis: " + distanceToString(SHIP:ORBIT:SEMIMAJORAXIS).
-						PRINT "Semimajor Axis: " + distanceToString(SHIP:ORBIT:SEMIMINORAXIS).
-						PRINT "Longitude of Ascending Node: " + ROUND(SHIP:ORBIT:LAN, 2) + " deg".
-						PRINT "Argument of Periapsis: " + ROUND(SHIP:ORBIT:ARGUMENTOFPERIAPSIS, 2) + " deg".
-						PRINT "True Anomoly: " + ROUND(SHIP:ORBIT:TRUEANOMALY, 4) + " deg".
-						PRINT "Mean Anomoly at Epoch: " + ROUND(SHIP:ORBIT:MEANANOMALYATEPOCH, 4) + " deg".
-						PRINT "Position R: " + distanceToString(SHIP:BODY:POSITION:MAG + SHIP:ORBIT:POSITION:MAG, 4).
-						PRINT "Velocity: " + distanceToString(SHIP:ORBIT:VELOCITY:ORBIT:MAG, 4) +	"/s ".
-						LOG "Name," + SHIP:ORBIT:NAME TO exportFileName.
-						LOG "Apoapsis," + (SHIP:ORBIT:APOAPSIS) + ",m" TO exportFileName.
-						LOG "Periapsis," + (SHIP:ORBIT:PERIAPSIS) + ",m" TO exportFileName.
-						LOG "Body," + SHIP:ORBIT:BODY:NAME TO exportFileName.
-						LOG "Body mu," + SHIP:ORBIT:BODY:MU + ",m^3/s^2" TO exportFileName.
-						LOG "Period," + SHIP:ORBIT:PERIOD + ",s" TO exportFileName.
-						LOG "Inclination," + SHIP:ORBIT:INCLINATION + ",deg" TO exportFileName.
-						LOG "Eccentricity," + SHIP:ORBIT:ECCENTRICITY TO exportFileName.
-						LOG "Semimajor Axis," + SHIP:ORBIT:SEMIMAJORAXIS + ",m" TO exportFileName.
-						LOG "Semimajor Axis," + SHIP:ORBIT:SEMIMINORAXIS + ",m" TO exportFileName.
-						LOG "Longitude of Ascending Node," + SHIP:ORBIT:LAN + ",deg" TO exportFileName.
-						LOG "Argument of Periapsis," + SHIP:ORBIT:ARGUMENTOFPERIAPSIS + ",deg" TO exportFileName.
-						LOG "True Anomoly," + SHIP:ORBIT:TRUEANOMALY + ",deg" TO exportFileName.
-						LOG "Mean Anomoly at Epoch," + SHIP:ORBIT:MEANANOMALYATEPOCH + ",deg" TO exportFileName.
-						LOG "Position R," + (SHIP:BODY:POSITION:MAG + SHIP:ORBIT:POSITION:MAG) + ",m" TO exportFileName.
-						LOG "Velocity," + SHIP:ORBIT:VELOCITY:ORBIT:MAG +	",m/s " TO exportFileName.
-						WAIT 5.
 					}
 					// if inputString is any of the orbital directions, turn to face that direction
 					IF inputString = "hold" 						{SET useMySteer TO TRUE. SAS OFF. SET mySteer TO SHIP:FACING. 																	SET commandValid TO TRUE. SET loopMessage TO "Steering held at current".} ELSE
