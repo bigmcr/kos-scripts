@@ -44,7 +44,7 @@ SET positionPID:SETPOINT TO 0.
 //     Positioning Fore - go forward or backward until until 10 meters from the target in the fore direction
 //     Positioning Starboard - go left or right until directly in front of the target
 //	   Positioning Top - go up and down until directly in front of the target
-// Final docking - final approach from directly in front, very slow	
+// Final docking - final approach from directly in front, very slow
 LOCAL mode IS "Orientation".
 LOCAL startTime IS TIME:SECONDS.
 LOCAL oldTime IS TIME:SECONDS.
@@ -53,13 +53,14 @@ LOCAL oldDistance IS getDirDistance().
 LOCAL dirDistance IS getDirDistance().
 LOCAL dirVelocity IS V(0,0,0).
 LOCAL startPartCount TO SHIP:PARTS:LENGTH.
+LOCAL logFileName IS "0:Docking.csv".
 LOCK mySteer TO (-(TARGET:FACING:VECTOR)):DIRECTION.
 
 ON (NOT HASTARGET) {
 	SET mode TO "Done".
 }
 
-LOG "Elapsed Time,Position PID Setpoint,Position PID Input,Position PID Output,Velocity PID Setpoint,Velocity PID Input,Velocity PID Output" TO "Docking.csv".
+IF connectionToKSC() LOG "Elapsed Time,Position PID Setpoint,Position PID Input,Position PID Output,Velocity PID Setpoint,Velocity PID Input,Velocity PID Output" TO logFileName.
 
 UNTIL mode = "Done" {
 	SET dirDistance TO getDirDistance().
@@ -87,7 +88,7 @@ UNTIL mode = "Done" {
 		SET positionPID:SETPOINT TO 10.
 		SET velocityPID:SETPOINT TO positionPID:UPDATE(elapsedTime, dirDistance:X).
 //		SET SHIP:CONTROL:FORE TO -velocityPID:UPDATE(elapsedTime, dirVelocity:X).
-		LOG elapsedTime + "," + positionPID:Setpoint + "," + positionPID:Input + "," + positionPID:Output + "," + velocityPID:Setpoint + "," + velocityPID:Input + "," + -velocityPID:Output TO "Docking.csv".
+		IF connectionToKSC() LOG elapsedTime + "," + positionPID:Setpoint + "," + positionPID:Input + "," + positionPID:Output + "," + velocityPID:Setpoint + "," + velocityPID:Input + "," + -velocityPID:Output TO logFileName.
 	}
 	IF mode = "Final Docking" {
 	}
