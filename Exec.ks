@@ -10,7 +10,7 @@ PARAMETER faceSun IS FALSE.										// during the waiting times, turn to face t
 CLEARSCREEN.
 
 LOCAL errorCode IS "None".
-updateShipInfoCurrent(FALSE).
+updateShipInfo().
 
 IF (NOT HASNODE) SET errorCode TO "No Maneuver Node Present!".
 IF (shipInfo["CurrentStage"]["ENGINES"]:LENGTH = 0) SET errorCode TO "Ship has no engines in current stage!".
