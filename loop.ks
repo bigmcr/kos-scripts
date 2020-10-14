@@ -667,6 +667,7 @@ UNTIL done {
 				previousCommands:ADD(inputString).
 				SET previousCommandIndex TO previousCommands:LENGTH - 1.
 				SET inputString TO "".
+				TOGGLE updateScreen.
 			}
 			// if the command was not processed correctly, display an error message
 			ELSE SET loopMessage TO "Did not understand input!".
