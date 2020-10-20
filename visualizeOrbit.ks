@@ -3,7 +3,8 @@ CLEARSCREEN.
 
 PRINT "LAN: " + ROUND(ORBIT:LAN) + " degrees".
 PRINT "Rotation Angle: " + ROUND(BODY:ROTATIONANGLE) + " degrees".
-PRINT "Arguement of Periapsis: " + ROUND(ORBIT:ARGUMENTOFPERIAPSIS) + " degrees".
+PRINT "Argument of Periapsis: " + ROUND(ORBIT:ARGUMENTOFPERIAPSIS) + " degrees".
+PRINT "Activate Action Group 1 to end script.".
 
 LOCAL solarVector IS SOLARPRIMEVECTOR * SHIP:BODY:RADIUS * 2.5.
 
@@ -20,7 +21,5 @@ UNTIL AG1 {
   SET solarPrimeVecDraw:START TO SHIP:BODY:POSITION.
   SET LANVecDraw:START TO SHIP:BODY:POSITION.
   SET periVecDraw:START TO SHIP:BODY:POSITION.
-
-  IF NOT HASNODE AG1 ON.
   WAIT 0.
 }
