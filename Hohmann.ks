@@ -1,67 +1,6 @@
 @LAZYGLOBAL OFF.
 CLEARSCREEN.
 
-LOCAL recursiveLogName IS "0:findZeroSecantLog.csv".
-
-FUNCTION findZeroSecant {
-  PARAMETER delegate.
-  PARAMETER X1.
-  PARAMETER X2.
-  PARAMETER tolerance.
-  PARAMETER iteration IS 0.
-
-  IF ((iteration = 10) OR (delegate:TYPENAME <> "UserDelegate")) RETURN delegate(X1).
-
-  LOCAL F1 IS delegate(X1).
-  LOCAL F2 IS delegate(X2).
-  LOCAL X3 IS 0.
-  IF (F1 <> 0) OR (F2 <> 0) SET X3 TO (X2 * F1 - X1 * F2) / (F1 - F2).
-  LOCAL F3 IS delegate(X3).
-
-  IF ABS(F3) < tolerance RETURN X3.
-  RETURN  findZeroSecant(delegate, X2, X3, tolerance, iteration + 1).
-}
-
-// given the mean anomaly (in degrees), returns true anomaly (in degrees)
-FUNCTION meanToTrueAnomaly {
-  PARAMETER meanAnomaly.
-  PARAMETER eccentricity.
-
-  // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
-  IF eccentricity = 0 RETURN meanAnomaly.
-
-  // Convert to radians for calculations.
-  SET meanAnomaly TO CONSTANT:DegToRad * meanAnomaly.
-
-  // Note that this function requires angles to be in radians
-  LOCAL functionDelegate IS {PARAMETER E. RETURN E - eccentricity*SIN(CONSTANT:RadToDeg * E) - meanAnomaly.}.
-
-//  LOG "X1,F1,X2,F2,X3,F3,Tolerance,Iterations" TO recursiveLogName.
-  LOCAL eccentricAnomaly IS findZeroSecant(functionDelegate, meanAnomaly, meanAnomaly + CONSTANT:PI/32, 0.0000001).
-  LOCAL trueAnomaly IS ARCTAN2(COS(CONSTANT:RadToDeg * eccentricAnomaly) - eccentricity, SQRT(1-eccentricity*eccentricity)*SIN(CONSTANT:RadToDeg * eccentricAnomaly)).
-  UNTIL trueAnomaly >= 0 {
-    SET trueAnomaly TO trueAnomaly + 360.0.
-  }
-
-  RETURN trueAnomaly.
-}
-
-// given the true anomaly (in degrees), returns mean anomaly (in degrees)
-FUNCTION trueToMeanAnomaly {
-  PARAMETER trueAnomaly.
-  PARAMETER eccentricity.
-
-  // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
-  IF eccentricity = 0 RETURN trueAnomaly.
-
-  // Convert to radians for calculations.
-  SET trueAnomaly TO CONSTANT:DegToRad * trueAnomaly.
-
-  LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCCOS((eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly))).
-  LOCAL meanAnomaly IS eccentricAnomaly * CONSTANT:DegToRad - eccentricity * SIN(eccentricAnomaly).
-  RETURN CONSTANT:RadToDeg * meanAnomaly.
-}
-
 FUNCTION phaseAngleOfOrbits {
   PARAMETER orbit1.
   PARAMETER orbit2.
@@ -131,7 +70,6 @@ IF errorcode = "None" {
 
   LOCAL relativePhase IS 0.
   LOCAL desiredPhase IS (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
-  LOCAL logFileName IS "0:PhaseAngle.csv".
   PRINT "Desired phase: " + ROUND(desiredPhase, 4) AT (0, 3).
 
   // If we are transferring to the target, set the burn to happen at the appropriate phase angle
@@ -142,7 +80,6 @@ IF errorcode = "None" {
     LOCAL bestYetPhase IS 360.
 
     SET desiredPhase TO (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
-    LOG "Time,bestYetPhase,desiredPhase" TO recursiveLogName.
     FROM {LOCAL timeGuess IS 0.} UNTIL timeGuess > 1.02 STEP {SET timeGuess TO timeGuess + 0.2.} DO {
       SET relativePhase TO phaseAngleOfOrbits(SHIP:ORBIT, TARGET:ORBIT, timeGuess * smallerPeriod).
       IF ABS( desiredPhase - relativePhase) < bestYetPhase {
@@ -152,7 +89,6 @@ IF errorcode = "None" {
     }
     SET r_1 TO (POSITIONAT(SHIP, TIME:SECONDS + bestYetTime * smallerPeriod) - SHIP:BODY:POSITION):MAG.
     SET desiredPhase TO (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
-    LOG bestYetTime + "," + bestYetPhase + "," + desiredPhase + "," + r_1 TO recursiveLogName.
 
     LOCAL bestYetTime2 IS SHIP:ORBIT:PERIOD.
     LOCAL bestYetPhase2 IS 360.
@@ -165,7 +101,6 @@ IF errorcode = "None" {
     }
     SET r_1 TO (POSITIONAT(SHIP, TIME:SECONDS + bestYetTime2 * smallerPeriod) - SHIP:BODY:POSITION):MAG.
     SET desiredPhase TO (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
-    LOG bestYetTime2 + "," + bestYetPhase2 + "," + desiredPhase + "," + r_1 TO recursiveLogName.
 
     LOCAL bestYetTime3 IS SHIP:ORBIT:PERIOD.
     LOCAL bestYetPhase3 IS 360.
@@ -178,7 +113,6 @@ IF errorcode = "None" {
     }
     SET r_1 TO (POSITIONAT(SHIP, TIME:SECONDS + bestYetTime3 * smallerPeriod) - SHIP:BODY:POSITION):MAG.
     SET desiredPhase TO (180.0 * (1-sqrt(((r_1/r_2 + 1)^3)/8))).
-    LOG bestYetTime3 + "," + bestYetPhase3 + "," + desiredPhase + "," + r_1 TO recursiveLogName.
 
     SET nodeTime TO TIME:SECONDS + bestYetTime3 * smallerPeriod.
   }
@@ -213,6 +147,7 @@ IF errorcode = "None" {
     LOG "" TO fileName.
 
   }
+
   ADD NODE( nodeTime, 0, 0, deltaV1).
 
   SET loopMessage TO "Node created for Hohmann transfer".

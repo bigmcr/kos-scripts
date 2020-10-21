@@ -1874,7 +1874,7 @@ FUNCTION endScript {
 	SET SHIP:CONTROL:PITCH TO 0.0.
 	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
 	SET SHIP:CONTROL:MAINTHROTTLE TO 0.
-	WAIT 0.25.
+	WAIT 0.0.
 	SET SHIP:CONTROL:FORE TO 0.0.
 	SET SHIP:CONTROL:STARBOARD TO 0.0.
 	SET SHIP:CONTROL:PITCH TO 0.0.
@@ -1891,28 +1891,58 @@ FUNCTION greatCircleDistance
 	RETURN SHIP:BODY:RADIUS * Constant:DegToRad * ARCCOS(SIN(fromPosition:LAT) * SIN(toPosition:LAT) + COS(fromPosition:LAT) * COS(toPosition:LAT) * COS(ABS(fromPosition:LNG - toPosition:LNG))).
 }
 
-FUNCTION SuicideBurnCountdown
-{
-	PARAMETER fudgeFactor IS 50.
-	if (PERIAPSIS > 0) RETURN 0.
+// Function that returns the unit vectors showing the direction of prograde,
+// radial and normal for an arbitrary Orbitable at a specified time offset
+// Returns a lexicon of prograde vector, radial vector, normal vector
+FUNCTION getOrbitDirectionsAt {
+  PARAMETER timeOffset IS 0.
+  PARAMETER orbitable IS SHIP.
+  LOCAL velocityOf IS VELOCITYAT(orbitable, TIME:SECONDS + timeOffset):ORBIT.
+  LOCAL positionOf IS POSITIONAT(orbitable, TIME:SECONDS + timeOffset).
+  LOCAL vectorPrograde IS velocityOf:NORMALIZED.
+  LOCAL vectorRadial IS (positionOf - orbitable:BODY:POSITION).
+  LOCAL vectorNormal IS VCRS(vectorPrograde, vectorRadial):NORMALIZED.
+  SET vectorRadial TO VCRS(vectorNormal, vectorPrograde):NORMALIZED.
+  RETURN LEXICON("prograde", vectorPrograde, "radial", vectorRadial, "normal", vectorNormal).
+}
 
-	LOCAL angleFromHorizontal IS pitch_for(SHIP).
-	LOCAL sine IS SIN(angleFromHorizontal).
-	LOCAL g IS SHIP:BODY:MU/(ALTITUDE + SHIP:BODY:RADIUS)^2.
-	LOCAL T IS (shipInfo["Maximum"]["Thrust"]/1000) / SHIP:MASS.
+// Determine the angle between the SHIP's orbital plane and either the equator
+//   (if useTarget is false) or the target's orbit (if useTarget is true).
+//   Note that because this angle doesn't change, this doesn't take a time argument.
+FUNCTION angleFromPlane {
+  PARAMETER useTarget IS HASTARGET.
 
-	LOCAL effectiveDecel IS 0.5 * (-2 * g * sine + SQRT((2 * g * sine) * (2 * g * sine) + 4 * (T * T - g * g))).
-	LOCAL decelTime IS VELOCITY:SURFACE:MAG / effectiveDecel.
+  IF useTarget = FALSE RETURN SHIP:ORBIT:INCLINATION.
 
-	LOCAL estimatedLandingSite IS 0.5 * decelTime * VELOCITY:SURFACE.
-	LOCAL terrainRadius IS SHIP:BODY:RADIUS + SHIP:BODY:GEOPOSITIONOF(estimatedLandingSite):TERRAINHEIGHT + fudgeFactor.
-	LOCAL impactTime IS timeToAltitude(terrainRadius).
-	RETURN (decelTime / 2) - impactTime.
+  // Normal vector is angular velocity of the object being orbited
+  LOCAL normalVector IS SHIP:BODY:ANGULARVEL:NORMALIZED.
+
+  // Normal vector is cross product of the target's position and velocity
+  IF useTarget SET normalVector TO VCRS(TARGET:POSITION - TARGET:BODY:POSITION, TARGET:VELOCITY:ORBIT).
+
+  RETURN VANG(VCRS( - SHIP:BODY:POSITION, SHIP:VELOCITY:ORBIT), normalVector).
+}
+
+// Determine the distance in meters between SHIP and the plane defined by either
+//   the equator (if useTarget is false) or by the target's orbit (if useTarget
+//   is true).
+FUNCTION distanceFromPlane {
+  PARAMETER timeOffset IS 0.
+  PARAMETER useTarget IS HASTARGET.
+
+  // Normal vector is angular velocity of the object being orbited
+  LOCAL normalVector IS SHIP:BODY:ANGULARVEL:NORMALIZED.
+
+  // Normal vector is cross product of the target's position and velocity
+  IF useTarget SET normalVector TO VCRS(POSITIONAT(TARGET, TIME:SECONDS + timeOffset) - TARGET:BODY:POSITION, VELOCITYAT(TARGET, TIME:SECONDS + timeOffset):ORBIT):NORMALIZED.
+
+  RETURN (POSITIONAT(SHIP, TIME:SECONDS + timeOffset) - SHIP:BODY:POSITION) * normalVector.
 }
 
 // returns the number of kilometers from the orbital plane of the target
 FUNCTION distanceToTargetOrbitalPlane {
-	RETURN VCRS(TARGET:VELOCITY:ORBIT, TARGET:POSITION - SHIP:BODY:POSITION):NORMALIZED * (SHIP:POSITION - SHIP:BODY:POSITION)/1000.
+	PARAMETER timeOffset IS 0.
+	RETURN distanceFromPlane(timeoffset, TRUE) / 1000.
 }
 
 // returns a list
@@ -2042,4 +2072,64 @@ FUNCTION processScalarParameter {
 		RETURN returnNumber.
 	}
 	RETURN errorValueScalar.
+}
+
+// Using the Secant method, iterate until the function returns the chosen value
+//   within tolerance, or the maximum number of iterations is reached.
+FUNCTION findZeroSecant {
+  PARAMETER delegate.
+  PARAMETER X1.
+  PARAMETER X2.
+  PARAMETER tolerance.
+  PARAMETER iteration IS 0.
+
+  IF ((iteration = 10) OR (delegate:TYPENAME <> "UserDelegate")) RETURN delegate(X1).
+
+  LOCAL F1 IS delegate(X1).
+  LOCAL F2 IS delegate(X2).
+  LOCAL X3 IS 0.
+  IF (F1 <> 0) OR (F2 <> 0) SET X3 TO (X2 * F1 - X1 * F2) / (F1 - F2).
+  LOCAL F3 IS delegate(X3).
+
+  IF ABS(F3) < tolerance RETURN X3.
+  RETURN  findZeroSecant(delegate, X2, X3, tolerance, iteration + 1).
+}
+
+// given the mean anomaly (in degrees), returns true anomaly (in degrees)
+FUNCTION meanToTrueAnomaly {
+  PARAMETER meanAnomaly.
+  PARAMETER eccentricity.
+
+  // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
+  IF eccentricity = 0 RETURN meanAnomaly.
+
+  // Convert to radians for calculations.
+  SET meanAnomaly TO CONSTANT:DegToRad * meanAnomaly.
+
+  // Note that this function requires angles to be in radians
+  LOCAL functionDelegate IS {PARAMETER E. RETURN E - eccentricity*SIN(CONSTANT:RadToDeg * E) - meanAnomaly.}.
+
+  LOCAL eccentricAnomaly IS findZeroSecant(functionDelegate, meanAnomaly, meanAnomaly + CONSTANT:PI/32, 0.0000001).
+  LOCAL trueAnomaly IS ARCTAN2(COS(CONSTANT:RadToDeg * eccentricAnomaly) - eccentricity, SQRT(1-eccentricity*eccentricity)*SIN(CONSTANT:RadToDeg * eccentricAnomaly)).
+  UNTIL trueAnomaly >= 0 {
+    SET trueAnomaly TO trueAnomaly + 360.0.
+  }
+
+  RETURN trueAnomaly.
+}
+
+// given the true anomaly (in degrees), returns mean anomaly (in degrees)
+FUNCTION trueToMeanAnomaly {
+  PARAMETER trueAnomaly.
+  PARAMETER eccentricity.
+
+  // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
+  IF eccentricity = 0 RETURN trueAnomaly.
+
+  // Convert to radians for calculations.
+  SET trueAnomaly TO CONSTANT:DegToRad * trueAnomaly.
+
+  LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCCOS((eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly))).
+  LOCAL meanAnomaly IS eccentricAnomaly * CONSTANT:DegToRad - eccentricity * SIN(eccentricAnomaly).
+  RETURN CONSTANT:RadToDeg * meanAnomaly.
 }
