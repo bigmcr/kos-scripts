@@ -184,7 +184,7 @@ IF errorCode = "None" {
 		}
 		PRINT "Burn Delay, " + timeToString(t_ign, 2).
 		PRINT "Total Burntime, " + timeToString(t_total, 2).
-		PRINT "initial accel " + distanceToString(a_i, 2 ) + "/s^s   final accel " + distanceToString(a_f, 2) + "/s^s".
+		PRINT "initial accel " + distanceToString(a_i, 2 ) + "/s^2   final accel " + distanceToString(a_f, 2) + "/s^2".
 	} ELSE {
 		PRINT "Running Execute Next Node".
 		IF useRCSforRotation PRINT "Will use RCS for rotation".
