@@ -13,6 +13,7 @@ IF runLocal {
 RUNPATH("Library").
 
 GLOBAL loopMessage IS "".
+GLOBAL errorValue IS -1234.
 
 LOCAL inputString IS "".
 LOCAL previousCommands IS LIST().
@@ -21,7 +22,6 @@ LOCAL count IS 0.
 LOCAL updateScreen IS TRUE.
 LOCAL previousTIme IS TIME:SECONDS.
 LOCAL done IS FALSE.
-LOCAL errorValue IS 999.
 LOCAL showOrbital IS TRUE.
 LOCAL commandValid TO FALSE.
 LOCAL coreHighlight TO HIGHLIGHT(core:part, MAGENTA).
