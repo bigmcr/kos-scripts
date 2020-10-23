@@ -1,34 +1,42 @@
 CLEARSCREEN.
 
 PARAMETER passedArgument IS "Apo".
-PARAMETER timeOffset IS 0.
+PARAMETER visualize IS FALSE.
 
-SET offset TO timeOffset + getOffset(passedArgument).
+SET offset TO getOffset(passedArgument).
 
-LOCAL VEL IS VELOCITYAT(SHIP, TIME:SECONDS + OFFSET):ORBIT.
-LOCAL POS IS POSITIONAT(SHIP, TIME:SECONDS + OFFSET) - SHIP:BODY:POSITION.
-LOCAL angle IS 90 - vang(POS, VEL).
+LOCAL directions IS getOrbitDirectionsAt(offset, SHIP).
 
-LOCAL pro IS VELOCITYAT(SHIP, TIME:SECONDS + OFFSET):ORBIT:NORMALIZED.
-LOCAL rad IS (POSITIONAT(SHIP, TIME:SECONDS + OFFSET) - SHIP:BODY:POSITION):NORMALIZED.
-LOCAL speed IS SQRT(SHIP:BODY:MU/POS:MAG).
+SET directions["position"] TO directions["position"] - SHIP:BODY:POSITION.
 
-LOCAL horiz IS VXCL(POS, VEL):NORMALIZED * -speed.
+LOCAL desiredSpeed IS SQRT(SHIP:BODY:MU/directions["position"]:MAG).
+LOCAL flightPathAngle IS 90 - VANG(directions["velocity"], directions["position"]).
+LOCAL desiredVelocity IS directions["velocity"] * ANGLEAXIS(-flightPathAngle, directions["normal"]).
+SET desiredVelocity TO desiredVelocity:NORMALIZED * desiredSpeed.
+LOCAL deltaV IS desiredVelocity - directions["velocity"].
+ADD NODE(TIME:SECONDS + offset, deltaV * directions["radial"], deltaV * directions["normal"], deltaV * directions["prograde"]).
 
-LOCAL delta IS (VEL - horiz):NORMALIZED * (speed - VEL:MAG).
+IF visualize {
+	PRINT "Offset: " + timeToString(offset).
+	PRINT "Actual Speed: " + distanceToString(directions["velocity"]:MAG) + "/s".
+	PRINT "Desired Speed: " + distanceToString(desiredSpeed) + "/s".
+	PRINT "Flight Path Angle: " + ROUND(flightPathAngle) + " degrees".
+	PRINT "Delta V: " + distanceToString(deltaV:MAG) + "/s".
 
-PRINT "Position (r): " + ROUNDV(POS, 0).
-PRINT "Altitude: " + ROUND(POS:MAG - SHIP:BODY:RADIUS,4).
-PRINT "Orbital Velocity: " + ROUND(SQRT(SHIP:BODY:MU/POS:MAG),4) + " m/s Horizontal".
-PRINT "Calc'd Velocity: " + ROUND(VEL:MAG,4) + " m/s Prograde".
-PRINT "Flight path angle: " + ROUND(angle ,4).
-PRINT "Delta " + ROUND(delta:mag ,4) + " m/s".
-PRINT "Horiz " + ROUND(horiz:mag, 4) + " m/s".
+	LOCAL positionVecDraw IS        VECDRAW(SHIP:BODY:POSITION, V(0,0,0),   RED,       "Position", 1.0, TRUE).
+	LOCAL velocityVecDraw IS        VECDRAW(SHIP:BODY:POSITION, V(0,0,0), GREEN,       "Velocity", 1.0, TRUE).
+	LOCAL finalVelocityVecDraw IS   VECDRAW(SHIP:BODY:POSITION, V(0,0,0),  BLUE, "Final Velocity", 1.0, TRUE).
 
-// Create the circularization node at the APOAPSIS
-// time since start of game, radial, normal, prograde
-LOCAL X TO NODE(TIME:SECONDS + OFFSET, delta*rad, 0, delta*pro ).
-ADD X.            // adds maneuver to flight plan
+	SET positionVecDraw:VECTOR       TO directions["position"] + SHIP:BODY:POSITION.
+	SET velocityVecDraw:VECTOR       TO directions["velocity"]:NORMALIZED * SHIP:BODY:RADIUS.
+	SET finalVelocityVecDraw:VECTOR  TO desiredVelocity:NORMALIZED * SHIP:BODY:RADIUS.
+
+	SET positionVecDraw:START        TO V(0,0,0).
+	SET velocityVecDraw:START        TO directions["position"] + SHIP:BODY:POSITION.
+	SET finalVelocityVecDraw:START   TO directions["position"] + SHIP:BODY:POSITION.
+
+	WAIT 10.
+}
 
 FUNCTION getOffset {
 	PARAMETER argument.
@@ -36,12 +44,7 @@ FUNCTION getOffset {
 	IF argument:TYPENAME = "String" {
 		IF argument = "Apo" OR argument = "Apoapsis" RETURN ETA:APOAPSIS.
 		IF argument = "Peri" OR argument = "Periapsis" RETURN ETA:PERIAPSIS.
-		// IF argument = "LAN" OR argument = "Ascending" {
-			// RETURN ETA:PERIAPSIS.
-		// }
-		// IF argument = "LDN" OR argument = "Descending" {
-			// RETURN ETA:PERIAPSIS.
-		// }
+		RETURN processScalarParameter(argument).
 	}
 }
 
