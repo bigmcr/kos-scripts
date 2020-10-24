@@ -1931,11 +1931,13 @@ FUNCTION distanceFromPlane {
   PARAMETER timeOffset IS 0.
   PARAMETER useTarget IS HASTARGET.
 
+	// Due to KSP using LEFT-handed coordinate systems, use the negative of the
+	//   vector to get positive values for north of the plane
   // Normal vector is angular velocity of the object being orbited
-  LOCAL normalVector IS SHIP:BODY:ANGULARVEL:NORMALIZED.
+  LOCAL normalVector IS -SHIP:BODY:ANGULARVEL:NORMALIZED.
 
   // Normal vector is cross product of the target's position and velocity
-  IF useTarget SET normalVector TO VCRS(POSITIONAT(TARGET, TIME:SECONDS + timeOffset) - TARGET:BODY:POSITION, VELOCITYAT(TARGET, TIME:SECONDS + timeOffset):ORBIT):NORMALIZED.
+  IF useTarget SET normalVector TO -VCRS(POSITIONAT(TARGET, TIME:SECONDS + timeOffset) - TARGET:BODY:POSITION, VELOCITYAT(TARGET, TIME:SECONDS + timeOffset):ORBIT):NORMALIZED.
 
   RETURN (POSITIONAT(SHIP, TIME:SECONDS + timeOffset) - SHIP:BODY:POSITION) * normalVector.
 }
