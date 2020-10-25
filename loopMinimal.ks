@@ -11,59 +11,31 @@ IF runLocal {
 	SWITCH TO 0.
 }
 
+RUNPATH("Library").
+
 GLOBAL loopMessage IS "".
-GLOBAL debug IS TRUE.							// If TRUE, multiple functions will display or log extra info
-GLOBAL mySteer IS SHIP:FACING.
-GLOBAL myThrottle IS 0.
-GLOBAL useMySteer IS FALSE.
-GLOBAL useMyThrottle IS FALSE.
+GLOBAL errorValue IS -1234.
 
 LOCAL inputString IS "".
+LOCAL previousCommands IS LIST().
+LOCAL previousCommandIndex IS 0.
 LOCAL count IS 0.
 LOCAL updateScreen IS TRUE.
+LOCAL previousTIme IS TIME:SECONDS.
 LOCAL done IS FALSE.
-LOCAL errorValue IS 999.
+LOCAL showOrbital IS TRUE.
 LOCAL commandValid TO FALSE.
+LOCAL coreHighlight TO HIGHLIGHT(core:part, MAGENTA).
+SET coreHighlight:ENABLED TO FALSE.
 LOCAL tempChar IS "".
 LOCAL bodList IS LIST().
 LOCAL foundBody IS "".
+LOCAL oldTime IS MISSIONTIME.
+LOCAL timeDelta IS MISSIONTIME - oldTime.
+LOCAL pointing IS LEXICON().
 LIST BODIES IN bodList.
 
 LOCK mySteer TO SHIP:FACING.
-
-// End Script
-// This function completely unlocks all control over the ship.
-// Passed the following:
-//			no arguments
-// Returns the following:
-//			null
-FUNCTION endScript {
-	SAS OFF.
-	RCS OFF.
-	UNLOCK useMySteer.
-	SET useMySteer TO FALSE.
-	UNLOCK mySteer.
-	SET mySteer TO SHIP:FACING.
-
-	UNLOCK useMyThrottle.
-	SET useMyThrottle TO FALSE.
-	UNLOCK myThrottle.
-	SET myThrottle TO 0.0.
-
-	SET SHIP:CONTROL:FORE TO 0.0.
-	SET SHIP:CONTROL:STARBOARD TO 0.0.
-	SET SHIP:CONTROL:PITCH TO 0.0.
-	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
-	SET SHIP:CONTROL:MAINTHROTTLE TO 0.
-	WAIT 0.25.
-	SET SHIP:CONTROL:FORE TO 0.0.
-	SET SHIP:CONTROL:STARBOARD TO 0.0.
-	SET SHIP:CONTROL:PITCH TO 0.0.
-	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
-	SET SHIP:CONTROL:MAINTHROTTLE TO 0.
-	CLEARVECDRAWS().
-	SET KUNIVERSE:TIMEWARP:WARP TO 0.
-}
 
 // update the terminal screen
 ON updateScreen {
@@ -117,6 +89,9 @@ ON useMyThrottle {
 	ELSE UNLOCK THROTTLE.
 	RETURN TRUE.
 }
+
+SET mySteer TO SHIP:FACING.
+SET myThrottle TO 0.
 
 UNTIL done {
 	SET tempChar TO "".
@@ -174,17 +149,107 @@ UNTIL done {
 							SET loopMessage TO "Changed Max Stopping time to " + STEERINGMANAGER:MAXSTOPPINGTIME.
 						}
 						SET commandValid TO TRUE.
+					} ELSE IF ((inputStringList[0] = "warp") OR (inputStringList[0] = "physicsWarp")) {
+						IF inputStringList[1] = "" SET loopMessage TO "Physics Warp Perm is currently " + (physicsWarpPerm + 1).
+						ELSE {
+							IF ((inputStringList[1] = "Up") AND (physicsWarpPerm <> 3)) SET physicsWarpPerm TO physicsWarpPerm + 1.
+							ELSE IF ((inputStringList[1] = "Down") AND (physicsWarpPerm <> 0)) SET physicsWarpPerm TO physicsWarpPerm - 1.
+							ELSE SET physicsWarpPerm TO inputStringList[1]:TONUMBER(0) + 1.
+							SET loopMessage TO "Changed Physics Warp Perm to " + (physicsWarpPerm + 1).
+						}
+						SET commandValid TO TRUE.
+					} ELSE IF inputStringList[0] = "GEAR" {
+						IF inputStringList[1] = "On" SET GEAR TO TRUE.
+						IF inputStringList[1] = "Off" SET GEAR TO FALSE.
+						IF (inputStringList[1] = "Toggle") OR (inputStringList[1] = "T") SET GEAR TO NOT GEAR.
+						SET loopMessage TO "Gear is currently " + GEAR.
+						SET commandValid TO TRUE.
 					} ELSE IF inputStringList[0] = "LIGHTS" {
 						IF inputStringList[1] = "On" SET LIGHTS TO TRUE.
 						IF inputStringList[1] = "Off" SET LIGHTS TO FALSE.
 						IF (inputStringList[1] = "Toggle") OR (inputStringList[1] = "T") SET LIGHTS TO NOT LIGHTS.
 						SET loopMessage TO "Lights are currently " + LIGHTS.
 						SET commandValid TO TRUE.
+					} ELSE IF inputStringList[0] = "RADIATORS" {
+						IF inputStringList[1] = "On" RADIATORS ON.
+						IF inputStringList[1] = "Off" RADIATORS OFF.
+						IF (inputStringList[1] = "Toggle") OR (inputStringList[1] = "T") SET RADIATORS TO NOT RADIATORS.
+						SET loopMessage TO "Radiators are currently " + RADIATORS.
+						SET commandValid TO TRUE.
+					} ELSE IF ((inputStringList[0] = "DRILL") OR (inputStringList[0] = "DRILLS")) {
+						IF inputStringList[1] = "On" { DRILLS ON.}
+						IF inputStringList[1] = "Off" { DRILLS OFF.}
+						IF inputStringList[1] = "Deploy" { DEPLOYDRILLS ON. WAIT 1.}
+						IF inputStringList[1] = "Retract" { DEPLOYDRILLS OFF. WAIT 1.}
+						IF (DEPLOYDRILLS) {
+							IF DRILLS SET loopMessage TO "Drills are deployed and running.".
+							ELSE SET loopMessage TO "Drills are deployed".
+						} ELSE {
+							IF DRILLS SET loopMessage TO "Drills are retracted but running".
+							ELSE SET loopMessage TO "Drills are retracted and stopped".
+						}
+						SET commandValid TO TRUE.
+					} ELSE IF ((inputStringList[0] = "AUGER") OR (inputStringList[0] = "AUGERS")) {
+						IF inputStringList[1] = "On" {
+							FOR auger IN augerList {auger:getModule("ELExtractor"):DOACTION("start auger",TRUE).}.
+							SET loopMessage TO "Augers are currently ON".
+						}
+						IF inputStringList[1] = "Off" {
+							FOR auger IN augerList {auger:getModule("ELExtractor"):DOACTION("stop auger",TRUE).}.
+							SET loopMessage TO "Augers are currently OFF".
+						}
+						SET commandValid TO TRUE.
+					} ELSE IF ((inputStringList[0] = "SMELTER") OR (inputStringList[0] = "SMELTERS")) {
+						IF inputStringList[1] = "On" {
+							FOR smelter IN smelterList {smelter:getModule("ELConverter"):DOACTION("start metal conversion",TRUE). smelter:getModule("ELConverter"):DOACTION("toggle converter",TRUE).}.
+							SET loopMessage TO "Started smelting metal and melting scrap metal".
+						}
+						IF inputStringList[1] = "Off" {
+							FOR smelter IN smelterList {smelter:getModule("ELConverter"):DOACTION("stop metal conversion",TRUE). smelter:getModule("ELConverter"):DOACTION("toggle converter",FALSE).}.
+							SET loopMessage TO "Stopped smelting metal and melting scrap metal".
+						}
+						IF inputStringList[1] = "Metal" {
+							IF inputStringList[2] = "On" {
+								FOR smelter IN smelterList {smelter:getModule("ELConverter"):DOACTION("start metal conversion",TRUE).}.
+								SET loopMessage TO "Started Smelting Metal".
+							}
+							IF inputStringList[2] = "Off" {
+								FOR smelter IN smelterList {smelter:getModule("ELConverter"):DOACTION("stop metal conversion",TRUE).}.
+								SET loopMessage TO "Stopped Smelting Metal".
+							}
+						}
+						IF inputStringList[1] = "Scrap" {
+							IF inputStringList[2] = "On" {
+								FOR smelter IN smelterList {smelter:getModule("ELConverter"):DOACTION("toggle converter",TRUE).}.
+								SET loopMessage TO "Started Melting Scrap Metal".
+							}
+							IF inputStringList[2] = "Off" {
+								FOR smelter IN smelterList {smelter:getModule("ELConverter"):DOACTION("toggle converter",FALSE).}.
+								SET loopMessage TO "Stopped Melting Scrap Metal".
+							}
+						}
+						SET commandValid TO TRUE.
+					} ELSE IF (inputStringList[0] = "point") {
+							IF (inputStringList[1]:TONUMBER(errorValue) <> errorValue) AND (inputStringList[2]:TONUMBER(errorValue) <> errorValue) {
+								SET useMySteer TO TRUE.
+								SAS OFF.
+								SET mySteer TO HEADING(inputStringList[1]:TONUMBER(errorValue), inputstringList[2]:TONUMBER(errorValue)).
+								SET commandValid TO TRUE.
+								SET loopMessage TO "Steering held to (" + inputStringList[1] + "," + inputStringList[2] + ")".
+						}
+					} ELSE IF (inputStringList[0] = "node") AND (inputstringList[1] = "delete") {
+						IF HASNODE {
+							REMOVE NEXTNODE.
+							SET loopMessage TO "Removed next node".
+						} ELSE SET loopMessage TO "No next node to delete!".
+						SET commandValid TO TRUE.
 					} ELSE IF (inputStringList[0] = "node") {
-						IF inputStringList:LENGTH = 2 {ADD NODE(TIME:SECONDS + 60,								0,								0, inputStringList[1]:TONUMBER(0)).}
-						IF inputStringList:LENGTH = 3 {ADD NODE(TIME:SECONDS + 60,								0, inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
+						// note that NODE has syntax of (radial, normal, prograde).
+						// this command rearranges that somewhat
+						IF inputStringList:LENGTH = 2 {ADD NODE(TIME:SECONDS + 60, 0, 0, inputStringList[1]:TONUMBER(0)).}
+						IF inputStringList:LENGTH = 3 {ADD NODE(TIME:SECONDS + 60, 0, inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
 						IF inputStringList:LENGTH = 4 {ADD NODE(TIME:SECONDS + 60, inputStringList[3]:TONUMBER(0), inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
-						SET loopMessage TO "Added a node" + ISRU.
+						SET loopMessage TO "Added a node".
 						SET commandValid TO TRUE.
 					} ELSE IF (inputStringList[0] = "copyscript") {
 						IF connectionToKSC() {
@@ -195,6 +260,18 @@ UNTIL done {
 							ELSE SET loopMessage TO "File was not copied correctly!".
 						} SET loopMessage TO "No connection to KSC, cannot copy script".
 						SET commandValid TO TRUE.
+					} ELSE IF ((inputStringList[0] = "ISRU") OR (inputStringList[0] = "CONVERTER")) {
+						IF inputStringList[1] = "On" ISRU ON.
+						IF inputStringList[1] = "Off" ISRU OFF.
+						IF (inputStringList[1] = "Toggle") OR (inputStringList[1] = "T") SET ISRU TO NOT ISRU.
+						SET loopMessage TO "ISRUs are currently " + ISRU.
+						SET commandValid TO TRUE.
+					} ELSE IF ((inputStringList[0] = "CELL") OR (inputStringList[0] = "FUELCELL") OR (inputStringList[0] = "CELLS") OR (inputStringList[0] = "FUELCELLS")) {
+						IF inputStringList[1] = "On" FUELCELLS ON.
+						IF inputStringList[1] = "Off" FUELCELLS OFF.
+						IF (inputStringList[1] = "Toggle") OR (inputStringList[1] = "T") SET FUELCELLS TO NOT FUELCELLS.
+						SET loopMessage TO "Fuel cells are currently " + FUELCELLS.
+						SET commandValid TO TRUE.
 					} ELSE IF ((inputStringList[0] = "ANTENNA") OR (inputStringList[0] = "ANTENNAS") OR (inputStringList[0] = "OMNI") OR (inputStringList[0] = "OMNIS")) {
 						IF inputStringList[1] = "On" {activateOmniAntennae(). SET loopMessage TO "Omni antennae have been activated.".}
 						IF inputStringList[1] = "Off" {deactivateOmniAntennae(). SET loopMessage TO "Omni antennae have been deactivated.".}
@@ -202,6 +279,20 @@ UNTIL done {
 					} ELSE IF ((inputStringList[0] = "DISH") OR (inputStringList[0] = "DISHES")) {
 						IF inputStringList[1] = "On" {activateDishAntennae(). SET loopMessage TO "Dish antennae have been activated.".}
 						IF inputStringList[1] = "Off" {deactivateDishAntennae(). SET loopMessage TO "Dish antennae have been deactivated.".}
+						SET commandValid TO TRUE.
+					} ELSE IF ((inputStringList[0] = "SteeringVectors") OR (inputStringList[0] = "Steering")) {
+						IF inputStringList[1] = "On" {SET steeringVisible TO TRUE. SET loopMessage TO "Steering Vectors visible.".}
+						IF inputStringList[1] = "Off" {SET steeringVisible TO FALSE. SET loopMessage TO "Steering Vectors invisible.".}
+						SET commandValid TO TRUE.
+					} ELSE IF (inputStringList[0] = "highlight") {
+						IF inputStringList[1] = "On" SET coreHighlight:ENABLED TO TRUE.
+						IF inputStringList[1] = "Off" SET coreHighlight:ENABLED TO FALSE.
+						IF (inputStringList[1] = "Toggle") OR (inputStringList[1] = "T") SET coreHighlight:ENABLED TO NOT coreHighlight:ENABLED.
+						SET loopMessage TO "Core highlighting is currently " + coreHighlight:ENABLED.
+						SET commandValid TO TRUE.
+					} ELSE IF (inputStringList[0] = "nameship" OR inputStringList[0] = "rename") {
+						SET SHIP:NAME TO inputStringList[1].
+						SET loopMessage TO "Ship renamed to " + SHIP:NAME.
 						SET commandValid TO TRUE.
 					} ELSE IF (inputStringList[0] = "warpToAltitude") {
 						IF ((inputStringList[1]:TONUMBER(-1) <> -1) OR (inputStringList[1] = "")) {
@@ -260,7 +351,7 @@ UNTIL done {
 						} ELSE {SET commandValid TO TRUE. SET loopMessage TO "Must have a target set.".}
 
 					// if there is a valid script, process the arguments for it
-					} ELSE IF EXISTS(inputStringList[0]) {
+					} ELSE IF (connectionToKSC() AND EXISTS("0:" + inputStringList[0])) {
 						FOR arg IN RANGE(1, inputStringList:LENGTH) {
 							IF (inputStringList[arg] = FALSE) OR (inputStringList[arg] = "F") {argList:ADD(FALSE). PRINT "Boolean False".}
 							ELSE IF (inputStringList[arg] = TRUE) OR (inputStringList[arg] = "T") {argList:ADD(TRUE). PRINT "Boolean True".}
@@ -272,32 +363,17 @@ UNTIL done {
 							PRINT "Argument " + argList[arg] + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME.
 							debugString("Argument " + (arg) + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME).
 						}
-						IF runLocal {
-							PRINT "Running " + inputStringList[0] + " with " + argList:LENGTH + " arguments".
-							WAIT 1.0.		// pause long enough for the operator to see that there is something on screen
-							debugString("Running " + inputStringList[0] + " locally with " + argList:LENGTH + " arguments").
-							IF (argList:LENGTH = 1) RUNPATH(inputStringList[0] + ".ksm", argList[0]).
-							IF (argList:LENGTH = 2) RUNPATH(inputStringList[0] + ".ksm", argList[0], argList[1]).
-							IF (argList:LENGTH = 3) RUNPATH(inputStringList[0] + ".ksm", argList[0], argList[1], argList[2]).
-							IF (argList:LENGTH = 4) RUNPATH(inputStringList[0] + ".ksm", argList[0], argList[1], argList[2], argList[3]).
-							IF (argList:LENGTH = 5) RUNPATH(inputStringList[0] + ".ksm", argList[0], argList[1], argList[2], argList[3], argList[4]).
-							IF (argList:LENGTH = 6) RUNPATH(inputStringList[0] + ".ksm", argList[0], argList[1], argList[2], argList[3], argList[4], argList[5]).
-						} ELSE {
-							debugString("Compiling " + inputStringList[0]).
-							compileScript(inputStringList[0]).
-							PRINT "Compiling and running " + inputStringList[0] + " with " + argList:LENGTH + " arguments".
-							WAIT 1.0.		// pause long enough for the operator to see that there is something on screen
-							debugString("Running compiled " + inputStringList[0] + " off the archive with " + argList:LENGTH + " arguments").
-							FOR arg IN RANGE(0, argList:LENGTH) {
-								debugString("Argument " + (arg) + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME).
-							}
-							IF (argList:LENGTH = 1) RUNPATH("KSM Files/" + inputStringList[0] + ".ksm", argList[0]).
-							IF (argList:LENGTH = 2) RUNPATH("KSM Files/" + inputStringList[0] + ".ksm", argList[0], argList[1]).
-							IF (argList:LENGTH = 3) RUNPATH("KSM Files/" + inputStringList[0] + ".ksm", argList[0], argList[1], argList[2]).
-							IF (argList:LENGTH = 4) RUNPATH("KSM Files/" + inputStringList[0] + ".ksm", argList[0], argList[1], argList[2], argList[3]).
-							IF (argList:LENGTH = 5) RUNPATH("KSM Files/" + inputStringList[0] + ".ksm", argList[0], argList[1], argList[2], argList[3], argList[4]).
-							IF (argList:LENGTH = 6) RUNPATH("KSM Files/" + inputStringList[0] + ".ksm", argList[0], argList[1], argList[2], argList[3], argList[4], argList[5]).
+						PRINT "Minimal Running " + inputStringList[0] + " with " + argList:LENGTH + " arguments".
+						debugString("Minimal Running " + inputStringList[0] + " off the archive with " + argList:LENGTH + " arguments").
+						FOR arg IN RANGE(0, argList:LENGTH) {
+							debugString("Argument " + (arg) + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME).
 						}
+						IF (argList:LENGTH = 1) RUNPATH("0:KSM Files/" + inputStringList[0] + ".ksm", argList[0]).
+						IF (argList:LENGTH = 2) RUNPATH("0:KSM Files/" + inputStringList[0] + ".ksm", argList[0], argList[1]).
+						IF (argList:LENGTH = 3) RUNPATH("0:KSM Files/" + inputStringList[0] + ".ksm", argList[0], argList[1], argList[2]).
+						IF (argList:LENGTH = 4) RUNPATH("0:KSM Files/" + inputStringList[0] + ".ksm", argList[0], argList[1], argList[2], argList[3]).
+						IF (argList:LENGTH = 5) RUNPATH("0:KSM Files/" + inputStringList[0] + ".ksm", argList[0], argList[1], argList[2], argList[3], argList[4]).
+						IF (argList:LENGTH = 6) RUNPATH("0:KSM Files/" + inputStringList[0] + ".ksm", argList[0], argList[1], argList[2], argList[3], argList[4], argList[5]).
 						endScript().
 						SET commandValid TO TRUE.
 					}
@@ -305,17 +381,9 @@ UNTIL done {
 				// if the operator entered a single command, interperet and execute it
 				ELSE {
 					// if inputString is the name of a script, run the script
-					IF (NOT connectionToKSC() AND (CORE:VOLUME:EXISTS(inputString) OR CORE:VOLUME:EXISTS("KSM Files/" + inputString))) {
-						debugString("Running " + inputString + " locally").
-						RUNPATH("1:" + inputString + ".ksm").
-						endScript().
-						SET commandValid TO TRUE.
-					} ELSE
-					IF (connectionToKSC() AND (ARCHIVE:EXISTS(inputString) OR ARCHIVE:EXISTS("KSM Files/" + inputString))) {
-						debugString("Compiling 0:" + inputString + ".ks").
-						compileScript(inputString).
-						debugString("Running 0:" + inputString + ".ksm off the archive").
-						RUNPATH("0:KSM Files/" + inputString + ".ksm").
+					IF (connectionToKSC() AND ARCHIVE:EXISTS(inputString)) {
+						debugString("Minimal Running 0:" + inputString + ".ks off the archive").
+						RUNPATH("0:" + inputString + ".ks").
 						endScript().
 						SET commandValid TO TRUE.
 					}
@@ -336,7 +404,7 @@ UNTIL done {
 							SET useMySteer TO TRUE.
 							SAS OFF.
 							LOCAL srfRetro IS {
-								IF (GROUNDSPEED < 1.0)
+								IF (GROUNDSPEED < 0.25)
 									RETURN SHIP:UP:VECTOR.
 								ELSE
 									RETURN -VELOCITY:SURFACE.
@@ -346,6 +414,7 @@ UNTIL done {
 							SET loopMessage TO "Steering locked to surface retrograde".
 					} ELSE IF inputString = "landLift"										{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO HEADING(yaw_vector(-SHIP:VELOCITY:SURFACE), pitch_for(SHIP)). SET commandValid TO TRUE. SET loopMessage TO "Steering locked to 15 degrees above horizon.".} ELSE
 					IF inputString = "maneuver" AND HASNODE 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO NEXTNODE:DELTAV:DIRECTION. 	SET commandValid TO TRUE. SET loopMessage TO "Steering locked to maneuver".} ELSE
+
 					// if inputString is DistanceToTargetOrbitalPlane
 					IF inputString = "distTgtPlane" {SET loopMessage TO ROUND(distanceToTargetOrbitalPlane(), 4) + " km to target's orbital plane". SET commandValid TO TRUE.} ELSE
 
@@ -448,6 +517,21 @@ UNTIL done {
 						SET commandValid TO TRUE.
 					}
 
+					// if inputString is stageInfo, recalculate the staging information for the ship, and log it to a file
+					IF inputString = "stageUpdate" {
+						updateShipInfo().
+						SET commandValid TO TRUE.
+						SET loopMessage TO "shipInfo has been updated".
+					} ELSE
+
+					// if inputString is updateStage, recalculate the staging information for the ship, and log it to a file
+					IF inputString = "stageInfo" {
+						updateShipInfo().
+						logShipInfo().
+						SET commandValid TO TRUE.
+						SET loopMessage TO SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv has been created.".
+					} ELSE
+
 					// is inputString is "logActions", "log actions" or "actions", trigger the log all actions function
 					IF inputString = "logAction" OR inputString = "log actions" OR inputString = "actions" {
 						LogAllActions().
@@ -462,12 +546,12 @@ UNTIL done {
 						SET loopMessage TO "Part file created!".
 					} ELSE
 
-					// if inputString is any of the planet names, point toward that planet
-					SET foundBody TO "".
-					FOR bod in bodList {
-						IF inputString = bod:NAME AND foundBody = "" {SET foundBody TO bod.}
-					}
-					IF foundBody <> "" {
+					IF inputstring = "Sun" {
+						// point toward the Sun, defined as the body that isn't orbiting something.
+						SET foundBody TO SHIP:BODY.
+						UNTIL NOT foundBody:HASBODY {
+							SET foundBody TO foundBody:BODY.
+						}
 						SET useMySteer TO TRUE.
 						SAS OFF.
 						LOCK mySteer TO LOOKDIRUP(foundBody:DIRECTION:VECTOR, SHIP:UP:VECTOR).
@@ -506,10 +590,13 @@ UNTIL done {
 					}
 				}
 			}
-			// after processing the command, delete the command.
+			// after processing the command, record then delete the command.
 			IF (commandValid) {
 				debugString("Command " + inputString + " completed").
+				previousCommands:ADD(inputString).
+				SET previousCommandIndex TO previousCommands:LENGTH - 1.
 				SET inputString TO "".
+				TOGGLE updateScreen.
 			}
 			// if the command was not processed correctly, display an error message
 			ELSE SET loopMessage TO "Did not understand input!".
@@ -520,18 +607,36 @@ UNTIL done {
 				SET inputString TO inputString:SUBSTRING(0, inputString:LENGTH - 1).
 			}
 			TOGGLE updateScreen.
-		} ELSE {
+		} ELSE
+		// if the operator entered the up arrow key, load the previous command
+		IF tempChar = TERMINAL:INPUT:UPCURSORONE {
+			SET previousCommandIndex TO previousCommandIndex - 1.
+			IF previousCommandIndex > previousCommands:LENGTH - 1 SET previousCommandIndex TO previousCommands:LENGTH - 1.
+			IF previousCommandIndex < 0 SET previousCommandIndex TO 0.
+			IF (previousCommandIndex < previousCommands:LENGTH) SET inputString TO previousCommands[previousCommandIndex].
+			TOGGLE updateScreen.
+		} ELSE
+		IF tempChar = TERMINAL:INPUT:DOWNCURSORONE {
+			SET previousCommandIndex TO previousCommandIndex + 1.
+			IF previousCommandIndex > previousCommands:LENGTH - 1 SET previousCommandIndex TO previousCommands:LENGTH - 1.
+			IF previousCommandIndex < 0 SET previousCommandIndex TO 0.
+			IF (previousCommandIndex < previousCommands:LENGTH) SET inputString TO previousCommands[previousCommandIndex].
+			TOGGLE updateScreen.
+		}
 		// otherwise, add the character to the input string
+		ELSE {
 			SET inputString TO inputString + tempChar.
 			TOGGLE updateScreen.
 		}
 	}
+	SET facingVector:SHOW TO steeringVectorsVisible AND useMySteer AND NOT MAPVIEW.
+	SET guidanceVector:SHOW TO steeringVectorsVisible AND useMySteer AND NOT MAPVIEW.
 	IF count > 50 {
 		SET count TO 1.
 		TOGGLE updateScreen.
 	}
 	IF useMyThrottle SET myThrottle TO 0.
-	WAIT 0.
+	WAIT 0.1.
 }
 
 CLEARSCREEN.
