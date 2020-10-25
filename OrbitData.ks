@@ -9,6 +9,7 @@ PRINT "Orbited Body " + localOrbit:BODY:NAME.
 PRINT "Orbited Body MU " + BODY:MU + " m^3/s^2".
 PRINT "Orbited Body Radius " + distanceToString(BODY:Radius, 4).
 PRINT "Period " + timeToString(localOrbit:PERIOD, 4).
+PRINT "Period " + localOrbit:PERIOD + " s".
 PRINT "Inclination " + ROUND(localOrbit:INCLINATION, 4).
 PRINT "Eccentricity " + ROUND(localOrbit:ECCENTRICITY, 4).
 PRINT "Semi-Major Axis " + distanceToString(localOrbit:SEMIMAJORAXIS, 4).
