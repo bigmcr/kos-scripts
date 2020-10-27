@@ -3,20 +3,12 @@
 // All of these are default parameters; they can be overriden by any vehicle-specific script file
 GLOBAL physicsWarpPerm TO 2.					// If non-zero, allow physics warping up to the specified level when reasonable
 GLOBAL maxAOA TO 5.								// Maximum angle of attack. Used as the limits of the pitch PID while in atmosphere
-GLOBAL isTesting TO FALSE.						// TRUE if the ship is being tested a bunch of times
 GLOBAL debug IS TRUE.							// If TRUE, multiple functions will display or log extra info
 GLOBAL missionTimeOffset TO 0.					// Offset for MISSIONTIME to account for time spent on the launchpad
 GLOBAL g_0 IS 9.80665.               			// Gravitational acceleration constant (m/s²)
-GLOBAL mySteer IS VELOCITY:ORBIT.
-GLOBAL myThrottle IS 0.
-GLOBAL useMySteer IS FALSE.
-GLOBAL useMyThrottle IS FALSE.
 GLOBAL augerList IS SHIP:PARTSTITLEDPATTERN("Auger").
 GLOBAL smelterList IS SHIP:PARTSTITLEDPATTERN("Smelter").
 GLOBAL minThrottle IS 0.
-GLOBAL steeringVisible IS TRUE.
-GLOBAL steeringVectorsVisible IS TRUE.
-LOCK steeringVectorsVisible TO (NOT MAPVIEW AND steeringVisible).
 GLOBAL facingVector   IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN SHIP:FACING:VECTOR * 10.}           , RED,   "                 Facing", 1).
 GLOBAL guidanceVector IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN STEERINGMANAGER:TARGET:VECTOR * 10.}, GREEN, "Guidance               ", 1).
 LOCAL shipInfoCurrentLoggingStarted IS FALSE.
@@ -1858,7 +1850,6 @@ FUNCTION timeToAltitude
 FUNCTION endScript {
 	SAS OFF.
 	RCS OFF.
-	SET steeringVisible TO FALSE.
 	UNLOCK useMySteer.
 	SET useMySteer TO FALSE.
 	UNLOCK mySteer.

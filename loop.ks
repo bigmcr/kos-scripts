@@ -1,5 +1,3 @@
-@LAZYGLOBAL OFF.
-
 CLEARSCREEN.
 
 GLOBAL runLocal TO TRUE.
@@ -16,6 +14,10 @@ RUNPATH("Library").
 
 GLOBAL loopMessage IS "".
 GLOBAL errorValue IS -1234.
+GLOBAL mySteer IS VELOCITY:ORBIT.
+GLOBAL myThrottle IS 0.
+GLOBAL useMySteer IS FALSE.
+GLOBAL useMyThrottle IS FALSE.
 
 LOCAL inputString IS "".
 LOCAL previousCommands IS LIST().
@@ -702,8 +704,8 @@ UNTIL done {
 			TOGGLE updateScreen.
 		}
 	}
-	SET facingVector:SHOW TO steeringVectorsVisible AND useMySteer AND NOT MAPVIEW.
-	SET guidanceVector:SHOW TO steeringVectorsVisible AND useMySteer AND NOT MAPVIEW.
+	SET facingVector:SHOW TO useMySteer AND NOT MAPVIEW.
+	SET guidanceVector:SHOW TO useMySteer AND NOT MAPVIEW.
 	IF count > 50 {
 		SET count TO 1.
 		TOGGLE updateScreen.
