@@ -8,17 +8,9 @@ PARAMETER gravTurnEnd IS 150000.			// The altitude of the end of the gravity tur
 PARAMETER initialStage IS TRUE.				// Whether or not to trigger the initial stage
 PARAMETER maxGs IS 2.						// maximum number of G's that the ship should go under
 
-SET steeringVisible TO TRUE.		// Turn on the steering vectors
-
 ON MAPVIEW {
-	SET facingVector:SHOW TO NOT MAPVIEW AND NOT SHIP:CONTROL:NEUTRAL.
-	SET guidanceVector:SHOW TO NOT MAPVIEW AND NOT SHIP:CONTROL:NEUTRAL.
-	RETURN TRUE.
-}
-
-ON steeringVectorsVisible {
-	SET facingVector:SHOW TO steeringVectorsVisible AND NOT SHIP:CONTROL:NEUTRAL.
-	SET guidanceVector:SHOW TO steeringVectorsVisible AND NOT SHIP:CONTROL:NEUTRAL.
+	SET facingVector:SHOW TO useMySteer AND NOT MAPVIEW.
+	SET guidanceVector:SHOW TO useMySteer AND NOT MAPVIEW.
 	RETURN TRUE.
 }
 
