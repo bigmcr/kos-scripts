@@ -7,10 +7,7 @@ PARAMETER initialStage IS TRUE.				// Whether or not to trigger the stage functi
 //   altitude target to 5km below the top of the atmosphere.
 IF SHIP:BODY:ATM:EXISTS AND altitudeTarget = 20000 SET altitudeTarget TO SHIP:BODY:ATM:HEIGHT - 5000.
 
-IF VELOCITY:SURFACE:MAG > 1.0 SET loopMessage TO "Already moving over the surface!".
-ELSE {
-	RUNPATH("GravTurnLaunch", finalInclination, FALSE, 10, altitudeTarget, initialStage, maxGs).
-	RUNPATH("Circ", "apo").
-	RUNPATH("Exec").
-	REMOVE NEXTNODE.
-}
+RUNPATH("GravTurnLaunch", finalInclination, FALSE, 10, altitudeTarget, initialStage, maxGs).
+RUNPATH("Circ", "apo").
+RUNPATH("Exec").
+REMOVE NEXTNODE.
