@@ -14,6 +14,7 @@ GLOBAL guidanceVector IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN ST
 LOCAL shipInfoCurrentLoggingStarted IS FALSE.
 LOCAL logPhysicsTimeStamp IS 0.
 GLOBAL bounds IS SHIP:BOUNDS.
+CLEARVECDRAWS().
 
 LOCK timeSinceLaunch TO MISSIONTIME - missionTimeOffset.
 
