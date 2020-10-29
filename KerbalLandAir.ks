@@ -48,24 +48,12 @@ LOCAL pitchValue IS 0.
 LOCAL headingValue IS 90.
 LOCAL startTime IS 0.
 LOCAL startPosition IS SHIP:GEOPOSITION.
-LOCAL flatSpot IS SHIP:GEOPOSITION.
-LOCAL flatSpotDistancePrev IS -1.
-LOCAL coastDistance IS 0.
-LOCAL groundSlope TO 0.
-LOCAL groundSlopeHeading TO 0.
 LOCAL headerCreated IS FALSE.
 LOCAL gravityAccel TO 0.
 LOCAL effectiveAccel TO 0.
 LOCAL minTimeToStop TO 0.
 LOCAL timeToFall TO 0.
-LOCAL downSlopeInfo IS LEXICON().
 LOCAL x_r TO 0.
-LOCAL downSlopeVector IS V(0,0,0).
-LOCAL downslopeDirection IS 0.
-LOCAL sideDirection IS 0.
-LOCAL downslopeSpeed IS 0.
-LOCAL sideSpeed IS 0.
-LOCAL headingSteeringAdjust IS 0.
 LOCAL minPitch IS 70.
 
 LOCAL desiredPeri IS SHIP:BODY:ATM:HEIGHT * 0.45.
@@ -81,14 +69,6 @@ WHEN (NOT CHUTESSAFE) THEN {
 UNTIL mode > 6 {
 	PRINT "Mode " + mode AT (40, 0).
 	SET aboveGround TO heightAboveGround().
-	SET downSlopeInfo TO findDownSlopeInfo().
-	SET groundSlope TO downSlopeInfo["slope"].
-	SET groundSlopeHeading TO downSlopeInfo["heading"].
-	SET downSlopeVector TO downSlopeInfo["Vector"].
-	SET downslopeDirection TO HEADING(groundSlopeHeading +  0, 0):VECTOR:NORMALIZED.
-	SET sideDirection      TO HEADING(groundSlopeHeading + 90, 0):VECTOR:NORMALIZED.
-	SET downslopeSpeed  TO VELOCITY:SURFACE * downslopeDirection.
-	SET sideSpeed       TO VELOCITY:SURFACE * sideDirection.
 	SET velocityPitch   TO pitch_vector(-VELOCITY:SURFACE).
 
 	IF (TIME:SECONDS <> oldTime) {
@@ -106,12 +86,7 @@ UNTIL mode > 6 {
 		PRINT "Vertical Speed " + distanceToString(VERTICALSPEED, 2) + "/s    " AT (0, 2).
 		PRINT "Vertical Acceleration " + distanceToString(vAccel, 2) + "/s^2    " AT (0, 3).
 		PRINT "Ground Speed = " + distanceToString(SHIP:GROUNDSPEED, 3) + "/s     " AT (0, 4).
-		PRINT "Slope of Ground " + ROUND(groundSlope, 2) + " deg    " AT (0, 5).
-		PRINT "Slope of Ground " + distanceToString(TAN(groundSlope) * 100, 1) + "/100 m     " AT (0, 6).
-		PRINT "Ground Slope Heading = " + ROUND(groundSlopeHeading, 2) + " deg from North     " AT (0, 7).
-		PRINT "Down-Slope Speed " + distanceToString(downslopeSpeed, 2) + "/s      " AT (0, 8).
-		PRINT "Side-Slope Speed " + distanceToString(sideSpeed, 2) + "/s      " AT (0, 9).
-		PRINT "Throttle at " + ROUND(THROTTLE * 100) + "%    " AT (0, 10).
+		PRINT "Throttle at " + ROUND(THROTTLE * 100) + "%    " AT (0, 5).
 
 		IF connectionToKSC() {
 			LOCAL message IS "".
@@ -128,15 +103,29 @@ UNTIL mode > 6 {
 				SET message TO message + "Horizontal Acceleration,".
 				SET message TO message + "Vertical Speed,".
 				SET message TO message + "Vertical Acceleration,".
-				SET message TO message + "Downslope Speed,".
-				SET message TO message + "Side Speed,".
 				SET message TO message + "Height Above Ground,".
-				SET message TO message + "Ground Slope,".
-				SET message TO message + "Ground Slope Heading,".
 				SET message TO message + "Throttle Velocity Setpoint,".
 				SET message TO message + "Throttle PID Output,".
 				SET message TO message + "Pitch,".
 				SET message TO message + "Mode,".
+				LOG message TO "0:KerbalLandAir.csv".
+
+				SET message TO "s,".
+				SET message TO message + "m,".
+				SET message TO message + "m/s^2,".
+				SET message TO message + "m/s^2,".
+				SET message TO message + "m/s^2,".
+				SET message TO message + "s,".
+				SET message TO message + "s,".
+				SET message TO message + "m/s,".
+				SET message TO message + "m/s^2,".
+				SET message TO message + "m/s,".
+				SET message TO message + "m/s^2,".
+				SET message TO message + "m,".
+				SET message TO message + "m/s,".
+				SET message TO message + "%,".
+				SET message TO message + "deg,".
+				SET message TO message + ",".
 				LOG message TO "0:KerbalLandAir.csv".
 			}
 			SET message TO missionTime.
@@ -150,11 +139,7 @@ UNTIL mode > 6 {
 			SET message TO message + "," + hAccel.
 			SET message TO message + "," + VERTICALSPEED.
 			SET message TO message + "," + vAccel.
-			SET message TO message + "," + downslopeSpeed.
-			SET message TO message + "," + sideSpeed.
 			SET message TO message + "," + aboveGround.
-			SET message TO message + "," + groundSlope.
-			SET message TO message + "," + groundSlopeHeading.
 			SET message TO message + "," + T_PID:SETPOINT.
 			SET message TO message + "," + T_PID:OUTPUT.
 			SET message TO message + "," + pitch_for(SHIP).
@@ -168,6 +153,7 @@ UNTIL mode > 6 {
 	}
 	// Mode 1 - Burn surface retrograde until periapsis is 45% of the atmosphere's thickness above the ground
 	IF (mode = 1) {
+		PRINT "Peri = " + distanceToString(PERIAPSIS, 2) AT (40, 1).
 		PRINT "Peri < " + distanceToString(desiredPeri, 2) AT (40, 2).
 
 		SET myThrottle TO 1.
@@ -177,9 +163,8 @@ UNTIL mode > 6 {
 
 	// Mode 2 - Wait until altitude is below 45% of the atmosphere's thickness
 	IF mode = 2 {
-		PRINT "AGL = " + distanceToString(aboveGround, 2) + "        " AT (40, 2).
-		PRINT "               " AT (40, 3).
-		PRINT "AGL < " + distanceToString(desiredPeri, 2) + "    " AT (40, 4).
+		PRINT "AGL = " + distanceToString(aboveGround, 2) + "        " AT (40, 1).
+		PRINT "AGL < " + distanceToString(desiredPeri, 2) + "    " AT (40, 2).
 		SET myThrottle TO 0.
 		SET mySteer TO -VELOCITY:SURFACE.
 		IF (aboveGround < desiredPeri) {advanceMode().}
@@ -194,23 +179,20 @@ UNTIL mode > 6 {
 		IF (VELOCITY:SURFACE:MAG < initialSpeed * 0.25) advanceMode().
 	}
 	// Mode 4 - Maintain surface retrograde while enabling parachutes
-	//   When all parachutes are deployed or ALT < 100 m, go to next mode
+	//   When all parachutes are deployed and ALT < 1000 m, go to next mode
 	IF mode = 4 {
-		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 1).
-		PRINT "Slope = " + ROUND(groundSlope,2) + "     " AT (40, 2).
-		PRINT "minPitch = " + minPitch + "     " AT (40, 3).
-		PRINT "AGL < 5        " AT (40, 4).
+		PRINT "Chutes = " + CHUTES + "        " AT (40, 1).
+		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 2).
 		SET myThrottle TO 0.
 		SET mySteer TO -VELOCITY:SURFACE.
-		IF ((NOT CHUTES) OR (aboveGround < 100)) advanceMode().
+		IF (CHUTES AND (aboveGround < 1000)) advanceMode().
 	}
 	// Mode 5 - Maintain Vertical Speed at setpoint until height above ground is less than 2 meters
 	// Note that the steering is limited in patch based on height above ground. This cancels the last horizontal velocity
 	IF mode = 5 {
 		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 1).
-		PRINT "Slope = " + ROUND(groundSlope,2) + "     " AT (40, 2).
-		PRINT "minPitch = " + minPitch + "     " AT (40, 3).
-		PRINT "AGL < 5        " AT (40, 4).
+		PRINT "AGL < 5        " AT (40, 2).
+		IF (aboveGround > 200) {SET T_PID:SETPOINT TO -100. SET minPitch TO 45.}
 		IF (aboveGround > 50) {SET T_PID:SETPOINT TO -10. SET minPitch TO 70.}
 		ELSE IF (aboveGround > 25) {SET T_PID:SETPOINT TO -1. SET KUNIVERSE:TIMEWARP:WARP TO 0. SET minPitch TO 85.}
 		ELSE IF (aboveGround < 2) {advanceMode().}
@@ -230,11 +212,9 @@ UNTIL mode > 6 {
 		RCS ON.
 		PRINT "Vertical Drop    " AT (40, 1).
 		PRINT "AGL = " + ROUND(aboveGround) + "       " AT (40, 2).
-		PRINT "SrfSpd " + ROUND(VELOCITY:SURFACE:MAG, 3) + "     " AT (40, 3).
-		PRINT "SrfSpd < 0.5     " AT (40, 4).
 		SET myThrottle TO 0.
 		SET mySteer TO SHIP:UP.
-		IF (TIME:SECONDS > startTime + 5) AND (VELOCITY:SURFACE:MAG < 0.5) advanceMode().
+		IF (TIME:SECONDS > startTime + 5) advanceMode().
 	}
 	WAIT 0.
 }
