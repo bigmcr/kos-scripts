@@ -4,18 +4,16 @@ CLEARSCREEN.
 
 // This landing script uses multiple modes:
 // Mode 1 - Burn surface retrograde until periapsis is 45% of the atmosphere's thickness above the ground
-// Mode 2 - Activeate physics warp to until altitude is below 45% of the atmosphere's thickness
+// Mode 2 - Activate physics warp to until altitude is below 45% of the atmosphere's thickness
 // Mode 3 - Activate engines (full thrust) until surface speed is 25% of initial orbital speed
-// Mode 4 
-Hover at 10 m/s horizontal speed in the downslope direction until slope is less than 7.5 degrees
-// Mode 4 - Maintain Vertical Speed at setpoint until height above ground is less than 5 meters
-// Mode 5 - Vertical Drop to the ground
+// Mode 4 - Maintain surface retrograde while enabling parachutes
+// Mode 5 - When all parachutes are deployed or ALT < 100 m, maintain vertical speed
+// Mode 6 - Kill engines, use RCS to stabilize
 
 SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
 SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:PHYSICSRATELIST:LENGTH - 1.
 
 LOCAL T_PID IS PIDLOOP(0.5, 0.1, 0, 0, 1).			// PID loop to control trottle during vertical descent phase
-LOCAL H_PID IS PIDLOOP(2.5, 2.5, 1, -15, 15).		// PID loop to control heading during hover phase
 
 LOCAL oldTime IS ROUND(TIME:SECONDS, 1).
 LOCAL oldVSpeed IS 0.
@@ -40,13 +38,6 @@ SAS OFF.
 RCS OFF.
 PANELS OFF.
 
-// Engine staging - this should drop any used stage
-WHEN MAXTHRUST = 0 THEN {
-	PRINT "Staging from max thrust".
-	stageFunction().
-}
-
-
 FUNCTION advanceMode {
 	SET mode TO mode + 1.
 }
@@ -60,15 +51,9 @@ LOCAL startPosition IS SHIP:GEOPOSITION.
 LOCAL flatSpot IS SHIP:GEOPOSITION.
 LOCAL flatSpotDistancePrev IS -1.
 LOCAL coastDistance IS 0.
-LOCAL landingArrow TO VECDRAW(V(0,0,0), flatSpot:POSITION, BLUE, "Landing Direction", 1.0, FALSE, 0.2).
-LOCAL velocityArrow TO VECDRAW(V(0,0,0), flatSpot:POSITION, RED, "Velocity", 1.0, FALSE, 0.2).
-LOCAL aimingArrow TO VECDRAW(V(0,0,0), flatSpot:POSITION, GREEN, "Aiming", 1.0, FALSE, 0.2).
 LOCAL groundSlope TO 0.
 LOCAL groundSlopeHeading TO 0.
 LOCAL headerCreated IS FALSE.
-LOCAL downslopeDirectionVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Direction" , 1.0, FALSE, 0.2).
-LOCAL downslopeSpeedVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), RED, "Down Speed", 1.0, FALSE, 0.2).
-LOCAL sideSpeedVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), GREEN, "Side Speed", 1.0, FALSE, 0.2).
 LOCAL gravityAccel TO 0.
 LOCAL effectiveAccel TO 0.
 LOCAL minTimeToStop TO 0.
@@ -83,9 +68,17 @@ LOCAL sideSpeed IS 0.
 LOCAL headingSteeringAdjust IS 0.
 LOCAL minPitch IS 70.
 
-LOCAL downslopeVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), YELLOW, "Down Slope Direction", 1.0, TRUE, 0.2).
+LOCAL desiredPeri IS SHIP:BODY:ATM:HEIGHT * 0.45.
+LOCAL initialSpeed IS SHIP:VELOCITY:ORBIT:MAG.
 
-UNTIL mode > 5 {
+
+// This should deploy all parachutes as soon as it is safe to do so
+WHEN (NOT CHUTESSAFE) THEN {
+    CHUTESSAFE ON.
+    RETURN (NOT CHUTES).
+}
+
+UNTIL mode > 6 {
 	PRINT "Mode " + mode AT (40, 0).
 	SET aboveGround TO heightAboveGround().
 	SET downSlopeInfo TO findDownSlopeInfo().
@@ -97,8 +90,6 @@ UNTIL mode > 5 {
 	SET downslopeSpeed  TO VELOCITY:SURFACE * downslopeDirection.
 	SET sideSpeed       TO VELOCITY:SURFACE * sideDirection.
 	SET velocityPitch   TO pitch_vector(-VELOCITY:SURFACE).
-
-	SET downslopeVecDraw:VEC TO downSlopeVector.
 
 	IF (TIME:SECONDS <> oldTime) {
 		SET hAccel TO (GROUNDSPEED - oldHSpeed)/(TIME:SECONDS - oldTime).
@@ -121,7 +112,6 @@ UNTIL mode > 5 {
 		PRINT "Down-Slope Speed " + distanceToString(downslopeSpeed, 2) + "/s      " AT (0, 8).
 		PRINT "Side-Slope Speed " + distanceToString(sideSpeed, 2) + "/s      " AT (0, 9).
 		PRINT "Throttle at " + ROUND(THROTTLE * 100) + "%    " AT (0, 10).
-	  PRINT "H_PID at " + ROUND(H_PID:OUTPUT, 2) + " deg from vertical    " AT (0, 11).
 
 		IF connectionToKSC() {
 			LOCAL message IS "".
@@ -145,11 +135,9 @@ UNTIL mode > 5 {
 				SET message TO message + "Ground Slope Heading,".
 				SET message TO message + "Throttle Velocity Setpoint,".
 				SET message TO message + "Throttle PID Output,".
-				SET message TO message + "Heading PID Output,".
-				SET message TO message + "Heading Steering Adjust,".
 				SET message TO message + "Pitch,".
 				SET message TO message + "Mode,".
-				LOG message TO "0:EqualTime.csv".
+				LOG message TO "0:KerbalLandAir.csv".
 			}
 			SET message TO missionTime.
 			SET message TO message + "," + greatCircleDistance(SHIP:GEOPOSITION, startPosition).
@@ -169,97 +157,76 @@ UNTIL mode > 5 {
 			SET message TO message + "," + groundSlopeHeading.
 			SET message TO message + "," + T_PID:SETPOINT.
 			SET message TO message + "," + T_PID:OUTPUT.
-			SET message TO message + "," + H_PID:OUTPUT.
-			SET message TO message + "," + headingSteeringAdjust.
 			SET message TO message + "," + pitch_for(SHIP).
 			SET message TO message + "," + mode.
-			LOG message TO "0:EqualTime.csv".
+			LOG message TO "0:KerbalLandAir.csv".
 		}
 
 		SET oldHSpeed TO GROUNDSPEED.
 		SET oldVSpeed TO VERTICALSPEED.
 		SET oldTime TO TIME:SECONDS.
 	}
-	// Mode 1 - Surface Retrograde until velocityPitch is greater than 45
+	// Mode 1 - Burn surface retrograde until periapsis is 45% of the atmosphere's thickness above the ground
 	IF (mode = 1) {
-		PRINT "VSpeed SP = N/A  " AT (40, 1).
-		PRINT "SrfVel Pitch > 45" AT (40, 2).
-		PRINT "             " AT (40, 3).
-		PRINT "SrfVel Pitch " + ROUND(velocityPitch, 2) + "      " AT (40, 4).
+		PRINT "Peri < " + distanceToString(desiredPeri, 2) AT (40, 2).
+
+		SET myThrottle TO 1.
 		SET mySteer TO -VELOCITY:SURFACE.
-		IF (velocityPitch > 45) {
-			advanceMode().
-		}
+		IF (SHIP:ORBIT:PERIAPSIS < desiredPeri) {advanceMode().}
 	}
-	// Mode 2 - Maintain Vertical Speed at setpoint until height above ground is less than 1000 meters
-	// Note that the steering is limited to a pitch of 70 degrees at minimum. This cancels the last horizontal velocity
+
+	// Mode 2 - Wait until altitude is below 45% of the atmosphere's thickness
 	IF mode = 2 {
-		PRINT "VSpeed SP = " + ROUND(T_PID:SETPOINT, 2) + "    " AT (40, 1).
-		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 2).
+		PRINT "AGL = " + distanceToString(aboveGround, 2) + "        " AT (40, 2).
 		PRINT "               " AT (40, 3).
-		PRINT "AGL < 1000        " AT (40, 4).
-//		IF (aboveGround > 1000) SET T_PID:SETPOINT TO aboveGround / -200.
-		IF (aboveGround > 50000) SET T_PID:SETPOINT TO -1000.
-		ELSE IF (aboveGround > 10000) SET T_PID:SETPOINT TO -200.
-		ELSE IF (aboveGround > 1000) SET T_PID:SETPOINT TO -50.
-		ELSE {advanceMode().}
-		SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		IF GROUNDSPEED < 0.1 SET mySteer TO HEADING (0, 90).
-		ELSE SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(70, velocityPitch)).
+		PRINT "AGL < " + distanceToString(desiredPeri, 2) + "    " AT (40, 4).
+		SET myThrottle TO 0.
+		SET mySteer TO -VELOCITY:SURFACE.
+		IF (aboveGround < desiredPeri) {advanceMode().}
 	}
-	// Mode 3 - Maintain height above ground with 10 m/s horizontal speed in the direction of downslope until slope is less than 5.0 degrees
-	// Note that the steering is limited to a pitch of 85 degrees at minimum. This limits the remaining horizontal velocity
+	// Mode 3 - Activate engines (full thrust) until surface speed is 25% of initial orbital speed
 	IF mode = 3 {
-		PRINT "VSpeed SP = " + ROUND(T_PID:SETPOINT, 2) + "    " AT (40, 1).
-		PRINT "Slope = " + ROUND(groundSlope, 2) + "     " AT (40, 2).
-		PRINT "               " AT (40, 3).
-		PRINT "Slope < 5.0    " AT (40, 4).
-		SET T_PID:SETPOINT TO 0.0.
-		SET H_PID:SETPOINT TO 10.0.
+		PRINT "Speed SP = " + distanceToString(initialSpeed * 0.25, 2) + "/s    " AT (40, 1).
+		PRINT "Speed = " + distanceToString(VELOCITY:SURFACE:MAG, 2) + "/s     " AT (40, 2).
+	  SET myThrottle TO 1.
+		SET mySteer TO -VELOCITY:SURFACE.
 
-	  SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		IF H_PID:OUTPUT < 0 SET headingSteeringAdjust TO - 2 * sideSpeed.
-		ELSE SET headingSteeringAdjust TO 2 * sideSpeed.
-		IF headingSteeringAdjust > 30 SET headingSteeringAdjust TO 30.
-		IF headingSteeringAdjust < 30 SET headingSteeringAdjust TO -30.
-	  SET mySteer TO HEADING (groundSlopeHeading + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, downslopeSpeed)).
-
-		SET downslopeDirectionVecDraw:SHOW TO TRUE.
-		SET downslopeSpeedVecDraw:SHOW TO TRUE.
-		SET sideSpeedVecDraw:SHOW TO TRUE.
-	  SET downslopeDirectionVecDraw:VEC TO 10*HEADING(groundSlopeHeading, 0):VECTOR.
-	  SET downslopeSpeedVecDraw:VEC TO MIN(3, ABS(downslopeSpeed))*downslopeDirection.
-	  SET sideSpeedVecDraw:VEC TO MIN(3, ABS(sideSpeed))*sideDirection.
-
-		IF (aboveGround < 500 OR groundSlope < 5.0) advanceMode().
+		IF (VELOCITY:SURFACE:MAG < initialSpeed * 0.25) advanceMode().
 	}
-	// Mode 4 - Maintain Vertical Speed at setpoint until height above ground is less than 2 meters
-	// Note that the steering is limited in patch based on height above ground. This cancels the last horizontal velocity
+	// Mode 4 - Maintain surface retrograde while enabling parachutes
+	//   When all parachutes are deployed or ALT < 100 m, go to next mode
 	IF mode = 4 {
 		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 1).
 		PRINT "Slope = " + ROUND(groundSlope,2) + "     " AT (40, 2).
 		PRINT "minPitch = " + minPitch + "     " AT (40, 3).
 		PRINT "AGL < 5        " AT (40, 4).
-		IF (aboveGround > 1000) {SET T_PID:SETPOINT TO -20. SET minPitch TO 45.}
-		ELSE IF (aboveGround > 50) {SET T_PID:SETPOINT TO -10. SET minPitch TO 70.}
+		SET myThrottle TO 0.
+		SET mySteer TO -VELOCITY:SURFACE.
+		IF ((NOT CHUTES) OR (aboveGround < 100)) advanceMode().
+	}
+	// Mode 5 - Maintain Vertical Speed at setpoint until height above ground is less than 2 meters
+	// Note that the steering is limited in patch based on height above ground. This cancels the last horizontal velocity
+	IF mode = 5 {
+		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 1).
+		PRINT "Slope = " + ROUND(groundSlope,2) + "     " AT (40, 2).
+		PRINT "minPitch = " + minPitch + "     " AT (40, 3).
+		PRINT "AGL < 5        " AT (40, 4).
+		IF (aboveGround > 50) {SET T_PID:SETPOINT TO -10. SET minPitch TO 70.}
 		ELSE IF (aboveGround > 25) {SET T_PID:SETPOINT TO -1. SET KUNIVERSE:TIMEWARP:WARP TO 0. SET minPitch TO 85.}
 		ELSE IF (aboveGround < 2) {advanceMode().}
 		SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 		IF cancelHoriz AND GROUNDSPEED < 0.25 SET cancelHoriz TO FALSE.
 		IF NOT cancelHoriz AND GROUNDSPEED > 0.5 SET cancelHoriz TO TRUE.
+
 		IF NOT cancelHoriz SET mySteer TO HEADING (0, 90).
 		ELSE SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+
 		GEAR ON.
 		LIGHTS ON.
-		SET downslopeDirectionVecDraw:SHOW TO FALSE.
-		SET downslopeSpeedVecDraw:SHOW TO FALSE.
-		SET sideSpeedVecDraw:SHOW TO FALSE.
 	}
-	// Mode 5 - Vertical Drop to the ground - use RCS for stabilization
-	IF mode = 5 {
-		IF startTime = 0 {
-			SET startTime TO TIME:SECONDS.
-		}
+	// Mode 6 - Kill engines, use RCS to stabilize
+	IF mode = 6 {
+		IF startTime = 0 {SET startTime TO TIME:SECONDS.}
 		RCS ON.
 		PRINT "Vertical Drop    " AT (40, 1).
 		PRINT "AGL = " + ROUND(aboveGround) + "       " AT (40, 2).
