@@ -320,6 +320,10 @@ UNTIL done {
 						IF (inputStringList[1] = "Toggle") OR (inputStringList[1] = "T") SET ISRU TO NOT ISRU.
 						SET loopMessage TO "ISRUs are currently " + ISRU.
 						SET commandValid TO TRUE.
+					} ELSE IF ((inputStringList[0] = "mining") OR (inputStringList[0] = "srfmining")) {
+						IF inputStringList[1] = "On" {ISRU ON. RADIATORS ON. FUELCELLS ON. DEPLOYDRILLS ON. WAIT 0.5. DRILLS ON. SET loopMessage TO "Surface mining started".}
+						IF inputStringList[1] = "Off" {ISRU OFF. RADIATORS OFF. FUELCELLS OFF. DEPLOYDRILLS OFF. SET loopMessage TO "Surface mining stopped".}
+						SET commandValid TO TRUE.
 					} ELSE IF ((inputStringList[0] = "CELL") OR (inputStringList[0] = "FUELCELL") OR (inputStringList[0] = "CELLS") OR (inputStringList[0] = "FUELCELLS")) {
 						IF inputStringList[1] = "On" FUELCELLS ON.
 						IF inputStringList[1] = "Off" FUELCELLS OFF.
