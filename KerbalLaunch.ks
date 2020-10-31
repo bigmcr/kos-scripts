@@ -11,3 +11,5 @@ RUNPATH("GravTurnLaunch", finalInclination, FALSE, 10, altitudeTarget, initialSt
 RUNPATH("Circ", "apo").
 RUNPATH("Exec").
 REMOVE NEXTNODE.
+
+SET loopMessage TO "ship in " + distanceToString(APOAPSIS) + "x" + distanceToString(PERIAPSIS) + " orbit " + ROUND(ABS(SHIP:ORBIT:INCLINATION - finalInclination), 1) + " deg inc error".
