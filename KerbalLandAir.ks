@@ -4,14 +4,11 @@ CLEARSCREEN.
 
 // This landing script uses multiple modes:
 // Mode 1 - Burn surface retrograde until periapsis is 45% of the atmosphere's thickness above the ground
-// Mode 2 - Activate physics warp to until altitude is below 45% of the atmosphere's thickness
+// Mode 2 - Activate warp to until altitude is below 45% of the atmosphere's thickness
 // Mode 3 - Activate engines (full thrust) until surface speed is 25% of initial orbital speed
 // Mode 4 - Maintain surface retrograde while enabling parachutes
 // Mode 5 - When all parachutes are deployed or ALT < 100 m, maintain vertical speed
 // Mode 6 - Kill engines, use RCS to stabilize
-
-SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
-SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:PHYSICSRATELIST:LENGTH - 1.
 
 LOCAL T_PID IS PIDLOOP(0.5, 0.1, 0, 0, 1).			// PID loop to control trottle during vertical descent phase
 
@@ -39,6 +36,7 @@ RCS OFF.
 PANELS OFF.
 
 FUNCTION advanceMode {
+	CLEARSCREEN.
 	SET mode TO mode + 1.
 }
 
@@ -163,11 +161,18 @@ UNTIL mode > 6 {
 
 	// Mode 2 - Wait until altitude is below 45% of the atmosphere's thickness
 	IF mode = 2 {
-		PRINT "AGL = " + distanceToString(aboveGround, 2) + "        " AT (40, 1).
+		PRINT "AGL = " + distanceToString(ALTITUDE, 2) + "        " AT (40, 1).
 		PRINT "AGL < " + distanceToString(desiredPeri, 2) + "    " AT (40, 2).
 		SET myThrottle TO 0.
 		SET mySteer TO -VELOCITY:SURFACE.
-		IF (aboveGround < desiredPeri) {advanceMode().}
+		IF (ALTITUDE < desiredPeri) {advanceMode().}
+		IF ALTITUDE > SHIP:BODY:ATM:HEIGHT + 2500 {
+			SET KUNIVERSE:TIMEWARP:MODE TO "RAILS".
+			SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:PHYSICSRATELIST:LENGTH - 1.
+		} ELSE {
+			SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
+			SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:PHYSICSRATELIST:LENGTH - 1.
+		}
 	}
 	// Mode 3 - Activate engines (full thrust) until surface speed is 25% of initial orbital speed
 	IF mode = 3 {
@@ -183,6 +188,7 @@ UNTIL mode > 6 {
 	IF mode = 4 {
 		PRINT "Chutes = " + CHUTES + "        " AT (40, 1).
 		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 2).
+		PRINT "AGL = 1000        " AT (40, 3).
 		SET myThrottle TO 0.
 		SET mySteer TO -VELOCITY:SURFACE.
 		IF (CHUTES AND (aboveGround < 1000)) advanceMode().
@@ -191,9 +197,9 @@ UNTIL mode > 6 {
 	// Note that the steering is limited in patch based on height above ground. This cancels the last horizontal velocity
 	IF mode = 5 {
 		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 1).
-		PRINT "AGL < 5        " AT (40, 2).
-		IF (aboveGround > 200) {SET T_PID:SETPOINT TO -100. SET minPitch TO 45.}
-		IF (aboveGround > 50) {SET T_PID:SETPOINT TO -10. SET minPitch TO 70.}
+		PRINT "AGL < 2        " AT (40, 2).
+		PRINT "VSpeed SP = " + distanceToString(T_PID:SETPOINT) + "/s        " AT (40, 3).
+		IF (aboveGround > 50) {SET T_PID:SETPOINT TO -aboveGround/5. SET minPitch TO 70.}
 		ELSE IF (aboveGround > 25) {SET T_PID:SETPOINT TO -1. SET KUNIVERSE:TIMEWARP:WARP TO 0. SET minPitch TO 85.}
 		ELSE IF (aboveGround < 2) {advanceMode().}
 		SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
