@@ -2,6 +2,8 @@
 
 CLEARSCREEN.
 
+endScript().
+
 // This landing script uses multiple modes:
 // Mode 1 - Burn surface retrograde until periapsis is 45% of the atmosphere's thickness above the ground
 // Mode 2 - Activate warp to until altitude is below 45% of the atmosphere's thickness
