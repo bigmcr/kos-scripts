@@ -27,18 +27,19 @@ LOCAL mode IS 0.
 // Mode 5 - Burn horizontal only
 // Mode 6 - Maintain vertical speed of 0 m/s
 
-LOCAL yawValue IS 0.						// yaw adjustment factor for inclination tuning
+LOCAL yawValue IS 0.										// yaw adjustment factor for inclination tuning
 LOCAL PITCH_PID IS PIDLOOP(0.1, 0.25, 0.5).	// PID loop to control pitch
 LOCAL YAW_PID IS PIDLOOP(1, 0.1, 50).		// PID loop to control yaw
-LOCAL gravTurnStart TO 1000.				// The altitude of the start of the gravity turn
-LOCAL gravTurnExponent TO 0.740740741.		// The exponent used in the calculation of the gravity turn
-LOCAL endMessage IS "Blank".				// Used to determine the reason for exiting the loop
+LOCAL gravTurnStart TO 1000.						// The altitude of the start of the gravity turn
+LOCAL gravTurnExponent TO 0.740740741.	// The exponent used in the calculation of the gravity turn
+LOCAL endMessage IS "Blank".						// Used to determine the reason for exiting the loop
+LOCAL engineList IS LIST().							// Used to list all of the engines for staging
 
 LOCAL body_g IS CONSTANT:G * SHIP:BODY:MASS/(SHIP:BODY:RADIUS * SHIP:BODY:RADIUS).
 
 SET missionTimeOffset TO MISSIONTIME.		// Used to offset MISSIONTIME to account for time waiting on the pad
 
-SET mySteer TO SHIP:UP.						// Direction for cooked steering
+SET mySteer TO SHIP:UP.									// Direction for cooked steering
 SET myThrottle TO 1.0.
 
 SET useMyThrottle TO TRUE.
@@ -48,13 +49,14 @@ CLEARSCREEN.
 
 SAS OFF.
 RCS OFF.
-DEPLOYDRILLS OFF.
-GEAR OFF.
+IF DEPLOYDRILLS DEPLOYDRILLS OFF.
+IF GEAR GEAR OFF.
 LADDERS OFF.
 ISRU OFF.
+
 IF SHIP:BODY:ATM:EXISTS {
-	PANELS OFF.
-	RADIATORS OFF.
+	IF PANELS PANELS OFF.
+	IF RADIATORS RADIATORS OFF.
 }
 
 // when the periapsis gets above ground, set timewarp back to normal
@@ -173,7 +175,6 @@ UNTIL mode > 6 {
 			SET YAW_PID:MAXOUTPUT TO 20.
 			SET YAW_PID:MINOUTPUT TO -YAW_PID:MAXOUTPUT.
 			SET YAW_PID:SETPOINT TO finalInclination.
-//			IF connectionToKSC() LOG "Mission Time,Mode,Surface Velocity Pitch,Inclination,Latitude,yawValue,Mode Start Yaw,Ship Yaw,YAW_PID:OUTPUT,YAW_PID:SETPOINT" TO "0:YawPID.csv".
 
 			// reset the integral on the Yaw PID when the ship crosses the equator
 			WHEN (ABS(SHIP:GEOPOSITION:LAT) < 0.1) THEN {
@@ -182,7 +183,7 @@ UNTIL mode > 6 {
 			}
 
 			// When the atmosphere isn't really a concern anymore, let the PID have a little more freedom
-			WHEN ((SHIP:BODY:ATM:EXISTS) AND (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) < 0.10)) THEN {
+			WHEN ((SHIP:BODY:ATM:EXISTS) AND (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) < 0.05)) THEN {
 				PRINT "Loosening PID!".
 				SET PITCH_PID:MAXOUTPUT TO 15.
 				SET PITCH_PID:MINOUTPUT TO -15.
@@ -219,8 +220,6 @@ UNTIL mode > 6 {
 //		SET myThrottle TO (maxGs * body_g) / shipInfo["Maximum"]["Accel"].
 		SET myThrottle TO MIN( MAX( myThrottle, 0.05), 1.0).
 
-//		logPhysics("0:" + SHIP:NAME + " GravTurnLaunch Physics.csv").
-
 		// Engine staging
 		// this should drop any LF main stage and allow the final orbiter to take off
 		IF (MAXTHRUST = 0) {
@@ -229,16 +228,23 @@ UNTIL mode > 6 {
 			ELSE stageFunction().
 		}
 
-		// this should drop any boosters
-		LOCAL myVariable TO LIST().
-		LIST ENGINES IN myVariable.
-		FOR eng IN myVariable {
+		// this should drop any spent boosters
+		SET engineList TO LIST().
+		LIST ENGINES IN engineList.
+		FOR eng IN engineList {
 			IF eng:FLAMEOUT AND eng:IGNITION {
 				PRINT "Staging from flameout".
 				IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
 				ELSE stageFunction().
 				BREAK.
 			}
+		}
+
+		// This drops any empty fuel tanks
+		IF (shipInfo["CurrentStage"]["ResourceMass"] < 1.0 ) {
+			PRINT "Staging from resources".
+			IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
+			ELSE stageFunction().
 		}
 
 		// only call the PID if the ship is through a large portion of the gravity turn and the final inclination is not zero
@@ -248,19 +254,11 @@ UNTIL mode > 6 {
 		}
 		IF (finalInclination = 0) SET yawValue TO 0.
 
-//		IF connectionToKSC() LOG TIME:SECONDS + "," + mode + "," + pitch_vector(SHIP:VELOCITY:SURFACE) + "," + SHIP:ORBIT:INCLINATION + "," + SHIP:GEOPOSITION:LAT + "," + yawValue + "," + modeStartYaw + "," + yaw_for(SHIP) + "," + YAW_PID:OUTPUT + "," + YAW_PID:SETPOINT TO "0:YawPID.csv".
-
-		IF (shipInfo["CurrentStage"]["ResourceMass"] < 1.0 ) {
-			PRINT "Staging from resources".
-			stageFunction().
-		}
-
 		// Gravity turn
 		// Note that this gravity turn uses a PID to maintain the prograde vector at the correct pitch
 		IF mode = 4 {
 			SET PITCH_PID:SETPOINT TO gravityTurn(gravTurnStart, gravTurnEnd, 90, gravTurnAngleEnd, gravTurnExponent).
 			LOCAL pitchValue IS PITCH_PID:SETPOINT + PITCH_PID:UPDATE( TIME:SECONDS, 90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE)).
-//			logPID(PITCH_PID, "0:PitchPID.csv").
 			IF pitchValue < 0 SET pitchValue TO 0.
 			IF pitchValue > 90 SET pitchValue TO 90.
 
