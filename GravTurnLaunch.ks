@@ -8,6 +8,8 @@ PARAMETER gravTurnEnd IS 150000.			// The altitude of the end of the gravity tur
 PARAMETER initialStage IS TRUE.				// Whether or not to trigger the initial stage
 PARAMETER maxGs IS 2.						// maximum number of G's that the ship should go under
 
+endScript().
+
 ON MAPVIEW {
 	SET facingVector:SHOW TO useMySteer AND NOT MAPVIEW.
 	SET guidanceVector:SHOW TO useMySteer AND NOT MAPVIEW.
