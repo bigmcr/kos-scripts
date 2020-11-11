@@ -9,6 +9,8 @@ PARAMETER faceSun IS FALSE.										// during the waiting times, turn to face t
 
 CLEARSCREEN.
 
+LOCAL pointingError IS 1.0.										// Allowed pointing error, in degrees
+LOCAL angularVelError IS SHIP:MASS / 100.			// Allowed angular velocity error, in megagrams-meters
 LOCAL errorCode IS "None".
 updateShipInfo().
 
@@ -192,7 +194,7 @@ IF errorCode = "None" {
 		PRINT "Will fire RCS for " + ullage + " seconds".
 		IF faceSun PRINT "Will turn to face the Sun".
 		ELSE PRINT "Will not turn to face the Sun".
-		PRINT "Burn duration: " + timeToString(t_burn_req , 2).
+		PRINT "Burn duration: " + timeToString(t_total , 2).
 	}
 
 	// if called to face the sun and the node is more than 60 minutes away, turn to face the primary.
@@ -206,12 +208,12 @@ IF errorCode = "None" {
 		IF debug PRINT "Aligning with the Sun. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
 		LOCK mySteer TO faceBody:POSITION.
 		//now we need to wait until the body's position vector and ship's facing are aligned
-		WAIT UNTIL (ABS(faceBody:POSITION:DIRECTION:PITCH - FACING:PITCH) < 0.15 AND ABS(faceBody:POSITION:DIRECTION:YAW - FACING:YAW) < 0.15 AND SHIP:ANGULARVEL:MAG < 0.0001) OR (ND:ETA <= t_ign + ullage).
+		WAIT UNTIL ((VANG(FACING:VECTOR, ND:DELTAV) < pointingError ) AND SHIP:ANGULARVEL:MAG < 0.1) OR (ND:ETA <= t_ign + ullage).
 	} ELSE {
 		LOCK mySteer TO ND:DELTAV.
 		IF debug PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
 		//now we need to wait until the burn vector and ship's facing are aligned
-		WAIT UNTIL (ABS(ND:DELTAV:DIRECTION:PITCH - FACING:PITCH) < 0.15 AND ABS(ND:DELTAV:DIRECTION:YAW - FACING:YAW) < 0.15 AND SHIP:ANGULARVEL:MAG < 0.01) OR (ND:ETA <= t_ign + ullage).
+		WAIT UNTIL (VANG(FACING:VECTOR, ND:DELTAV) < pointingError AND SHIP:ANGULARVEL:MAG < 0.1) OR (ND:ETA <= t_ign + ullage).
 	}
 	// if the node is more than 5 minutes away, pause for twice as long as the steering manager's stopping time to allow all roll rotation to be damped out
 	IF ND:ETA > 5*60 WAIT STEERINGMANAGER:MAXSTOPPINGTIME*2.
@@ -244,7 +246,7 @@ IF errorCode = "None" {
 			SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
 		}
 		//now we need to wait until the burn vector and ship's facing are aligned
-		WAIT UNTIL ((ND:ETA <= t_ign + ullage) OR (ABS(ND:DELTAV:DIRECTION:PITCH - FACING:PITCH) < 0.15 AND ABS(ND:DELTAV:DIRECTION:YAW - FACING:YAW) < 0.01)).
+		WAIT UNTIL ((ND:ETA <= t_ign + ullage) OR (VANG(FACING:VECTOR, ND:DELTAV) < pointingError)).
 
 		IF debug PRINT "Waiting until the ullage time, " + timeToString(ND:ETA - t_ign - ullage).
 		warpToTime(TIME:SECONDS + ND:ETA - t_ign - ullage).
