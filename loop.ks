@@ -303,6 +303,7 @@ UNTIL done {
 						IF inputStringList:LENGTH = 2 {ADD NODE(TIME:SECONDS + 60, 0, 0, inputStringList[1]:TONUMBER(0)).}
 						IF inputStringList:LENGTH = 3 {ADD NODE(TIME:SECONDS + 60, 0, inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
 						IF inputStringList:LENGTH = 4 {ADD NODE(TIME:SECONDS + 60, inputStringList[3]:TONUMBER(0), inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
+						IF inputStringList:LENGTH = 5 {ADD NODE(TIME:SECONDS + inputStringList[4]:TONUMBER(60), inputStringList[3]:TONUMBER(0), inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
 						SET loopMessage TO "Added a node".
 						SET commandValid TO TRUE.
 					} ELSE IF (inputStringList[0] = "copyscript") {
@@ -353,12 +354,12 @@ UNTIL done {
 						SET loopMessage TO "Ship renamed to " + SHIP:NAME.
 						SET commandValid TO TRUE.
 					} ELSE IF (inputStringList[0] = "warpToAltitude") {
-						IF ((inputStringList[1]:TONUMBER(-1) <> -1) OR (inputStringList[1] = "")) {
-							LOCAL warpAltitude IS inputStringList[1]:TONUMBER(10000).
+						IF ((processScalarParameter(inputStringList[1], -1) <> -1) OR (inputStringList[1] = "")) {
+							LOCAL warpAltitude IS processScalarParameter(inputStringList[1], 10000).
 							IF (inputStringList[1] = "") SET warpAltitude TO 10000.
-							IF (SHIP:BODY:ATM:EXISTS) SET warpAltitude TO MAX(SHIP:BODY:ATM:HEIGHT + 10000, inputStringList[1]:TONUMBER(-1)).
+							IF (SHIP:BODY:ATM:EXISTS) SET warpAltitude TO MAX(SHIP:BODY:ATM:HEIGHT + 10000, processScalarParameter(inputStringList[1], 10000)).
 							warpToTime(TIME:SECONDS + timeToAltitude(warpAltitude)).
-							SET loopMessage TO "Warped to altitude of " + ROUND(ALTITUDE).
+							SET loopMessage TO "Warped to altitude of " + distanceToString(warpAltitude).
 							SET commandValid TO TRUE.
 						}
 					} ELSE IF (inputStringList[0] = "target") {
