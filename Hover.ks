@@ -1,34 +1,26 @@
-LOCAL b IS VECDRAW(V(0,0,0), 10*   east_for(SHIP), GREEN, "East", 1.0, TRUE, 0.2).
-LOCAL downhillDirectionVector IS V(0,0,0).
-LOCAL C IS VECDRAW(V(0,0,0), downhillDirectionVector, RED, "Downhill", 1.0, TRUE, 0.2).
+@LAZYGLOBAL OFF.
 
-//UNLOCK mySteer.
-//UNLOCK myThrottle.
-//SET mySteer TO -VELOCITY:SURFACE.
-//SET myThrottle TO 0.
+PARAMETER desiredHeight IS 1000.
+PARAMETER maxVelocity IS 50.
 
-//SET useMySteer TO TRUE.
-//SET useMyThrottle TO TRUE.
-//SAS OFF.
-//RCS OFF.
+SET maxVelocity TO ABS(maxVelocity).
 
-LOCAL T_PID IS PIDLOOP(0.5, 0.1, 0, 0, 1).			// PID loop to control trottle during vertical descent phase
-LOCAL H_PID IS PIDLOOP(1.0, 5.0, 0, -15, 15).		// PID loop to control heading during hover phase
-LOCAL groundSlope TO 0.
-LOCAL groundSlopeHeading TO 0.
-LOCAL downslopeDirection IS V(0,0,0).
-LOCAL downslopeSpeed     IS 0.
-LOCAL sideDirection      IS V(0,0,0).
-LOCAL sideSpeed 	       IS 0.
-LOCAL groundSlopeVector  IS 0.
-LOCAL downSlopeInfo      IS LEXICON().
-LOCAL downslopeDirectionVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Direction" , 1.0, TRUE, 0.2).
-LOCAL downslopeSpeedVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), RED, "Down Speed", 1.0, FALSE, 0.2).
-LOCAL sideSpeedVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), GREEN, "Side Speed", 1.0, FALSE, 0.2).
-LOCAL northVecDraw IS VECDRAW(V(0,0,0), SHIP:NORTH:VECTOR * 10, YELLOW, "North", 1.0, TRUE, 0.2).
+endScript().
 
-SET T_PID:SETPOINT TO 0.
-SET H_PID:SETPOINT TO 10.0.
+SET mySteer TO -VELOCITY:SURFACE.
+SET myThrottle TO 0.
+
+SET useMySteer TO TRUE.
+SET useMyThrottle TO TRUE.
+SAS OFF.
+RCS OFF.
+
+LOCAL V_PID IS PIDLOOP(0.5, 0.1, 0, 0, 1).			// PID loop to control trottle based on speed
+LOCAL X_PID IS PIDLOOP(0.05, 0.01, 0.05, -maxVelocity, maxVelocity).			// PID loop to control V_PID based on position
+LOCAL surfaceVelocityVecDraw IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN SHIP:VELOCITY:SURFACE:NORMALIZED * 10.}, BLUE, "Surface Velocity" , 1.0, TRUE, 0.2).
+SET facingVector:SHOW TO TRUE.
+SET guidanceVector:SHOW TO TRUE.
+
 LOCAL done IS FALSE.
 LOCAL startTime is TIME:SECONDS.
 LOCAL elapsedTime IS TIME:SECONDS - startTime.
@@ -36,19 +28,27 @@ LOCAL headerCreated IS FALSE.
 LOCAL oldTime IS 0.
 LOCAL aboveGround IS 0.
 
+LOCAL minPitch TO 70.
+LOCAL cancelHoriz IS TRUE.
+LOCAL velocityPitch IS 0.
+
+SET X_PID:SETPOINT TO desiredHeight.
+
 CLEARSCREEN.
+
+ON AG1 {
+  SET X_PID:SETPOINT TO X_PID:SETPOINT + 10.
+  RETURN TRUE.
+}
+
+ON AG2 {
+  SET X_PID:SETPOINT TO X_PID:SETPOINT - 10.
+  RETURN TRUE.
+}
 
 UNTIL done {
   SET elapsedTime TO TIME:SECONDS - startTime.
 	SET aboveGround TO heightAboveGround().
-  SET downSlopeInfo TO findDownSlopeInfo().
-	SET groundSlope TO downSlopeInfo["slope"].
-	SET groundSlopeHeading TO downSlopeInfo["heading"].
-  SET groundSlopeVector TO downSlopeInfo["Vector"].
-  SET downslopeDirection TO HEADING(groundSlopeHeading +  0, 0):VECTOR:NORMALIZED.
-  SET sideDirection      TO HEADING(groundSlopeHeading + 90, 0):VECTOR:NORMALIZED.
-  SET downslopeSpeed  TO VELOCITY:SURFACE * downslopeDirection.
-  SET sideSpeed       TO VELOCITY:SURFACE * sideDirection.
 	SET velocityPitch   TO pitch_vector(-VELOCITY:SURFACE).
   SET aboveGround TO heightAboveGround().
 
@@ -61,45 +61,48 @@ UNTIL done {
 
         SET message TO "Elapsed Time,".
         SET message TO message + "Above Ground,".
-        SET message TO message + "Ground Slope,".
-      	SET message TO message + "Ground Slope Heading,".
-        SET message TO message + "Ground Speed,".
-        SET message TO message + "Downslope Speed,".
-        SET message TO message + "Side Speed,".
+        SET message TO message + "Above Ground SP,".
+        SET message TO message + "Above Ground PID Output,".
+        SET message TO message + "Vertical Speed,".
+        SET message TO message + "Vertical Speed SP,".
+        SET message TO message + "Vertical Speed PID Output,".
+        SET message TO message + "Horizontal Speed,".
         LOG message TO "0:Hover.csv".
       }
       SET message TO elapsedTime.
       SET message TO message + "," + aboveGround.
-    	SET message TO message + "," + groundSlope.
-    	SET message TO message + "," + groundSlopeHeading.
+      SET message TO message + "," + X_PID:SETPOINT.
+      SET message TO message + "," + X_PID:OUTPUT.
+      SET message TO message + "," + VERTICALSPEED.
+      SET message TO message + "," + V_PID:SETPOINT.
+      SET message TO message + "," + V_PID:OUTPUT.
       SET message TO message + "," + GROUNDSPEED.
-      SET message TO message + "," + downslopeSpeed.
-      SET message TO message + "," + sideSpeed.
       LOG message TO "0:Hover.csv".
     }
   }
 
-  PRINT "Slope = " + ROUND(groundSlope, 1) + " deg     " AT (4, 2).
-  PRINT "Slope = " + distanceToString(TAN(groundSlope) * 100, 1) + "/ 100 m     " AT (4, 3).
-  PRINT "Down Slope Speed = " + distanceToString(downslopeSpeed, 3) + "/s     " AT (4, 4).
-  PRINT "Side Speed = " + distanceToString(sideSpeed, 3) + "/s     " AT (4, 5).
-  PRINT "Ground Speed = " + distanceToString(SHIP:GROUNDSPEED, 3) + "/s     " AT (4, 6).
-  PRINT "Above Ground = " + distanceToString(aboveGround, 3) + "     " AT (4, 7).
-  PRINT "Vertical Velocity = " + distanceToString(SHIP:VERTICALSPEED, 3) + "     " AT (4, 8).
-  PRINT "Ground Slope Heading = " + ROUND(groundSlopeHeading, 2) + " deg from North     " AT (4, 9).
-  PRINT "Throttle at " + ROUND(THROTTLE * 100) + "%    " AT (4, 10).
-  PRINT "H_PID at " + ROUND(H_PID:OUTPUT, 2) + " deg from vertical    " AT (4, 11).
-//  SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-//  SET mySteer TO HEADING (groundSlopeHeading - 5 * sideSpeed, 90 - H_PID:UPDATE(TIME:SECONDS, downslopeSpeed)).
+  PRINT "Ground Speed = " + distanceToString(SHIP:GROUNDSPEED, 3) + "/s     " AT (0, 0).
+  PRINT "Above Ground = " + distanceToString(aboveGround, 3) + "     " AT (0, 1).
+  PRINT "Above Ground SP = " + distanceToString(X_PID:SETPOINT, 3) + "     " AT (0, 2).
+  PRINT "Vertical Velocity = " + distanceToString(SHIP:VERTICALSPEED, 3) + "     " AT (0, 3).
+  PRINT "Vertical Velocity SP = " + distanceToString(V_PID:SETPOINT, 3) + "/s     " AT (0, 4).
+  PRINT "Throttle at " + ROUND(THROTTLE * 100, 2) + "%    " AT (0, 5).
+  PRINT "Groundspeed = " + distanceToString(GROUNDSPEED, 2) + "/s     " AT (0, 6).
+  SET V_PID:SETPOINT TO X_PID:UPDATE(TIME:SECONDS, aboveGround).
+  SET myThrottle TO V_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 
-  SET b:VEC TO 10*   east_for(SHIP).
-  SET C:VEC TO groundSlopeVector.
-  SET downslopeDirectionVecDraw:VEC TO 10*HEADING(groundSlopeHeading, 0):VECTOR.
-  SET downslopeSpeedVecDraw:VEC TO MIN(3, ABS(downslopeSpeed))*downslopeDirection.
-  SET sideSpeedVecDraw:VEC TO MIN(3, ABS(sideSpeed))*sideDirection.
-//(groundSlope < 0.5)
-  IF (1 AND (elapsedTime > 300.0)) SET done TO TRUE.
+  IF cancelHoriz AND GROUNDSPEED < 0.25 SET cancelHoriz TO FALSE.
+  IF NOT cancelHoriz AND GROUNDSPEED > 0.5 SET cancelHoriz TO TRUE.
+
+  IF NOT cancelHoriz SET mySteer TO HEADING (0, 90).
+  ELSE {
+    IF VERTICALSPEED > 0 SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+    ELSE SET mySteer TO HEADING (yaw_vector(VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+  }
+
+  IF (elapsedTime > 300.0) SET done TO TRUE.
 }
 
-//SET useMySteer TO FALSE.
-//SET useMyThrottle TO FALSE.
+SET useMySteer TO FALSE.
+SET useMyThrottle TO FALSE.
+endScript().
