@@ -722,16 +722,36 @@ FUNCTION listFiles {
 	LIST Files IN fileList.
 	LOCAL totalSize IS 0.
 	FOR eachFile IN fileList {
-		PRINT eachFile:NAME + " uses " + eachFile:SIZE + " bytes".
-		IF eachFile:ISFILE 	debugString(eachFile:NAME + "," + eachFile:EXTENSION + ",File,"   + eachFile:SIZE + ",bytes").
-		ELSE 				debugString(eachFile:NAME + "," + eachFile:EXTENSION + ",Folder," + eachFile:SIZE + ",bytes").
-		SET totalSize TO totalSize + eachFile:SIZE.
+		IF eachFile:EXTENSION <> "csv" {
+			PRINT eachFile:NAME + " uses " + eachFile:SIZE + " bytes".
+			IF eachFile:ISFILE 	debugString(eachFile:NAME + "," + eachFile:EXTENSION + ",File,"   + eachFile:SIZE + ",bytes").
+			ELSE 				debugString(eachFile:NAME + "," + eachFile:EXTENSION + ",Folder," + eachFile:SIZE + ",bytes").
+			SET totalSize TO totalSize + eachFile:SIZE.
+		}
 	}
 	PRINT "".
 	PRINT "There are a total of " + totalSize + " bytes used.".
 	PRINT "Out of a total capacity of " + core:part:getmodule("kOSProcessor"):VOLUME:CAPACITY + " bytes.".
-	PRINT "There is " + core:part:getmodule("kOSProcessor"):VOLUME:FREESPACE + " bytes remaining.".
+	PRINT "There are " + core:part:getmodule("kOSProcessor"):VOLUME:FREESPACE + " bytes remaining.".
 	WAIT 10.
+}
+
+FUNCTION logFiles {
+	CLEARSCREEN.
+	LOCAL logFilesName IS "0:logFiles.csv".
+	LOG "Name,Size (Bytes),Type" TO logFilesName.
+	LOCAL fileList IS LIST().
+	LIST Files IN fileList.
+	LOCAL totalSize IS 0.
+	FOR eachFile IN fileList {
+		IF eachFile:ISFILE 	LOG eachFile:NAME + "," + eachFile:SIZE + ",File" TO logFilesName.
+		ELSE 								LOG eachFile:NAME + "," + eachFile:SIZE + ",Folder" TO logFilesName.
+
+		SET totalSize TO totalSize + eachFile:SIZE.
+	}
+	LOG "Total all files," + totalSize TO logFilesName.
+	LOG "Volume Capacity," + core:part:getmodule("kOSProcessor"):VOLUME:CAPACITY TO logFilesName.
+	LOG "Volume Remaining, " + core:part:getmodule("kOSProcessor"):VOLUME:FREESPACE TO logFilesName.
 }
 
 // Wait Until Finished Rotating under Locked Steering
@@ -1427,23 +1447,30 @@ FUNCTION isLFFullThrust {
 FUNCTION timeToString
 {
 	PARAMETER T IS 0.
-	PARAMETER digits IS 2.
-	IF digits < 0 SET digits TO 0.
-	LOCAL isNegative IS FALSE.
+	PARAMETER digits IS 0.
+	LOCAL isNegative IS T < 0.
 	IF T < 0 SET T TO -T.
 
 	LOCAL hoursPerDay IS KUNIVERSE:HOURSPERDAY.
-	LOCAL days IS FLOOR ( T / (hoursPerDay*60*60) ).
-	LOCAL hours IS FLOOR ( MOD ( T, hoursPerDay*60*60) / (60*60) ).
-	LOCAL minutes IS FLOOR ( MOD ( T, 60*60) / 60 ).
-	LOCAL seconds IS ROUND( MOD( T, 60), digits).
+	LOCAL days IS 0.
+	LOCAL hours IS 0.
+	LOCAL minutes IS 0.
+	LOCAL seconds IS 0.
 	LOCAL message IS "".
 
+	SET days TO FLOOR ( T / (hoursPerDay*60*60) ).
+	SET hours TO FLOOR ( MOD ( T, hoursPerDay*60*60) / (60*60) ).
+	SET minutes TO FLOOR ( MOD ( T, 60*60) / 60 ).
+	IF digits > 0 SET seconds TO ROUND( MOD( T, 60), digits).
+	ELSE SET seconds TO ROUND( MOD( T, 60), 0).
+
+	LOCAL isFirst IS TRUE.
+	LOCAL firstSpace IS "".
 	IF isNegative SET message TO message + "-".
-	IF days <> 0 SET message TO message + days + "d ".
-	IF hours <> 0 SET message TO message + hours + "h ".
-	IF minutes <> 0 SET message TO message + minutes + "m ".
-	IF seconds <> 0 SET message TO message + seconds + "s ".
+	IF digits > -4 AND    days <> 0 {SET message TO message + firstSpace +    days + "d". SET firstSpace TO " ".}
+	IF digits > -3 AND   hours <> 0 {SET message TO message + firstSpace +   hours + "h". SET firstSpace TO " ".}
+	IF digits > -2 AND minutes <> 0 {SET message TO message + firstSpace + minutes + "m". SET firstSpace TO " ".}
+	IF digits > -1 AND seconds <> 0 {SET message TO message + firstSpace + seconds + "s". SET firstSpace TO " ".}
 
 	RETURN message.
 }
@@ -1475,7 +1502,7 @@ FUNCTION distanceToString
 		SET dist TO ABS(dist).
 	}
 
-	IF dist < 1			    SET message TO ROUND(dist / 0.001        , digits) + " mm".
+	IF dist < 1			        SET message TO ROUND(dist / 0.001        , digits) + " mm".
 	IF dist >= 1            SET message TO ROUND(dist / 1            , digits) + " m".
 	IF dist > 1000          SET message TO ROUND(dist / 1000         , digits) + " km".
 	IF dist > 1000000       SET message TO ROUND(dist / 1000000      , digits) + " Mm".
@@ -2127,4 +2154,10 @@ FUNCTION trueToMeanAnomaly {
   LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCCOS((eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly))).
   LOCAL meanAnomaly IS eccentricAnomaly * CONSTANT:DegToRad - eccentricity * SIN(eccentricAnomaly).
   RETURN CONSTANT:RadToDeg * meanAnomaly.
+}
+
+// Given an angle in degrees, returns the normalized angle in degrees
+FUNCTION normalizeAngle {
+	PARAMETER angle.
+	RETURN ARCTAN2(SIN(angle), COS(angle)).
 }
