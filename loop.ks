@@ -369,7 +369,7 @@ UNTIL done {
 								SAS OFF.
 								LOCK mySteer TO TARGET:POSITION.
 								SET commandValid TO TRUE.
-								IF TARGET:TYPENAME = "Part" OR TARGET:TYPENAME = "DockingPort" SET loopMessage TO "Steering locked to " + TARGET:TITLE + " on " + TARGET:SHIP:NAME.
+								IF TARGET:ISTYPE("Part") OR TARGET:ISTYPE("DockingPort") SET loopMessage TO "Steering locked to " + TARGET:TITLE + " on " + TARGET:SHIP:NAME.
 								ELSE SET loopMessage TO "Steering locked to " + TARGET:NAME.
 							}
 							IF inputStringList[1] = "anti" {
