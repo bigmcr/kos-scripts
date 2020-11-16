@@ -162,7 +162,7 @@ LOCAL vectorToNode IS POSITIONAT(SHIP, TIME:SECONDS + chosenTime) - SHIP:BODY:PO
 LOCAL nodeVelocity IS VELOCITYAT(SHIP, TIME:SECONDS + chosenTime):ORBIT.
 LOCAL directionsAtNode IS getOrbitDirectionsAt(chosenTime, SHIP).
 LOCAL iDelta IS angleFromPlane(useTargetPlane) - desiredRelativeInclination.
-IF useTargetPlane { IF TARGET:ORBIT:INCLINATION > 90.0 {SET iDelta TO 0-iDelta. PRINT "Reversing inclination change".}}
+IF useTargetPlane { IF ((TARGET:ORBIT:INCLINATION > 90.0) <> (SHIP:ORBIT:INCLINATION > 90.0)) {SET iDelta TO 0-iDelta. PRINT "Reversing inclination change".}}
 IF chosenTime = changeToSouth {SET iDelta TO 0 - iDelta. PRINT "DN - reversing inclination change".}
 LOCAL desiredVelocity IS nodeVelocity * ANGLEAXIS(iDelta, vectorToNode).
 LOCAL deltaV IS desiredVelocity - nodeVelocity.
