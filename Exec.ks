@@ -6,8 +6,9 @@ PARAMETER ullage IS 5.												// the number of seconds the RSC thrusters nee
 PARAMETER useRCSforRotation IS FALSE.
 PARAMETER faceSun IS FALSE.										// during the waiting times, turn to face the sun
 																							//		intended to ensure that probes' solar panels are exposed to the Sun.
+PARAMETER suppressPrinting IS FALSE.
 
-CLEARSCREEN.
+IF NOT suppressPrinting CLEARSCREEN.
 
 LOCAL pointingError IS 1.0.										// Allowed pointing error, in degrees
 LOCAL angularVelError IS SHIP:MASS / 100.			// Allowed angular velocity error, in megagrams-meters
@@ -62,8 +63,10 @@ IF errorCode = "None" {
 	FOR stageNumber IN RANGE(shipInfo["NumberOfStages"] - 1, -1) {
 		IF shipInfo["Stage " + stageNumber]["Isp"] <> 0 usedStages:ADD(shipInfo["Stage " + stageNumber]).
 	}
-	IF usedStages:LENGTH <> 0 PRINT "There are a total of " + usedStages:LENGTH + " stages that can be used".
-	ELSE PRINT "There are a total of " + usedStages:LENGTH + " stage that can be used".
+	IF NOT suppressPrinting {
+		IF usedStages:LENGTH <> 0 AND debug PRINT "There are a total of " + usedStages:LENGTH + " stages that can be used".
+		ELSE PRINT "There are a total of " + usedStages:LENGTH + " stage that can be used".
+	}
 
 	LOCAL startTime IS MISSIONTIME.
 	LOCAL startStage IS STAGE:NUMBER.
@@ -177,7 +180,7 @@ IF errorCode = "None" {
 	}
 
 	// print out the paramters of the rocket - thrust, m_0, m_f, m_part, Isp and mDot
-	IF debug {
+	IF debug AND NOT suppressPrinting {
 		PRINT "Node in: " + timeToString(ND:ETA) + ", DeltaV: " + distanceToString(ND:DELTAV:MAG, 3) + "/s".
 		PRINT "Stage  m_dry  m_wet   v_e  dV_avail  m_dot  dv_Prev  dv_Req  t_burn".
 		PRINT "          kg     kg   m/s       m/s   kg/s      m/s     m/s       s".
@@ -188,13 +191,15 @@ IF errorCode = "None" {
 		PRINT "Total Burntime, " + timeToString(t_total, 2).
 		PRINT "initial accel " + distanceToString(a_i, 2 ) + "/s^2   final accel " + distanceToString(a_f, 2) + "/s^2".
 	} ELSE {
-		PRINT "Running Execute Next Node".
-		IF useRCSforRotation PRINT "Will use RCS for rotation".
-		ELSE PRINT "Will not use RCS for rotation".
-		PRINT "Will fire RCS for " + ullage + " seconds".
-		IF faceSun PRINT "Will turn to face the Sun".
-		ELSE PRINT "Will not turn to face the Sun".
-		PRINT "Burn duration: " + timeToString(t_total , 2).
+		IF NOT suppressPrinting {
+			PRINT "Running Execute Next Node".
+			IF useRCSforRotation PRINT "Will use RCS for rotation".
+			ELSE PRINT "Will not use RCS for rotation".
+			IF ullage <> 0 PRINT "Will fire RCS for " + ullage + " seconds for ullage".
+			IF faceSun PRINT "Will turn to face the Sun".
+			ELSE PRINT "Will not turn to face the Sun".
+			PRINT "Burn duration: " + timeToString(t_total , 2).
+		}
 	}
 
 	// if called to face the sun and the node is more than 60 minutes away, turn to face the primary.
@@ -205,13 +210,13 @@ IF errorCode = "None" {
 	}
 	IF faceSun AND ND:ETA > 60*60 {
 		LOCAL faceBody IS BODY("Sun").
-		IF debug PRINT "Aligning with the Sun. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
+		IF debug AND NOT suppressPrinting PRINT "Aligning with the Sun. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
 		LOCK mySteer TO faceBody:POSITION.
 		//now we need to wait until the body's position vector and ship's facing are aligned
 		WAIT UNTIL ((VANG(FACING:VECTOR, ND:DELTAV) < pointingError ) AND SHIP:ANGULARVEL:MAG < 0.1) OR (ND:ETA <= t_ign + ullage).
 	} ELSE {
 		LOCK mySteer TO ND:DELTAV.
-		IF debug PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
+		IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
 		//now we need to wait until the burn vector and ship's facing are aligned
 		WAIT UNTIL (VANG(FACING:VECTOR, ND:DELTAV) < pointingError AND SHIP:ANGULARVEL:MAG < 0.1) OR (ND:ETA <= t_ign + ullage).
 	}
@@ -224,7 +229,7 @@ IF errorCode = "None" {
 	// if ullage is not a concern, warp to 30 seconds before burntime
 	IF (isStockRockets() OR (ullage = 0)) {
 		warpToTime(TIME:SECONDS + ND:ETA - MAX(1.5*t_ign, 30)).
-		IF debug PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
+		IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
 		LOCK mySteer TO ND:DELTAV.
 		IF physicsWarpPerm {
 			SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
@@ -233,13 +238,13 @@ IF errorCode = "None" {
 		WAIT UNTIL (ND:ETA <= t_ign).
 	} ELSE {
 	// if ullage is a concern, warp to MAX(90, ullage) seconds before burntime
-		IF debug PRINT "Warping to " + timeToString(ND:ETA - t_ign - MAX(90, ullage), 2).
+		IF debug AND NOT suppressPrinting PRINT "Warping to " + timeToString(ND:ETA - t_ign - MAX(90, ullage), 2).
 		warpToTime(TIME:SECONDS + ND:ETA - t_ign - MAX(90, ullage)).
 
 		IF faceSun {
-			IF debug PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
+			IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
 			LOCK mySteer TO ND:DELTAV.
-		} ELSE {IF debug PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).}
+		} ELSE {IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).}
 
 		IF physicsWarpPerm {
 			SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
@@ -248,15 +253,15 @@ IF errorCode = "None" {
 		//now we need to wait until the burn vector and ship's facing are aligned
 		WAIT UNTIL ((ND:ETA <= t_ign + ullage) OR (VANG(FACING:VECTOR, ND:DELTAV) < pointingError)).
 
-		IF debug PRINT "Waiting until the ullage time, " + timeToString(ND:ETA - t_ign - ullage).
+		IF debug AND NOT suppressPrinting PRINT "Waiting until the ullage time, " + timeToString(ND:ETA - t_ign - ullage).
 		warpToTime(TIME:SECONDS + ND:ETA - t_ign - ullage).
 
 		// use RCS to settle any ullage concerns.
 		IF (ullage <> 0) {
 			RCS ON.
 			SET SHIP:CONTROL:FORE TO 1.0.
-			IF debug PRINT "Ullage starting".
-			IF debug PRINT "Waiting until the burn time, " + timeToString(ND:ETA - t_ign).
+			IF debug AND NOT suppressPrinting PRINT "Ullage starting".
+			IF debug AND NOT suppressPrinting PRINT "Waiting until the burn time, " + timeToString(ND:ETA - t_ign).
 			WAIT ullage.												// wait for the burn to start
 		}.
 
@@ -264,7 +269,7 @@ IF errorCode = "None" {
 		IF (ullage <> 0) {
 			RCS OFF.
 			SET SHIP:CONTROL:FORE TO 0.0.
-			IF debug PRINT "Ullage over, main engines starting".
+			IF debug AND NOT suppressPrinting PRINT "Ullage over, main engines starting".
 		}
 	}
 
@@ -289,7 +294,7 @@ IF errorCode = "None" {
 		// cut the throttle as soon as our nd:deltaV and initial deltaV start facing opposite directions
 		IF VDOT(DV0, ND:DELTAV) < 0
 		{
-			IF debug PRINT "End burn, remaining dV " + distanceToString(ND:DELTAV:MAG, 1) + "/s, vdot: " + ROUND(VDOT(DV0, ND:DELTAV),1).
+			IF debug AND NOT suppressPrinting PRINT "End burn, remaining dV " + distanceToString(ND:DELTAV:MAG, 1) + "/s, vdot: " + ROUND(VDOT(DV0, ND:DELTAV),1).
 			SET done TO TRUE.
 		}
 
