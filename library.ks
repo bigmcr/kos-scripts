@@ -2117,6 +2117,26 @@ FUNCTION findZeroSecant {
   RETURN  findZeroSecant(delegate, X2, X3, tolerance, iteration + 1).
 }
 
+// Using the Newton method, iterate until the function returns the chosen value
+//   within tolerance, or the maximum number of iterations is reached.
+FUNCTION findZeroNewton {
+	PARAMETER delegateFunction.
+	PARAMETER delegateSlope.
+  PARAMETER initialGuess.
+  PARAMETER tolerance.
+	PARAMETER desiredValue IS 0.
+  PARAMETER iteration IS 0.
+	PARAMETER maxIterations IS 100.
+
+  IF ((iteration >= 10) OR (NOT delegateFunction:ISTYPE("UserDelegate")) OR (NOT delegateSlope:ISTYPE("UserDelegate"))) RETURN X1.
+
+	LOCAL slope IS delegateSlope(X1).
+	LOCAL X2 IS initialGuess.
+	IF slope <> 0 SET X2 TO initialGuess - delegateFunction(initialGuess)/slope.
+	IF ABS(delegateFunction(initialGuess) - desiredValue) < tolerance RETURN X2.
+	RETURN findZeroNewton(delegateFunction, delegateSlope, X2, tolerance, desiredValue, iteration + 1, maxIterations).
+}
+
 // given the mean anomaly (in degrees), returns true anomaly (in degrees)
 FUNCTION meanToTrueAnomaly {
   PARAMETER meanAnomaly.
