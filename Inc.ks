@@ -17,9 +17,14 @@ FUNCTION isNorthOfPlane {
 LOCAL errorValue IS -1234.
 LOCAL changeToNorth IS errorValue.
 LOCAL changeToSouth IS errorValue.
-LOCAL effectivePeriod IS 600000.                // Default to 27 days, 4 2/3 hours, or 1000 10-minute periods
-// This guards against escape orbits not having a defined period
-IF NOT (SHIP:ORBIT:TRANSITION = "Escape") SET effectivePeriod TO SHIP:ORBIT:PERIOD.
+LOCAL effectivePeriod IS 1.
+// If this is not a final trajectory, use the time until the trajectory changes,
+//   be that an SOI change or a maneuver.
+IF (SHIP:ORBIT:TRANSITION <> "Final") {
+  SET effectivePeriod TO ETA:TRANSITION - 10.0.
+} ELSE {
+  SET effectivePeriod TO SHIP:ORBIT:PERIOD.
+}
 LOCAL startTimeDelta IS effectivePeriod / 1000. // given the default period, this is 10 minutes
 LOCAL timeDelta IS startTimeDelta.
 LOCAL currentNorth IS isNorthOfPlane(0).
@@ -35,10 +40,12 @@ LOCAL DNExists IS TRUE.
 LOCAL logFileName IS "0:incChange.csv".
 IF visualize AND connectionToKSC() {
   IF EXISTS(logFileName) DELETEPATH(logFileName).
-  LOG "Target's Orbit Normal Vector," + VCRS(POSITIONAT(TARGET, TIME:SECONDS) - TARGET:BODY:POSITION, VELOCITYAT(TARGET, TIME:SECONDS):ORBIT):NORMALIZED TO logFileName.
-  LOG "Body Angular Velocity Vector," + SHIP:BODY:ANGULARVEL:NORMALIZED TO logFileName.
-  LOG "Body Position Vector," + (-SHIP:BODY:POSITION) TO logFileName.
-  LOG "Loop,TimeGuess,Radial Distance,Current North,Next North,Current Distance,Next Distance,Time Delta,Iterations,,Transition:," + SHIP:ORBIT:TRANSITION TO logFileName.
+  LOG "Target's Orbit Normal Vector," + ROUNDV(VCRS(POSITIONAT(TARGET, TIME:SECONDS) - TARGET:BODY:POSITION, VELOCITYAT(TARGET, TIME:SECONDS):ORBIT):NORMALIZED, 11) TO logFileName.
+  LOG "Body Angular Velocity Vector," + ROUNDV(SHIP:BODY:ANGULARVEL:NORMALIZED, 11) TO logFileName.
+  LOG "Body Position Vector," + ROUNDV(-SHIP:BODY:POSITION, 11) TO logFileName.
+  IF (SHIP:ORBIT:TRANSITION = "Escape") LOG "Transition," + SHIP:ORBIT:TRANSITION + ",Time to Transition (s)," + ETA:TRANSITION TO logFileName.
+  ELSE LOG "Transition," + SHIP:ORBIT:TRANSITION TO logFileName.
+  LOG "Loop,TimeGuess,Radial Distance,Current North,Next North,Current Distance,Next Distance,Time Delta,Iterations" TO logFileName.
   LOG "Test,0," + SHIP:BODY:DISTANCE + "," +
   (distanceFromPlane(0, useTargetPlane) > 0) + "," + (distanceFromPlane(startTimeDelta, useTargetPlane) > 0) + "," +
   distanceFromPlane(0, useTargetPlane) + "," + distanceFromPlane(startTimeDelta, useTargetPlane) + "," +
