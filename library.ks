@@ -2181,3 +2181,34 @@ FUNCTION normalizeAngle {
 	PARAMETER angle.
 	RETURN ARCTAN2(SIN(angle), COS(angle)).
 }
+
+// A variety of hyperbolic trig functions and their inverses
+FUNCTION TANH {
+  PARAMETER x.
+  RETURN (CONSTANT:E ^ (2*x) - 1) / (CONSTANT:E ^ (2*x) + 1).
+}
+
+FUNCTION COSH {
+  PARAMETER x.
+  RETURN (CONSTANT:E ^ x + CONSTANT:E ^ (-x))/2.
+}
+
+FUNCTION SINH {
+  PARAMETER x.
+  RETURN (CONSTANT:E ^ x - CONSTANT:E ^ (-x))/2.
+}
+
+FUNCTION ATANH {
+  PARAMETER x.
+  RETURN LN((1 + x) / (1 - x))/2.
+}
+
+FUNCTION ACOSH {
+  PARAMETER x.
+  RETURN LN(x + SQRT(x^2 - 1)).
+}
+
+FUNCTION ASINH {
+  PARAMETER x.
+  RETURN LN(x + SQRT(x^2 + 1)).
+}
