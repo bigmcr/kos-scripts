@@ -1472,6 +1472,8 @@ FUNCTION timeToString
 	IF digits > -2 AND minutes <> 0 {SET message TO message + firstSpace + minutes + "m". SET firstSpace TO " ".}
 	IF digits > -1 AND seconds <> 0 {SET message TO message + firstSpace + seconds + "s". SET firstSpace TO " ".}
 
+	IF T = 0 SET message TO "0s".
+
 	RETURN message.
 }
 
@@ -2182,12 +2184,21 @@ FUNCTION normalizeAngle {
 	RETURN ARCTAN2(SIN(angle), COS(angle)).
 }
 
+LOCAL maxHyperbolicVariable IS 709.78.
 // A variety of hyperbolic trig functions and their inverses
 FUNCTION TANH {PARAMETER x. RETURN (CONSTANT:E ^ (2*x) - 1) / (CONSTANT:E ^ (2*x) + 1).}
 
-FUNCTION COSH {PARAMETER x. RETURN ((CONSTANT:E ^ x) + (CONSTANT:E ^ (-x)))/2.}
+FUNCTION COSH {
+	PARAMETER x.
+	SET X TO MIN(maxHyperbolicVariable, MAX(-maxHyperbolicVariable, x)).
+	RETURN ((CONSTANT:E ^ x) + (CONSTANT:E ^ (-x)))/2.
+}
 
-FUNCTION SINH {PARAMETER x. RETURN ((CONSTANT:E ^ x) - (CONSTANT:E ^ (-x)))/2.}
+FUNCTION SINH {
+	PARAMETER x.
+	SET X TO MIN(maxHyperbolicVariable, MAX(-maxHyperbolicVariable, x)).
+	RETURN ((CONSTANT:E ^ x) - (CONSTANT:E ^ (-x)))/2.
+}
 
 FUNCTION ATANH {PARAMETER x. RETURN LN((1 + x) / (1 - x))/2.}
 
