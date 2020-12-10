@@ -1,11 +1,49 @@
 @LAZYGLOBAL OFF.
 CLEARSCREEN.
 
-PARAMETER desiredBody IS "Minmus".
-PARAMETER desiredOrbitAlt IS 100.
+FUNCTION firstCommonBody {
+  PARAMETER objectOne.
+  PARAMETER objectTwo.
+  LOCAL object1Bodies IS LIST().
+  UNTIL NOT objectOne:HASBODY {object1Bodies:ADD(objectOne:NAME). SET objectOne TO objectOne:BODY.}
+  UNTIL NOT objectTwo:HASBODY {
+    FOR eachBodyName IN object1Bodies {
+      IF object1Bodies:CONTAINS(objectTwo:NAME) RETURN BODY(objectTwo:NAME).
+    }
+    SET objectTwo TO objectTwo:BODY.
+  }
+  RETURN BODY("Sun").
+}
 
-LOCAL logFileName IS "0:gaussProblem.csv".
-IF EXISTS(logFileName) DELETEPATH(logFileName).
+FUNCTION absoluteVelocity {
+  PARAMETER thing.
+  PARAMETER timeStamp IS TIME:SECONDS.
+
+  LOCAL removals IS 0.
+  LOCAL finalVelocity IS V(0, 0, 0).
+  UNTIL NOT thing:HASBODY {
+    SET finalVelocity TO finalVelocity + VELOCITYAT(thing, timeStamp):ORBIT.
+    SET thing TO thing:BODY.
+  }
+  RETURN finalVelocity.
+}
+
+FUNCTION absolutePosition {
+  PARAMETER thing.
+  PARAMETER timeStamp IS TIME:SECONDS.
+
+  LOCAL originalThing IS thing.
+  LOCAL removals IS 0.
+  LOCAL finalPosition IS V(0, 0, 0).
+  UNTIL NOT thing:HASBODY {
+    SET finalPosition TO finalPosition + POSITIONAT(thing, timeStamp).
+    SET thing TO thing:BODY.
+    SET removals TO removals + 1.
+  }
+  SET finalPosition TO finalPosition - BODY("Sun"):POSITION.
+  IF removals > 1 RETURN finalPosition - originalThing:BODY:POSITION.
+  ELSE            RETURN finalPosition.
+}
 
 FUNCTION gaussProblemPIteration {
   PARAMETER r_1.
@@ -15,19 +53,14 @@ FUNCTION gaussProblemPIteration {
   PARAMETER shortWay IS TRUE.
   PARAMETER timeTolerance IS 0.001.         // Default tolerance of 0.001 second
   PARAMETER maxIterations IS 20.
+  PARAMETER logAllowed IS FALSE.
   PARAMETER pStart1 IS 0.05.
   PARAMETER pStart2 IS 0.2.
 
   // Start off by calculating the various constants associated with the problem.
   LOCAL phaseAngle IS VANG(r_1, r_2).
-  PRINT "Phase Angle Raw: " + phaseAngle.
-  LOG "Phase Angle Raw," + phaseAngle TO logFileName.
   IF phaseAngle > 180 SET phaseAngle TO 360 - phaseAngle.
-  PRINT "Phase Angle 1: " + phaseAngle.
-  LOG "Phase Angle 1," + phaseAngle TO logFileName.
   IF NOT shortWay SET phaseAngle TO 360 - phaseAngle.
-  PRINT "Phase Angle Final: " + phaseAngle.
-  LOG "Phase Angle Final," + phaseAngle TO logFileName.
   LOCAL phaseAngleRad IS phaseAngle * CONSTANT:RadToDeg.
   LOCAL r_1_mag IS r_1:MAG.
   LOCAL r_2_mag IS r_2:MAG.
@@ -38,32 +71,34 @@ FUNCTION gaussProblemPIteration {
   LOCAL p_ii IS k/(l-SQRT(2*m)).
 
   LOCAL logMe IS LIST().
-  logMe:ADD(",X,Y,Z,Magnitude,Units,Short Way," + shortWay + ",pStart1," + pStart1 + ",pStart2," + pStart2).
-  logMe:ADD("R_1," + r_1:X + "," + r_1:y + "," + r_1:z + "," + r_1_mag + ",meters").
-  logMe:ADD("R_2," + r_2:X + "," + r_2:y + "," + r_2:z + "," + r_2_mag + ",meters").
-  logMe:ADD("Desired Time," + timeOfFlight + ",s," + timeToString(timeOfFlight)).
-  logMe:ADD("mu," + mu).
-  logMe:ADD("phaseAngle," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-  logMe:ADD("k," + k).
-  logMe:ADD("l," + l).
-  logMe:ADD("m," + m).
-  logMe:ADD("p_i," + p_i).
-  logMe:ADD("p_ii," + p_ii).
-  logMe:ADD("").
+  IF logAllowed {
+    logMe:ADD(",X,Y,Z,Magnitude,Units,Short Way," + shortWay + ",pStart1," + pStart1 + ",pStart2," + pStart2).
+    logMe:ADD("R_1," + r_1:X + "," + r_1:y + "," + r_1:z + "," + r_1_mag + ",meters").
+    logMe:ADD("R_2," + r_2:X + "," + r_2:y + "," + r_2:z + "," + r_2_mag + ",meters").
+    logMe:ADD("Desired Time," + timeOfFlight + ",s," + timeToString(timeOfFlight)).
+    logMe:ADD("mu," + mu).
+    logMe:ADD("phaseAngle," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
+    logMe:ADD("k," + k).
+    logMe:ADD("l," + l).
+    logMe:ADD("m," + m).
+    logMe:ADD("p_i," + p_i).
+    logMe:ADD("p_ii," + p_ii).
+    logMe:ADD("").
 
-  logMe:ADD("p,").              //12
-  logMe:ADD("a,").              //13
-  logMe:ADD("Motion Type,").    //14
-  logMe:ADD("f,").              //15
-  logMe:ADD("g,").              //16
-  logMe:ADD("f_dot,").          //17
-  logMe:ADD("deltaAngle,").     //18
-  logMe:ADD("Time,").           //19
-  logMe:ADD("Time Error,").     //20
-  logMe:ADD("Iteration,").      //21
-  logMe:ADD(",").               //22
-  logMe:ADD(",").               //23
-  logMe:ADD("delta_v," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
+    logMe:ADD("p,").              //12
+    logMe:ADD("a,").              //13
+    logMe:ADD("Motion Type,").    //14
+    logMe:ADD("f,").              //15
+    logMe:ADD("g,").              //16
+    logMe:ADD("f_dot,").          //17
+    logMe:ADD("deltaAngle,").     //18
+    logMe:ADD("Time,").           //19
+    logMe:ADD("Time Error,").     //20
+    logMe:ADD("Iteration,").      //21
+    logMe:ADD(",").               //22
+    logMe:ADD(",").               //23
+    logMe:ADD("delta_v," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
+  }
 
   LOCAL pList IS LIST().
   LOCAL tList IS LIST().
@@ -99,16 +134,18 @@ FUNCTION gaussProblemPIteration {
   LOCAL pNMinusOne IS 0.
   LOCAL pNMinusTwo IS p.
 
-  SET logMe[12] TO logMe[12] + p + ",".
-  SET logMe[13] TO logMe[13] + a + ",".
-  SET logMe[14] TO logMe[14] + motionType + ",".
-  SET logMe[15] TO logMe[15] + f + ",".
-  SET logMe[16] TO logMe[16] + g + ",".
-  SET logMe[17] TO logMe[17] + f_dot + ",".
-  SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-  SET logMe[19] TO logMe[19] + time + ",".
-  SET logMe[20] TO logMe[20] + timeError + ",".
-  SET logMe[21] TO logMe[21] + "-1,".
+  IF logAllowed {
+    SET logMe[12] TO logMe[12] + p + ",".
+    SET logMe[13] TO logMe[13] + a + ",".
+    SET logMe[14] TO logMe[14] + motionType + ",".
+    SET logMe[15] TO logMe[15] + f + ",".
+    SET logMe[16] TO logMe[16] + g + ",".
+    SET logMe[17] TO logMe[17] + f_dot + ",".
+    SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
+    SET logMe[19] TO logMe[19] + time + ",".
+    SET logMe[20] TO logMe[20] + timeError + ",".
+    SET logMe[21] TO logMe[21] + "-1,".
+  }
 
   SET p TO (p_ii - p_i) * pStart2 + p_i.
   SET a TO m * k * p / (( 2 * m - l^2) * p^2 + 2 * k * l * p - k^2).
@@ -133,16 +170,18 @@ FUNCTION gaussProblemPIteration {
   SET timeNMinusOne TO time.
   SET pNMinusOne TO p.
 
-  SET logMe[12] TO logMe[12] + p + ",".
-  SET logMe[13] TO logMe[13] + a + ",".
-  SET logMe[14] TO logMe[14] + motionType + ",".
-  SET logMe[15] TO logMe[15] + f + ",".
-  SET logMe[16] TO logMe[16] + g + ",".
-  SET logMe[17] TO logMe[17] + f_dot + ",".
-  SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-  SET logMe[19] TO logMe[19] + time + ",".
-  SET logMe[20] TO logMe[20] + timeError + ",".
-  SET logMe[21] TO logMe[21] + "0,".
+  IF logAllowed {
+    SET logMe[12] TO logMe[12] + p + ",".
+    SET logMe[13] TO logMe[13] + a + ",".
+    SET logMe[14] TO logMe[14] + motionType + ",".
+    SET logMe[15] TO logMe[15] + f + ",".
+    SET logMe[16] TO logMe[16] + g + ",".
+    SET logMe[17] TO logMe[17] + f_dot + ",".
+    SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
+    SET logMe[19] TO logMe[19] + time + ",".
+    SET logMe[20] TO logMe[20] + timeError + ",".
+    SET logMe[21] TO logMe[21] + "0,".
+  }
 
   LOCAL pStep IS 0.
 
@@ -151,21 +190,12 @@ FUNCTION gaussProblemPIteration {
     SET timeNMinusTwo TO tList[tList:LENGTH - 2].
     SET pNMinusOne TO pList[pList:LENGTH - 1].
     SET pNMinusTwo TO pList[pList:LENGTH - 2].
-    PRINT " ".
-    PRINT "P: " + p.
-    PRINT "Time Of Flight: " + timeOfFlight.
-    PRINT "Time N Minus One: " + timeNMinusOne.
-    PRINT "Time N Minus Two: " + timeNMinusTwo.
-    PRINT "P N Minus One: " + pNMinusOne.
-    PRINT "P N Minus Two: " + pNMinusTwo.
-    PRINT "Starting Iteration " + iterations + " timeError: " + ROUND(ABS(timeError)).
     SET pStep TO (timeOfFlight - timeNMinusOne) * (pNMinusOne - pNMinusTwo) / (timeNMinusOne - timeNMinusTwo).
     SET p TO pNMinusOne + pStep.
     IF (phaseAngle >= 180) AND ((p > p_ii) OR (p < 0))
-      RETURN gaussProblemPIteration(r_1, r_2, timeOfFlight, mu, shortWay, timeTolerance, maxIterations - 1, MIN(pStart1 + 0.1, 1), pStart2).
+      RETURN gaussProblemPIteration(r_1, r_2, timeOfFlight, mu, shortWay, timeTolerance, maxIterations - 1, logAllowed, MIN(pStart1 + 0.1, 1), pStart2).
     IF (phaseAngle < 180) AND (p < p_i)
-      RETURN gaussProblemPIteration(r_1, r_2, timeOfFlight, mu, shortWay, timeTolerance, maxIterations - 1, pStart1, MIN(pStart2 + 0.1, 1)).
-    PRINT "New P: " + p.
+      RETURN gaussProblemPIteration(r_1, r_2, timeOfFlight, mu, shortWay, timeTolerance, maxIterations - 1, logAllowed, pStart1, MIN(pStart2 + 0.1, 1)).
     SET a TO m * k * p / (( 2 * m - l^2) * p^2 + 2 * k * l * p - k^2).
     IF a < 0 SET motionType TO "Hyperbola".
     ELSE SET motionType TO "Ellipse".
@@ -187,38 +217,49 @@ FUNCTION gaussProblemPIteration {
     tList:ADD(time).
     SET iterations TO iterations + 1.
 
-    SET logMe[12] TO logMe[12] + p + ",".
-    SET logMe[13] TO logMe[13] + a + ",".
-    SET logMe[14] TO logMe[14] + motionType + ",".
-    SET logMe[15] TO logMe[15] + f + ",".
-    SET logMe[16] TO logMe[16] + g + ",".
-    SET logMe[17] TO logMe[17] + f_dot + ",".
-    SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-    SET logMe[19] TO logMe[19] + time + ",".
-    SET logMe[20] TO logMe[20] + timeError + ",".
-    SET logMe[21] TO logMe[21] + iterations + ",".
-    FOR message IN logMe {
-      LOG message TO logFileName.
+    IF logAllowed {
+      SET logMe[12] TO logMe[12] + p + ",".
+      SET logMe[13] TO logMe[13] + a + ",".
+      SET logMe[14] TO logMe[14] + motionType + ",".
+      SET logMe[15] TO logMe[15] + f + ",".
+      SET logMe[16] TO logMe[16] + g + ",".
+      SET logMe[17] TO logMe[17] + f_dot + ",".
+      SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
+      SET logMe[19] TO logMe[19] + time + ",".
+      SET logMe[20] TO logMe[20] + timeError + ",".
+      SET logMe[21] TO logMe[21] + iterations + ",".
+      FOR message IN logMe {
+        LOG message TO logFileName.
+      }
     }
   }
   LOCAL g_dot IS 1 - a / r_2_mag * ( 1 - COS( deltaAngle )).
   LOCAL v_1 IS (r_2 - f * r_1) / g.
   LOCAL v_2 IS f_dot * r_1 + g_dot * v_1.
-  RETURN LIST(v_1, v_2, motionType, iterations, p).
+  RETURN LEXICON("v_1", v_1,
+                 "v_2", v_2,
+                 "Motion Type", motionType,
+                 "Iterations", iterations,
+                 "Final Value", p,
+                 "r_1", r_1,
+                 "r_2", r_2,
+                 "mu", mu,
+                 "Short Way", shortWay).
 }
 
 FUNCTION C_Z {
   PARAMETER z.
   IF z = 0 RETURN 0.5.
   IF z < 0 RETURN (COSH(SQRT(-z))-1)/(-z).
+  IF z > 1e10 RETURN 1.99936080743821e-10.
   RETURN (1-COS(CONSTANT:RadToDeg * SQRT(z)))/z.
 }
 
 FUNCTION S_Z {
   PARAMETER z.
   IF z = 0 RETURN 1.0/6.0.
-  IF z < 0 RETURN (SINH(SQRT(-z))-SQRT(-z))/(-z)^1.5.
-  RETURN (SQRT(z)-SIN(CONSTANT:RadToDeg * SQRT(z)))/z^1.5.
+  IF z < 0 RETURN (SINH(SQRT(-z)) - SQRT(-z)) / (-z)^1.5.
+  RETURN (SQRT(z) - SIN(CONSTANT:RadToDeg * SQRT(z))) / z^1.5.
 }
 
 FUNCTION C_Z_prime {
@@ -243,8 +284,32 @@ FUNCTION gaussProblemUniversalVariables {
   PARAMETER timeOfFlight.
   PARAMETER mu.
   PARAMETER shortWay IS TRUE.
-  PARAMETER timeTolerance IS 0.001.         // Default tolerance of 0.001 second
-  PARAMETER maxIterations IS 50.
+  PARAMETER timeTolerance IS 0.001.         // Default tolerance in seconds
+  PARAMETER maxIterations IS 40.
+  PARAMETER logAllowed IS FALSE.
+  PARAMETER startZ IS 0.5.
+
+  // Choose a coordinate system so that the smaller of r_1 or r_2 is normalized to length 1.
+  // Further choose a time unit to make mu become 1.0 (basically disappear).
+  LOCAL DU IS MIN(r_1:MAG, r_2:MAG).
+  LOCAL TU IS SQRT(1/(mu / DU^3)).
+  SET mu TO 1.
+
+  IF startZ > 10 RETURN LEXICON("v_1", V(0, 0, 0),
+                                "v_2", V(0, 0, 0),
+                                "Motion Type", "Failed",
+                                "Iterations", 0,
+                                "Final Value", 0,
+                                "r_1", r_1,
+                                "r_2", r_2,
+                                "mu", mu * DU * DU * DU / (TU * TU),
+                                "Short Way", shortWay).
+
+  // Perform the various unit conversions needed to use the new coordinate system.
+  SET r_1 TO r_1 / DU.
+  SET r_2 TO r_2 / DU.
+  SET timeOfFlight TO timeOfFlight / TU.
+  SET timeTolerance TO timeTolerance / TU.
 
   LOCAL iterations IS 0.
   LOCAL r_1_mag IS r_1:MAG.
@@ -257,34 +322,35 @@ FUNCTION gaussProblemUniversalVariables {
   IF NOT shortWay SET A TO -A.
 
   LOCAL logMe IS LIST().
-  logMe:ADD(",X,Y,Z,Magnitude,Units,Short Way," + shortWay).
-  logMe:ADD("R_1," + r_1:X + "," + r_1:y + "," + r_1:z + "," + r_1_mag + ",meters").
-  logMe:ADD("R_2," + r_2:X + "," + r_2:y + "," + r_2:z + "," + r_2_mag + ",meters").
-  logMe:ADD("Desired Time," + timeOfFlight + ",s," + timeToString(timeOfFlight)).
-  logMe:ADD("mu," + mu).
-  logMe:ADD("phaseAngle," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-  logMe:ADD("").
-  logMe:ADD("z,").              //07
-  logMe:ADD("C(z),").           //08
-  logMe:ADD("S(z),").           //09
-  logMe:ADD("y,").              //10
-  logMe:ADD("x,").              //11
-  logMe:ADD("Time,").           //12
-  logMe:ADD("dt/dz,").          //13
-  logMe:ADD("C'(z),").          //14
-  logMe:ADD("S'(z),").          //15
-  logMe:ADD("Time Error,").     //16
-  logMe:ADD("Iterations,").     //17
-  logMe:ADD("f,").              //18
-  logMe:ADD("g,").              //19
-  logMe:ADD("g_dot,").          //20
-  logMe:ADD("A," + A).          //21
-  logMe:ADD("delta_v," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-  logMe:ADD(",X,Y,Z,Mag").      //23
-  logMe:ADD("v_1,").            //24
-  logMe:ADD("v_2,").            //25
+  IF logAllowed {
+    logMe:ADD(",X,Y,Z,Magnitude,Units,Short Way," + shortWay).
+    logMe:ADD("R_1," + r_1:X + "," + r_1:y + "," + r_1:z + "," + r_1_mag + ",meters").
+    logMe:ADD("R_2," + r_2:X + "," + r_2:y + "," + r_2:z + "," + r_2_mag + ",meters").
+    logMe:ADD("Desired Time," + timeOfFlight + ",s," + timeToString(timeOfFlight)).
+    logMe:ADD("mu," + mu).
+    logMe:ADD("phaseAngle," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
+    logMe:ADD("").
+    logMe:ADD("z,").              //07
+    logMe:ADD("C(z),").           //08
+    logMe:ADD("S(z),").           //09
+    logMe:ADD("y,").              //10
+    logMe:ADD("x,").              //11
+    logMe:ADD("Time,").           //12
+    logMe:ADD("dt/dz,").          //13
+    logMe:ADD("C'(z),").          //14
+    logMe:ADD("S'(z),").          //15
+    logMe:ADD("Time Error,").     //16
+    logMe:ADD("Iterations,").     //17
+    logMe:ADD("f,").              //18
+    logMe:ADD("g,").              //19
+    logMe:ADD("g_dot,").          //20
+    logMe:ADD("A," + A).          //21
+    logMe:ADD("delta_v," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
+    logMe:ADD(",X,Y,Z,Mag").      //23
+    logMe:ADD("v_1,").            //24
+    logMe:ADD("v_2,").            //25
+  }
 
-  LOCAL startZ IS 0.5.
   LOCAL z IS 0.
   LOCAL S IS 0.
   LOCAL C IS 0.
@@ -302,7 +368,11 @@ FUNCTION gaussProblemUniversalVariables {
     IF firstTime {
       SET z TO startZ.
       SET firstTime TO FALSE.
-    } ELSE SET z TO z - ( time - timeOfFlight) / dt_dz.
+    } ELSE {
+      IF dt_dz = 0 SET z TO z + 1.
+      ELSE SET z TO z - ( time - timeOfFlight) / dt_dz.
+      IF z > (4*CONSTANT:PI)^2 SET failed TO TRUE.
+    }
     SET S TO S_Z(z).
     SET C TO C_Z(z).
     SET y TO r_1_mag + r_2_mag - A*(1 - z * S ) / SQRT( C ).
@@ -313,22 +383,24 @@ FUNCTION gaussProblemUniversalVariables {
       SET S_prime TO S_Z_prime(z, C, S).
       SET dt_dz TO (x^3 * (S_prime - 3 * S * C_prime / ( 2 * C) ) + A / 8 * ( 3 * S * SQRT( y ) / C + A / x)) / SQRT(mu).
       SET timeError TO timeOfFlight - time.
-      SET logMe[07] TO logMe[07] + z + ",".
-      SET logMe[08] TO logMe[08] + C + ",".
-      SET logMe[09] TO logMe[09] + S + ",".
-      SET logMe[10] TO logMe[10] + y + ",".
-      SET logMe[11] TO logMe[11] + x + ",".
-      SET logMe[12] TO logMe[12] + time + ",".
-      SET logMe[13] TO logMe[13] + dt_dz + ",".
-      SET logMe[14] TO logMe[14] + C_prime + ",".
-      SET logMe[15] TO logMe[15] + S_prime + ",".
-      SET logMe[16] TO logMe[16] + timeError + ",".
-      SET logMe[17] TO logMe[17] + iterations + ",".
+      IF logAllowed {
+        SET logMe[07] TO logMe[07] + z + ",".
+        SET logMe[08] TO logMe[08] + C + ",".
+        SET logMe[09] TO logMe[09] + S + ",".
+        SET logMe[10] TO logMe[10] + y + ",".
+        SET logMe[11] TO logMe[11] + x + ",".
+        SET logMe[12] TO logMe[12] + time + ",".
+        SET logMe[13] TO logMe[13] + dt_dz + ",".
+        SET logMe[14] TO logMe[14] + C_prime + ",".
+        SET logMe[15] TO logMe[15] + S_prime + ",".
+        SET logMe[16] TO logMe[16] + timeError + ",".
+        SET logMe[17] TO logMe[17] + iterations + ",".
+      }
       SET iterations TO iterations + 1.
     } ELSE SET failed TO TRUE.
   }
 
-  IF failed OR (iterations >= maxIterations) RETURN LIST(V(0,0,0), V(0,0,0), "Failed", iterations, 0).
+  IF (failed OR (iterations >= maxIterations)) RETURN gaussProblemUniversalVariables(r_1, r_2, timeOfFlight, mu * DU * DU * DU / (TU * TU), shortWay, timeTolerance, maxIterations, logAllowed, startZ + 1).
 
   LOCAL f IS 1 - y / r_1_mag.
   LOCAL g IS A * SQRT( y / mu).
@@ -339,97 +411,167 @@ FUNCTION gaussProblemUniversalVariables {
   LOCAL motionType IS "none".
   IF ecc >= 1 SET motionType TO "Hyperbola".
   ELSE SET motionType TO "Ellipse".
-  SET logMe[18] TO logMe[18] + f + ",".
-  SET logMe[19] TO logMe[19] + g + ",".
-  SET logMe[20] TO logMe[20] + g_dot + ",".
-  SET logMe[24] TO logMe[24] + v_1:X + "," + v_1:Y + "," + v_1:Z + "," + v_1:MAG.
-  SET logMe[25] TO logMe[25] + v_2:X + "," + v_2:Y + "," + v_2:Z + "," + v_2:MAG.
-//  FOR message IN logMe {
-//    LOG message TO logFileName.
-//  }
-  RETURN LEXICON(v_1, v_2, motionType, iterations, z).
-}
-
-LOCAL targetBody IS BODY(desiredBody).
-LOCAL synodicPeriod IS 1 / ABS((1 / targetBody:ORBIT:PERIOD) - (1 / BODY:ORBIT:PERIOD)).
-LOCAL startTravelTime IS BODY:ORBIT:PERIOD / 2.0.
-LOCAL endTravelTime IS startTravelTime + synodicPeriod / 4.
-LOCAL travelTimeInterval IS synodicPeriod / 400.
-
-LOCAL sunBody IS BODY("Kerbin").
-LOCAL sunPos IS sunBody:POSITION.
-LOCAL sunMU IS sunBody:MU.
-LOCAL r_1 IS SHIP:BODY:POSITION - sunPos.
-LOCAL r_2 IS targetBody:POSITION - sunPos.
-LOCAL phaseAngle IS VANG(r_1, r_2).
-LOCAL phaseAngleRad IS phaseAngle * CONSTANT:RadToDeg.
-LOCAL mu IS 1.
-LOCAL timeOfFlight IS 1.
-LOCAL vectors IS 0.
-
-LOCAL timeStamp IS TIME(116941814.5).
-LOCAL startTime IS TIME(116941814.5).
-
-SET r_1 TO POSITIONAT(SHIP:BODY, timeStamp) - POSITIONAT(sunBody, timeStamp).
-SET r_2 TO POSITIONAT(targetBody, timeStamp) - POSITIONAT(sunBody, timeStamp).
-SET mu TO sunMU.
-SET timeOfFlight TO synodicPeriod.
-
-LOCAL plotData IS LIST().
-LOCAL startPlanetMotion IS VELOCITYAT(SHIP:BODY, timeStamp):ORBIT.
-LOCAL endPlanetMotion IS VELOCITYAT(BODY("Minmus"), timeStamp):ORBIT.
-LOCAL timeOfFlight IS 0.
-LOCAL singleTrajectoryData IS LIST().
-FOR timeOffset IN RANGE(0, 25, 1) {
-  SET timeStamp TO startTime + (timeOffset / 10) * synodicPeriod.
-  SET r_1 TO POSITIONAT(SHIP:BODY, timeStamp) - POSITIONAT(sunBody, timeStamp).
-  SET r_2 TO POSITIONAT(targetBody, timeStamp) - POSITIONAT(sunBody, timeStamp).
-  SET startPlanetMotion TO VELOCITYAT(SHIP:BODY, timeStamp):ORBIT.
-  SET endPlanetMotion TO VELOCITYAT(BODY("Minmus"), timeStamp):ORBIT.
-  FOR number IN RANGE(0, 120) {
-    PRINT "Calculating flight number " + number + " for time offset " + timeToString(timeOffset / 10 * synodicPeriod).
-    SET timeOfFlight TO synodicPeriod * (number / 8 + 1).
-    SET singleTrajectoryData TO gaussProblemUniversalVariables(r_1, r_2, timeOfFlight, mu).
-    // Index 0 - v_1
-    // Index 1 - v_2
-    // Index 2 - motionType
-    // Index 3 - iterations
-    // Index 4 - z
-    singleTrajectoryData:ADD((startPlanetMotion - singleTrajectoryData[0]):MAG).              //Index 5 is start DeltaV
-    singleTrajectoryData:ADD((endPlanetMotion - singleTrajectoryData[1]):MAG).                //Index 6 is end DeltaV
-    IF singleTrajectoryData[]
-    singleTrajectoryData:ADD(timeStamp).                                                      //Index 7 is timeStamp
-    singleTrajectoryData:ADD(timeOfFlight).                                                   //Index 8 is timeOfFlight
-    plotData:ADD(singleTrajectoryData).
+  IF logAllowed {
+    SET logMe[18] TO logMe[18] + f + ",".
+    SET logMe[19] TO logMe[19] + g + ",".
+    SET logMe[20] TO logMe[20] + g_dot + ",".
+    SET logMe[24] TO logMe[24] + v_1:X + "," + v_1:Y + "," + v_1:Z + "," + v_1:MAG.
+    SET logMe[25] TO logMe[25] + v_2:X + "," + v_2:Y + "," + v_2:Z + "," + v_2:MAG.
+    FOR message IN logMe {
+      LOG message TO logFileName.
+    }
   }
+  RETURN LEXICON("v_1", v_1 * DU / TU,
+                 "v_2", v_2 * DU / TU,
+                 "Motion Type", motionType,
+                 "Iterations", iterations,
+                 "Final Value", z,
+                 "r_1", r_1 * DU,
+                 "r_2", r_2 * DU,
+                 "mu", mu * DU * DU * DU / (TU * TU),
+                 "Short Way", shortWay).
 }
 
-LOG "z,Starting dV,Ending dV,Total dV,Motion Type,Iterations,TimeStamp,TimeOfFlight" TO logFileName.
-FOR singleTrajectory IN plotData {
-  LOG singleTrajectory[4] + "," +
-      singleTrajectory[5] + "," +
-      singleTrajectory[6] + "," +
-      (singleTrajectory[5] + singleTrajectory[6]) + "," +
-      singleTrajectory[2] + "," +
-      singleTrajectory[3] + "," +
-      singleTrajectory[7] + "," +
-      singleTrajectory[8] + "," TO logFileName.
-}
 
-//PRINT "".
-//PRINT "Starting book problem".
-//SET r_1 TO V(0.5, 0.6, 0.7).
-//SET r_2 TO V(0, 1, 0).
-//SET mu TO 1.
-//SET timeOfFlight TO 0.96692456.
-//gaussProblemPIteration(r_1, r_2, timeOfFlight, mu).
+PARAMETER fromBodyName IS "Kerbin".
+PARAMETER toBodyName IS "Duna".
+PARAMETER desiredOrbitAlt IS 100.
 
-//PRINT "".
-//PRINT "Starting Braeunig problem".
-//SET r_1 TO V(0.473265, -0.899215, 0).
-//SET r_2 TO V(0.066842, 1.561256, 0.030948).
-//SET mu TO 3.964016E-14.
-//SET timeOfFlight TO 17884800.
-//gaussProblemPIteration(r_1, r_2, timeOfFlight, mu).
-PRINT "Complete".
-WAIT 1.
+IF desiredOrbitAlt < 0 SET desiredOrbitAlt TO 0.
+
+LOCAL errorCode IS "None".
+
+IF NOT BODYEXISTS(fromBodyName) SET errorCode TO fromBodyName + " does not exist!".
+IF NOT BODYEXISTS(toBodyName) SET errorCode TO toBodyName + " does not exist!".
+
+IF errorCode = "None" {IF BODY(fromBodyName):BODY:NAME <> BODY(toBodyName):BODY:NAME SET errorCode TO "Bodies must have the same parent!".}
+
+IF errorCode = "None" {
+  LOCAL fromBody IS BODY(fromBodyName).
+  LOCAL toBody IS BODY(toBodyName).
+  LOCAL sunBody IS firstCommonBody(fromBody, toBody).
+
+  LOCAL logFileName IS "0:gaussProblem.csv".
+  IF EXISTS(logFileName) DELETEPATH(logFileName).
+
+
+  LOCAL synodicPeriod IS 1 / ABS((1 / fromBody:ORBIT:PERIOD) - (1 / toBody:ORBIT:PERIOD)).
+
+  LOCAL sunPos IS sunBody:POSITION.
+  LOCAL sunMU IS sunBody:MU.
+  LOCAL r_1 IS V(0, 0, 0).
+  LOCAL r_2 IS V(0, 0, 0).
+  LOCAL phaseAngle IS VANG(r_1, r_2).
+  LOCAL phaseAngleRad IS phaseAngle * CONSTANT:RadToDeg.
+  LOCAL timeOfFlight IS 1.
+  LOCAL vectors IS 0.
+
+  LOCAL timeStamp IS TIME(116941814.5).
+  LOCAL startTime IS TIME. //TIME(TIME:SECONDS).
+
+  SET timeOfFlight TO synodicPeriod.
+
+  LOCAL plotData IS LIST().
+  LOCAL startPlanetMotion IS 0.
+  LOCAL endPlanetMotion IS 0.
+  LOCAL timeOfFlight IS 0.
+  LOCAL singleTrajectoryData IS LEXICON().
+  LOCAL successRate IS LEXICON().
+  LOCAL totalFlights TO 0.
+  LOCAL maxDeltaV IS 0.
+  LOCAL minDeltaV IS 1000000000.
+  LOCAL shortWay IS TRUE.
+  LOCAL shortTrajectory IS 0.
+  LOCAL longTrajectory IS 0.
+
+  // Time Offset is offset in time from now, in units tenths of the synodic period of the two bodies
+  FOR timeOffset IN RANGE(0, 25, 1) {
+    SET timeStamp TO startTime + (timeOffset / 10) * synodicPeriod.
+    SET r_1 TO absolutePosition(fromBody, timeStamp) - absolutePosition(sunBody, timeStamp).
+    SET r_2 TO absolutePosition(toBody, timeStamp) - absolutePosition(sunBody, timeStamp).
+    SET startPlanetMotion TO absoluteVelocity(fromBody, timeStamp) - absoluteVelocity(sunBody, timeStamp).
+    SET endPlanetMotion TO absoluteVelocity(toBody, timeStamp) - absoluteVelocity(sunBody, timeStamp).
+    // Number is time of flight in eights of the synodic period
+    FOR number IN RANGE(0, 25, 1) {
+      SET timeOfFlight TO synodicPeriod * ((number + 3) / 10).
+      PRINT "Calculating departure " + (timeOffset / 10) + " periods, flight time " + ((number + 1) / 10) + " periods.".
+      SET shortWay TO VCRS(r_1, r_2):Z < 0.
+      SET shortTrajectory TO gaussProblemUniversalVariables(r_1, r_2, timeOfFlight, sunMU, TRUE).
+      SET longTrajectory TO gaussProblemUniversalVariables(r_1, r_2, timeOfFlight, sunMU, FALSE).
+      IF (shortTrajectory["Motion Type"] = "Failed") OR (((startPlanetMotion - shortTrajectory["v_1"]):MAG + (endPlanetMotion - shortTrajectory["v_2"]):MAG) < ((startPlanetMotion - longTrajectory["v_1"]):MAG + (endPlanetMotion - longTrajectory["v_2"]):MAG)) {
+        SET singleTrajectoryData TO shortTrajectory.
+      } ELSE SET singleTrajectoryData TO longTrajectory.
+  //    SET singleTrajectoryData TO gaussProblemPIteration(r_1, r_2, timeOfFlight, sunMU).
+      SET maxDeltaV TO MAX(maxDeltaV, (startPlanetMotion - singleTrajectoryData["v_1"]):MAG + (endPlanetMotion - singleTrajectoryData["v_2"]):MAG).
+      SET minDeltaV TO MIN(minDeltaV, (startPlanetMotion - singleTrajectoryData["v_1"]):MAG + (endPlanetMotion - singleTrajectoryData["v_2"]):MAG).
+      IF singleTrajectoryData["Motion Type"] = "Failed" {
+        singleTrajectoryData:ADD("Start Delta V", maxDeltaV).
+        singleTrajectoryData:ADD("End Delta V", maxDeltaV).
+        singleTrajectoryData:ADD("Total Delta V", maxDeltaV).
+        singleTrajectoryData:ADD("Time Stamp", timeStamp:SECONDS).
+        singleTrajectoryData:ADD("Time Of Flight", timeOfFlight).
+      } ELSE {
+        singleTrajectoryData:ADD("Start Delta V", (startPlanetMotion - singleTrajectoryData["v_1"]):MAG).
+        singleTrajectoryData:ADD("End Delta V", (endPlanetMotion - singleTrajectoryData["v_2"]):MAG).
+        singleTrajectoryData:ADD("Total Delta V", singleTrajectoryData["Start Delta V"] + singleTrajectoryData["End Delta V"]).
+        singleTrajectoryData:ADD("Time Stamp", timeStamp:SECONDS).
+        singleTrajectoryData:ADD("Time Of Flight", timeOfFlight).
+      }
+      IF NOT successRate:KEYS:CONTAINS(singleTrajectoryData["Motion Type"]) {
+        successRate:ADD(singleTrajectoryData["Motion Type"], 1).
+      } ELSE SET successRate[singleTrajectoryData["Motion Type"]] TO successRate[singleTrajectoryData["Motion Type"]] + 1.
+      SET totalFlights TO totalFlights + 1.
+      plotData:ADD(singleTrajectoryData).
+    }
+  }
+
+  PRINT "Finished calculating trajectories, now logging them".
+
+  LOG ",Count,Rate" TO logFileName.
+  FOR motionType IN successRate:KEYS {
+    LOG motionType + "," + successRate[motionType] + "," + (successRate[motionType] / totalFlights * 100) + "%" TO logFileName.
+  }
+  LOG "," + totalFlights + ",100%" TO logFileName.
+  LOG "" TO logFileName.
+  LOG "Synodic Period," + synodicPeriod + ",seconds,is," + timeToString(synodicPeriod) TO logFileName.
+  LOG "Time Elapsed," + (time - startTime):SECONDS + ",seconds" TO logFileName.
+  LOG "" TO logFileName.
+  LOG "z,Starting dV,End dV,Total dV,Motion Type,Motion Type Number,Iterations,TimeStamp,TimeOfFlight,mu,Short Way" TO logFileName.
+  LOCAL motionTypeNumber IS 0.
+  FOR singleTrajectory IN plotData {
+    IF singleTrajectory["Motion Type"] = "Failed" SET motionTypeNumber TO 0.
+    IF singleTrajectory["Motion Type"] = "Hyperbola" SET motionTypeNumber TO 1.
+    IF singleTrajectory["Motion Type"] = "Ellipse" SET motionTypeNumber TO -1.
+    LOG singleTrajectory["Final Value"] + "," +
+        singleTrajectory["Start Delta V"] + "," +
+        singleTrajectory["End Delta V"] + "," +
+        singleTrajectory["Total Delta V"] + "," +
+        singleTrajectory["Motion Type"] + "," +
+        motionTypeNumber + "," +
+        singleTrajectory["Iterations"] + "," +
+        ROUND((singleTrajectory["Time Stamp"] - startTime):SECONDS / synodicPeriod, 5) + "," +
+        ROUND(singleTrajectory["Time Of Flight"] / synodicPeriod, 5) + "," +
+        singleTrajectory["mu"] + "," +
+        singleTrajectory["Short Way"] + "," TO logFileName.
+  }
+
+  //PRINT "".
+  //PRINT "Starting book problem".
+  //SET r_1 TO V(0.5, 0.6, 0.7).
+  //SET r_2 TO V(0, 1, 0).
+  //SET mu TO 1.
+  //SET timeOfFlight TO 0.96692456.
+  //gaussProblemPIteration(r_1, r_2, timeOfFlight, mu).
+
+  //PRINT "".
+  //PRINT "Starting Braeunig problem".
+  //SET r_1 TO V(0.473265, -0.899215, 0).
+  //SET r_2 TO V(0.066842, 1.561256, 0.030948).
+  //SET mu TO 3.964016E-14.
+  //SET timeOfFlight TO 17884800.
+  //gaussProblemPIteration(r_1, r_2, timeOfFlight, mu).
+
+  PRINT "Complete".
+  WAIT 0.5.
+  SET loopMessage TO "Min dV between " + toBody:NAME + " and " + fromBody:NAME + " is " + distanceToString(minDeltaV) + "/s".
+} ELSE SET loopMessage TO errorCode.
