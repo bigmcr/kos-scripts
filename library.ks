@@ -1464,7 +1464,6 @@ FUNCTION timeToString
 	IF digits > 0 SET seconds TO ROUND( MOD( T, 60), digits).
 	ELSE SET seconds TO ROUND( MOD( T, 60), 0).
 
-	LOCAL isFirst IS TRUE.
 	LOCAL firstSpace IS "".
 	IF isNegative SET message TO message + "-".
 	IF digits > -4 AND    days <> 0 {SET message TO message + firstSpace +    days + "d". SET firstSpace TO " ".}

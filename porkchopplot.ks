@@ -32,6 +32,8 @@ FUNCTION absolutePosition {
   PARAMETER thing.
   PARAMETER timeStamp IS TIME:SECONDS.
 
+  IF thing:NAME = "Sun" RETURN V(0, 0, 0).
+
   LOCAL originalThing IS thing.
   LOCAL removals IS 0.
   LOCAL finalPosition IS V(0, 0, 0).
@@ -40,7 +42,7 @@ FUNCTION absolutePosition {
     SET thing TO thing:BODY.
     SET removals TO removals + 1.
   }
-  SET finalPosition TO finalPosition - BODY("Sun"):POSITION.
+  SET finalPosition TO finalPosition - POSITIONAT(BODY("Sun"), timeStamp).
   IF removals > 1 RETURN finalPosition - originalThing:BODY:POSITION.
   ELSE            RETURN finalPosition.
 }
@@ -266,7 +268,7 @@ FUNCTION C_Z_prime {
   PARAMETER z.
   PARAMETER C_of_Z IS C_Z(z).
   PARAMETER S_of_Z IS S_Z(z).
-  IF ABS(z) < 0.05 RETURN -1/24 + 2 * z / 720 - 3 * z^2 / 40320 + 4 * z^3 / 3628800 - 5 * z^2 / 479001600 + 6 * z^3 / 87178291200.
+  IF ABS(z) < 0.05 RETURN -1/24 + 2 * z / 720 - 3 * z^2 / 40320 + 4 * z^3 / 3628800 - 5 * z^4 / 479001600 + 6 * z^5 / 87178291200.
   RETURN (1 - z * S_of_Z - 2 * C_of_Z) / ( 2 * z ).
 }
 
@@ -289,12 +291,6 @@ FUNCTION gaussProblemUniversalVariables {
   PARAMETER logAllowed IS FALSE.
   PARAMETER startZ IS 0.5.
 
-  // Choose a coordinate system so that the smaller of r_1 or r_2 is normalized to length 1.
-  // Further choose a time unit to make mu become 1.0 (basically disappear).
-  LOCAL DU IS MIN(r_1:MAG, r_2:MAG).
-  LOCAL TU IS SQRT(1/(mu / DU^3)).
-  SET mu TO 1.
-
   IF startZ > 10 RETURN LEXICON("v_1", V(0, 0, 0),
                                 "v_2", V(0, 0, 0),
                                 "Motion Type", "Failed",
@@ -302,14 +298,9 @@ FUNCTION gaussProblemUniversalVariables {
                                 "Final Value", 0,
                                 "r_1", r_1,
                                 "r_2", r_2,
-                                "mu", mu * DU * DU * DU / (TU * TU),
+                                "mu", mu,
                                 "Short Way", shortWay).
 
-  // Perform the various unit conversions needed to use the new coordinate system.
-  SET r_1 TO r_1 / DU.
-  SET r_2 TO r_2 / DU.
-  SET timeOfFlight TO timeOfFlight / TU.
-  SET timeTolerance TO timeTolerance / TU.
 
   LOCAL iterations IS 0.
   LOCAL r_1_mag IS r_1:MAG.
@@ -375,8 +366,9 @@ FUNCTION gaussProblemUniversalVariables {
     }
     SET S TO S_Z(z).
     SET C TO C_Z(z).
-    SET y TO r_1_mag + r_2_mag - A*(1 - z * S ) / SQRT( C ).
-    IF y > 0 {
+    IF SQRT(C) <> 0 SET y TO r_1_mag + r_2_mag - A*(1 - z * S ) / SQRT( C ).
+    ELSE SET y TO -1.
+    IF (y > 0) AND (C < 1e10) AND (S < 1e10) {
       SET x TO SQRT( y / C ).
       SET time TO (( x^3 ) * S + A * SQRT( y )) / SQRT( mu ).
       SET C_prime TO C_Z_prime(z, C, S).
@@ -400,7 +392,15 @@ FUNCTION gaussProblemUniversalVariables {
     } ELSE SET failed TO TRUE.
   }
 
-  IF (failed OR (iterations >= maxIterations)) RETURN gaussProblemUniversalVariables(r_1, r_2, timeOfFlight, mu * DU * DU * DU / (TU * TU), shortWay, timeTolerance, maxIterations, logAllowed, startZ + 1).
+  IF (failed OR (iterations >= maxIterations)) RETURN gaussProblemUniversalVariables(r_1,
+                                                                                     r_2,
+                                                                                     timeOfFlight,
+                                                                                     mu,
+                                                                                     shortWay,
+                                                                                     timeTolerance,
+                                                                                     maxIterations,
+                                                                                     logAllowed,
+                                                                                     startZ + 1).
 
   LOCAL f IS 1 - y / r_1_mag.
   LOCAL g IS A * SQRT( y / mu).
@@ -421,14 +421,14 @@ FUNCTION gaussProblemUniversalVariables {
       LOG message TO logFileName.
     }
   }
-  RETURN LEXICON("v_1", v_1 * DU / TU,
-                 "v_2", v_2 * DU / TU,
+  RETURN LEXICON("v_1", v_1,
+                 "v_2", v_2,
                  "Motion Type", motionType,
                  "Iterations", iterations,
                  "Final Value", z,
-                 "r_1", r_1 * DU,
-                 "r_2", r_2 * DU,
-                 "mu", mu * DU * DU * DU / (TU * TU),
+                 "r_1", r_1,
+                 "r_2", r_2,
+                 "mu", mu,
                  "Short Way", shortWay).
 }
 
@@ -461,19 +461,13 @@ IF errorCode = "None" {
   LOCAL sunMU IS sunBody:MU.
   LOCAL r_1 IS V(0, 0, 0).
   LOCAL r_2 IS V(0, 0, 0).
-  LOCAL phaseAngle IS VANG(r_1, r_2).
-  LOCAL phaseAngleRad IS phaseAngle * CONSTANT:RadToDeg.
-  LOCAL timeOfFlight IS 1.
-  LOCAL vectors IS 0.
 
   LOCAL timeStamp IS TIME(116941814.5).
   LOCAL startTime IS TIME. //TIME(TIME:SECONDS).
 
-  SET timeOfFlight TO synodicPeriod.
-
   LOCAL plotData IS LIST().
-  LOCAL startPlanetMotion IS 0.
-  LOCAL endPlanetMotion IS 0.
+  LOCAL fromBodyVelocity IS 0.
+  LOCAL toBodyVelocity IS 0.
   LOCAL timeOfFlight IS 0.
   LOCAL singleTrajectoryData IS LEXICON().
   LOCAL successRate IS LEXICON().
@@ -483,46 +477,97 @@ IF errorCode = "None" {
   LOCAL shortWay IS TRUE.
   LOCAL shortTrajectory IS 0.
   LOCAL longTrajectory IS 0.
+  LOCAL motionTypeNumber IS 0.
 
-  // Time Offset is offset in time from now, in units tenths of the synodic period of the two bodies
-  FOR timeOffset IN RANGE(0, 25, 1) {
-    SET timeStamp TO startTime + (timeOffset / 10) * synodicPeriod.
+  LOG "Time from Now,Universal Time,Time of Flight,From X Pos,From Y Pos,From Z Pos,From Pos Mag,To X Pos,To Y Pos,To Z Pos,R2 Pos Mag,From X Vel,From Y Vel,From Z Vel,From Vel Mag,To X Vel,To Y Vel,To Z Vel,To Vel Mag,TimeOfFlight,mu,V1 X,V1 Y,V1 Z,V1 Mag,V2 X,V2 Y,V2 Z,V2 Mag,z,Starting dV,End dV,Total dV,Motion Type,Motion Type Number,Iterations,TimeStamp,TimeOfFlight,Short Way" TO logFileName.
+
+  // Time Offset is offset in time from now, in units hundredths of the synodic period of the two bodies
+  FOR timeOffset IN RANGE(0, 301, 5) {
+    SET timeStamp TO startTime + (timeOffset / 100) * synodicPeriod.
     SET r_1 TO absolutePosition(fromBody, timeStamp) - absolutePosition(sunBody, timeStamp).
     SET r_2 TO absolutePosition(toBody, timeStamp) - absolutePosition(sunBody, timeStamp).
-    SET startPlanetMotion TO absoluteVelocity(fromBody, timeStamp) - absoluteVelocity(sunBody, timeStamp).
-    SET endPlanetMotion TO absoluteVelocity(toBody, timeStamp) - absoluteVelocity(sunBody, timeStamp).
-    // Number is time of flight in eights of the synodic period
-    FOR number IN RANGE(0, 25, 1) {
-      SET timeOfFlight TO synodicPeriod * ((number + 3) / 10).
-      PRINT "Calculating departure " + (timeOffset / 10) + " periods, flight time " + ((number + 1) / 10) + " periods.".
+    SET fromBodyVelocity TO absoluteVelocity(fromBody, timeStamp) - absoluteVelocity(sunBody, timeStamp).
+    SET toBodyVelocity TO absoluteVelocity(toBody, timeStamp) - absoluteVelocity(sunBody, timeStamp).
+    // Number is time of flight in hundredths of the synodic period
+    FOR number IN RANGE(30, 151, 5) {
+      SET timeOfFlight TO synodicPeriod * ((number) / 100).
+      PRINT "Calculating departure " + (timeOffset / 100) + " periods, flight time " + ((number) / 100) + " periods.".
       SET shortWay TO VCRS(r_1, r_2):Z < 0.
       SET shortTrajectory TO gaussProblemUniversalVariables(r_1, r_2, timeOfFlight, sunMU, TRUE).
       SET longTrajectory TO gaussProblemUniversalVariables(r_1, r_2, timeOfFlight, sunMU, FALSE).
-      IF (shortTrajectory["Motion Type"] = "Failed") OR (((startPlanetMotion - shortTrajectory["v_1"]):MAG + (endPlanetMotion - shortTrajectory["v_2"]):MAG) < ((startPlanetMotion - longTrajectory["v_1"]):MAG + (endPlanetMotion - longTrajectory["v_2"]):MAG)) {
+      IF (shortTrajectory["Motion Type"] = "Failed") OR (((fromBodyVelocity - shortTrajectory["v_1"]):MAG + (toBodyVelocity - shortTrajectory["v_2"]):MAG) < ((fromBodyVelocity - longTrajectory["v_1"]):MAG + (toBodyVelocity - longTrajectory["v_2"]):MAG)) {
         SET singleTrajectoryData TO shortTrajectory.
       } ELSE SET singleTrajectoryData TO longTrajectory.
   //    SET singleTrajectoryData TO gaussProblemPIteration(r_1, r_2, timeOfFlight, sunMU).
-      SET maxDeltaV TO MAX(maxDeltaV, (startPlanetMotion - singleTrajectoryData["v_1"]):MAG + (endPlanetMotion - singleTrajectoryData["v_2"]):MAG).
-      SET minDeltaV TO MIN(minDeltaV, (startPlanetMotion - singleTrajectoryData["v_1"]):MAG + (endPlanetMotion - singleTrajectoryData["v_2"]):MAG).
+      SET maxDeltaV TO MAX(maxDeltaV, (fromBodyVelocity - singleTrajectoryData["v_1"]):MAG + (toBodyVelocity - singleTrajectoryData["v_2"]):MAG).
+      SET minDeltaV TO MIN(minDeltaV, (fromBodyVelocity - singleTrajectoryData["v_1"]):MAG + (toBodyVelocity - singleTrajectoryData["v_2"]):MAG).
       IF singleTrajectoryData["Motion Type"] = "Failed" {
-        singleTrajectoryData:ADD("Start Delta V", maxDeltaV).
-        singleTrajectoryData:ADD("End Delta V", maxDeltaV).
-        singleTrajectoryData:ADD("Total Delta V", maxDeltaV).
+        singleTrajectoryData:ADD("Start Delta V", "").
+        singleTrajectoryData:ADD("End Delta V", "").
+        singleTrajectoryData:ADD("Total Delta V", "").
         singleTrajectoryData:ADD("Time Stamp", timeStamp:SECONDS).
         singleTrajectoryData:ADD("Time Of Flight", timeOfFlight).
       } ELSE {
-        singleTrajectoryData:ADD("Start Delta V", (startPlanetMotion - singleTrajectoryData["v_1"]):MAG).
-        singleTrajectoryData:ADD("End Delta V", (endPlanetMotion - singleTrajectoryData["v_2"]):MAG).
+        singleTrajectoryData:ADD("Start Delta V", (fromBodyVelocity - singleTrajectoryData["v_1"]):MAG).
+        singleTrajectoryData:ADD("End Delta V", (toBodyVelocity - singleTrajectoryData["v_2"]):MAG).
         singleTrajectoryData:ADD("Total Delta V", singleTrajectoryData["Start Delta V"] + singleTrajectoryData["End Delta V"]).
         singleTrajectoryData:ADD("Time Stamp", timeStamp:SECONDS).
         singleTrajectoryData:ADD("Time Of Flight", timeOfFlight).
       }
+      singleTrajectoryData:ADD("Time Offset", (timeOffset / 10) * synodicPeriod).
+      singleTrajectoryData:ADD("Universal Time", timeStamp:SECONDS).
+      singleTrajectoryData:ADD("From Velocity", fromBodyVelocity).
+      singleTrajectoryData:ADD("To Velocity", toBodyVelocity).
       IF NOT successRate:KEYS:CONTAINS(singleTrajectoryData["Motion Type"]) {
         successRate:ADD(singleTrajectoryData["Motion Type"], 1).
       } ELSE SET successRate[singleTrajectoryData["Motion Type"]] TO successRate[singleTrajectoryData["Motion Type"]] + 1.
       SET totalFlights TO totalFlights + 1.
-      plotData:ADD(singleTrajectoryData).
-    }
+//      plotData:ADD(singleTrajectoryData).
+
+      SET motionTypeNumber TO 0.
+      IF singleTrajectoryData["Motion Type"] = "Failed" SET motionTypeNumber TO 0.
+      IF singleTrajectoryData["Motion Type"] = "Hyperbola" SET motionTypeNumber TO 1.
+      IF singleTrajectoryData["Motion Type"] = "Ellipse" SET motionTypeNumber TO -1.
+      LOG singleTrajectoryData["Time Offset"] + "," +
+          singleTrajectoryData["Universal Time"] + "," +
+          singleTrajectoryData["Time of Flight"] + "," +
+          singleTrajectoryData["r_1"]:X + "," +
+          singleTrajectoryData["r_1"]:Y + "," +
+          singleTrajectoryData["r_1"]:Z + "," +
+          singleTrajectoryData["r_1"]:mag + "," +
+          singleTrajectoryData["r_2"]:X + "," +
+          singleTrajectoryData["r_2"]:Y + "," +
+          singleTrajectoryData["r_2"]:Z + "," +
+          singleTrajectoryData["r_2"]:mag + "," +
+          singleTrajectoryData["From Velocity"]:X + "," +
+          singleTrajectoryData["From Velocity"]:Y + "," +
+          singleTrajectoryData["From Velocity"]:Z + "," +
+          singleTrajectoryData["From Velocity"]:mag + "," +
+          singleTrajectoryData["To Velocity"]:X + "," +
+          singleTrajectoryData["To Velocity"]:Y + "," +
+          singleTrajectoryData["To Velocity"]:Z + "," +
+          singleTrajectoryData["To Velocity"]:mag + "," +
+          singleTrajectoryData["Time Of Flight"] + "," +
+          singleTrajectoryData["mu"] + "," +
+          singleTrajectoryData["v_1"]:X + "," +
+          singleTrajectoryData["v_1"]:Y + "," +
+          singleTrajectoryData["v_1"]:Z + "," +
+          singleTrajectoryData["v_1"]:mag + "," +
+          singleTrajectoryData["v_2"]:X + "," +
+          singleTrajectoryData["v_2"]:Y + "," +
+          singleTrajectoryData["v_2"]:Z + "," +
+          singleTrajectoryData["v_2"]:mag + "," +
+          singleTrajectoryData["Final Value"] + "," +
+          singleTrajectoryData["Start Delta V"] + "," +
+          singleTrajectoryData["End Delta V"] + "," +
+          singleTrajectoryData["Total Delta V"] + "," +
+          singleTrajectoryData["Motion Type"] + "," +
+          motionTypeNumber + "," +
+          singleTrajectoryData["Iterations"] + "," +
+          ROUND((singleTrajectoryData["Time Stamp"] - startTime):SECONDS / synodicPeriod, 5) + "," +
+          ROUND(singleTrajectoryData["Time Of Flight"] / synodicPeriod, 5) + "," +
+          singleTrajectoryData["Short Way"] + "," TO logFileName.
+        }
   }
 
   PRINT "Finished calculating trajectories, now logging them".
@@ -535,25 +580,8 @@ IF errorCode = "None" {
   LOG "" TO logFileName.
   LOG "Synodic Period," + synodicPeriod + ",seconds,is," + timeToString(synodicPeriod) TO logFileName.
   LOG "Time Elapsed," + (time - startTime):SECONDS + ",seconds" TO logFileName.
+  LOG "From," + fromBody:NAME + ",to," + toBody:NAME + ",going past," + sunBody:NAME TO logFileName.
   LOG "" TO logFileName.
-  LOG "z,Starting dV,End dV,Total dV,Motion Type,Motion Type Number,Iterations,TimeStamp,TimeOfFlight,mu,Short Way" TO logFileName.
-  LOCAL motionTypeNumber IS 0.
-  FOR singleTrajectory IN plotData {
-    IF singleTrajectory["Motion Type"] = "Failed" SET motionTypeNumber TO 0.
-    IF singleTrajectory["Motion Type"] = "Hyperbola" SET motionTypeNumber TO 1.
-    IF singleTrajectory["Motion Type"] = "Ellipse" SET motionTypeNumber TO -1.
-    LOG singleTrajectory["Final Value"] + "," +
-        singleTrajectory["Start Delta V"] + "," +
-        singleTrajectory["End Delta V"] + "," +
-        singleTrajectory["Total Delta V"] + "," +
-        singleTrajectory["Motion Type"] + "," +
-        motionTypeNumber + "," +
-        singleTrajectory["Iterations"] + "," +
-        ROUND((singleTrajectory["Time Stamp"] - startTime):SECONDS / synodicPeriod, 5) + "," +
-        ROUND(singleTrajectory["Time Of Flight"] / synodicPeriod, 5) + "," +
-        singleTrajectory["mu"] + "," +
-        singleTrajectory["Short Way"] + "," TO logFileName.
-  }
 
   //PRINT "".
   //PRINT "Starting book problem".
