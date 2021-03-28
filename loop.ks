@@ -453,17 +453,15 @@ UNTIL done {
 				// if the operator entered a single command, interperet and execute it
 				ELSE {
 					// if inputString is the name of a script, run the script
-					IF (NOT connectionToKSC() AND (CORE:VOLUME:EXISTS(inputString) OR CORE:VOLUME:EXISTS("KSM Files/" + inputString))) {
+					IF (NOT connectionToKSC() AND CORE:VOLUME:EXISTS(inputString)) {
 						debugString("Running " + inputString + " locally").
-						RUNPATH("1:" + inputString + ".ksm").
+						RUNPATH("1:" + inputString).
 						endScript().
 						SET commandValid TO TRUE.
 					} ELSE
-					IF (connectionToKSC() AND (ARCHIVE:EXISTS(inputString) OR ARCHIVE:EXISTS("KSM Files/" + inputString))) {
-						debugString("Compiling 0:" + inputString + ".ks").
-						compileScript(inputString).
-						debugString("Running 0:" + inputString + ".ksm off the archive").
-						RUNPATH("0:KSM Files/" + inputString + ".ksm").
+					IF (connectionToKSC() AND ARCHIVE:EXISTS(inputString)) {
+						debugString("Running 0:" + inputString + " off the archive").
+						RUNPATH("0:" + inputString).
 						endScript().
 						SET commandValid TO TRUE.
 					}
