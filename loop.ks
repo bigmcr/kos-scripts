@@ -466,18 +466,18 @@ UNTIL done {
 						SET commandValid TO TRUE.
 					}
 					// if inputString is any of the orbital directions, turn to face that direction
-					IF inputString = "hold" 						{SET useMySteer TO TRUE. SAS OFF. SET mySteer TO SHIP:FACING. 																	SET commandValid TO TRUE. SET loopMessage TO "Steering held at current".} ELSE
-					IF inputString = "up" 							{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO LOOKDIRUP(SHIP:UP:VECTOR, -SHIP:NORTH:VECTOR). 								SET commandValid TO TRUE. SET loopMessage TO "Steering locked to up".} ELSE
-					IF inputString = "down" 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO -SHIP:UP:VECTOR. 																SET commandValid TO TRUE. SET loopMessage TO "Steering locked to down".} ELSE
-					IF inputString = "north" 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO SHIP:NORTH:VECTOR. 															SET commandValid TO TRUE. SET loopMessage TO "Steering locked to north".} ELSE
-					IF inputString = "south" 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO -(SHIP:NORTH:VECTOR). 														SET commandValid TO TRUE. SET loopMessage TO "Steering locked to south".} ELSE
-					IF inputString = "prograde" 					{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO SHIP:PROGRADE:VECTOR. 														SET commandValid TO TRUE. SET loopMessage TO "Steering locked to orbit prograde".} ELSE
-					IF inputString = "retrograde" 					{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO -(SHIP:PROGRADE:VECTOR). 														SET commandValid TO TRUE. SET loopMessage TO "Steering locked to orbit retrograde".} ELSE
-					IF inputString = "radialin" 					{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO VCRS(SHIP:PROGRADE:VECTOR, VCRS(SHIP:NORTH:VECTOR, SHIP:PROGRADE:VECTOR)). 	SET commandValid TO TRUE. SET loopMessage TO "Steering locked to radial in".} ELSE
-					IF inputString = "radialout" 					{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO VCRS(-SHIP:PROGRADE:VECTOR, VCRS(SHIP:NORTH:VECTOR, SHIP:PROGRADE:VECTOR)). 	SET commandValid TO TRUE. SET loopMessage TO "Steering locked to radial out".} ELSE
-					IF inputString = "normal" 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO VCRS(SHIP:VELOCITY:ORBIT, SHIP:BODY:POSITION). 									SET commandValid TO TRUE. SET loopMessage TO "Steering locked to normal".} ELSE
-					IF inputString = "antinormal" 					{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO -VCRS(SHIP:VELOCITY:ORBIT, SHIP:BODY:POSITION). 								SET commandValid TO TRUE. SET loopMessage TO "Steering locked to antinormal".} ELSE
-					IF inputString = "srfPrograde" OR inputString = "srfPro" 		{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO VELOCITY:SURFACE. 			SET commandValid TO TRUE. SET loopMessage TO "Steering locked to surface prograde".} ELSE
+					IF inputString = "hold" 						{SET useMySteer TO TRUE. SAS OFF. SET mySteer TO SHIP:FACING. 																																SET commandValid TO TRUE. SET loopMessage TO "Steering held at current".} ELSE
+					IF inputString = "up" 							{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO LOOKDIRUP(SHIP:UP:VECTOR, -SHIP:NORTH:VECTOR). 															SET commandValid TO TRUE. SET loopMessage TO "Steering locked to up".} ELSE
+					IF inputString = "down" 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO -SHIP:UP:VECTOR. 																														SET commandValid TO TRUE. SET loopMessage TO "Steering locked to down".} ELSE
+					IF inputString = "north" 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO SHIP:NORTH:VECTOR. 																													SET commandValid TO TRUE. SET loopMessage TO "Steering locked to north".} ELSE
+					IF inputString = "south" 						{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO -(SHIP:NORTH:VECTOR). 																											SET commandValid TO TRUE. SET loopMessage TO "Steering locked to south".} ELSE
+					IF inputString = "prograde" 				{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO SHIP:PROGRADE:VECTOR. 																											SET commandValid TO TRUE. SET loopMessage TO "Steering locked to orbit prograde".} ELSE
+					IF inputString = "retrograde" 			{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO -(SHIP:PROGRADE:VECTOR). 																										SET commandValid TO TRUE. SET loopMessage TO "Steering locked to orbit retrograde".} ELSE
+					IF inputString = "radialin" 				{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO VCRS(SHIP:PROGRADE:VECTOR, VCRS(SHIP:NORTH:VECTOR, SHIP:PROGRADE:VECTOR)). 	SET commandValid TO TRUE. SET loopMessage TO "Steering locked to radial in".} ELSE
+					IF inputString = "radialout" 				{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO VCRS(-SHIP:PROGRADE:VECTOR, VCRS(SHIP:NORTH:VECTOR, SHIP:PROGRADE:VECTOR)). SET commandValid TO TRUE. SET loopMessage TO "Steering locked to radial out".} ELSE
+					IF inputString = "normal" 					{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO VCRS(SHIP:VELOCITY:ORBIT, SHIP:BODY:POSITION). 															SET commandValid TO TRUE. SET loopMessage TO "Steering locked to normal".} ELSE
+					IF inputString = "antinormal" 			{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO -VCRS(SHIP:VELOCITY:ORBIT, SHIP:BODY:POSITION). 														SET commandValid TO TRUE. SET loopMessage TO "Steering locked to antinormal".} ELSE
+					IF inputString = "srfPrograde" OR inputString = "srfPro" 		{SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO VELOCITY:SURFACE. 																	SET commandValid TO TRUE. SET loopMessage TO "Steering locked to surface prograde".} ELSE
 					IF inputString = "srfRetrograde" OR inputString = "srfRetro" {
 							SET useMySteer TO TRUE.
 							SAS OFF.
