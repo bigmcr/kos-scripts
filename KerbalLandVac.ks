@@ -55,12 +55,6 @@ LOCAL pitchValue IS 0.
 LOCAL headingValue IS 90.
 LOCAL startTime IS 0.
 LOCAL startPosition IS SHIP:GEOPOSITION.
-LOCAL flatSpot IS SHIP:GEOPOSITION.
-LOCAL flatSpotDistancePrev IS -1.
-LOCAL coastDistance IS 0.
-LOCAL landingArrow TO VECDRAW(V(0,0,0), flatSpot:POSITION, BLUE, "Landing Direction", 1.0, FALSE, 0.2).
-LOCAL velocityArrow TO VECDRAW(V(0,0,0), flatSpot:POSITION, RED, "Velocity", 1.0, FALSE, 0.2).
-LOCAL aimingArrow TO VECDRAW(V(0,0,0), flatSpot:POSITION, GREEN, "Aiming", 1.0, FALSE, 0.2).
 LOCAL groundSlope TO 0.
 LOCAL groundSlopeHeading TO 0.
 LOCAL headerCreated IS FALSE.
@@ -69,10 +63,7 @@ LOCAL downslopeSpeedVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), RED, "Down Speed", 1.
 LOCAL sideSpeedVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), GREEN, "Side Speed", 1.0, FALSE, 0.2).
 LOCAL gravityAccel TO 0.
 LOCAL effectiveAccel TO 0.
-LOCAL minTimeToStop TO 0.
-LOCAL timeToFall TO 0.
 LOCAL downSlopeInfo IS LEXICON().
-LOCAL x_r TO 0.
 LOCAL downSlopeVector IS V(0,0,0).
 LOCAL downslopeDirection IS 0.
 LOCAL sideDirection IS 0.
@@ -81,7 +72,10 @@ LOCAL sideSpeed IS 0.
 LOCAL headingSteeringAdjust IS 0.
 LOCAL minPitch IS 70.
 
+AG1 OFF.
+
 LOCAL downslopeVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), YELLOW, "Down Slope Direction", 1.0, TRUE, 0.2).
+LOCAL downslopeDirectionVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Down Slope Compass", 1.0, TRUE, 0.2).
 
 UNTIL mode > 5 {
 	PRINT "Mode " + mode AT (40, 0).
@@ -96,17 +90,14 @@ UNTIL mode > 5 {
 	SET sideSpeed       TO VELOCITY:SURFACE * sideDirection.
 	SET velocityPitch   TO pitch_vector(-VELOCITY:SURFACE).
 
-	SET downslopeVecDraw:VEC TO downSlopeVector.
+	SET downslopeVecDraw:VEC TO 10*downSlopeVector.
+	SET downslopeDirectionVecDraw:VEC TO 10*SHIP:NORTH:VECTOR * ANGLEAXIS(groundSlopeHeading, UP:VECTOR).
 
 	IF (TIME:SECONDS <> oldTime) {
 		SET hAccel TO (GROUNDSPEED - oldHSpeed)/(TIME:SECONDS - oldTime).
 		SET vAccel TO (VERTICALSPEED - oldVSpeed)/(TIME:SECONDS - oldTime).
 		SET gravityAccel TO BODY:MU/(ALTITUDE + BODY:RADIUS)^2.
 		SET effectiveAccel TO shipInfo["Maximum"]["Accel"] - gravityAccel.
-		IF effectiveAccel <> 0 SET minTimeToStop TO VERTICALSPEED / effectiveAccel.
-		SET minTimeToStop TO -VERTICALSPEED / effectiveAccel.
-		SET x_r TO (SHIP:GEOPOSITION:TERRAINHEIGHT + SHIP:BODY:RADIUS) / (ALTITUDE + SHIP:GEOPOSITION:TERRAINHEIGHT + SHIP:BODY:RADIUS).
-		SET timeToFall TO ((CONSTANT:DegToRad*ARCCOS(SQRT(x_r))+((x_r)*(1-x_r)))/SQRT(2*BODY:MU))*(SHIP:GEOPOSITION:TERRAINHEIGHT + SHIP:BODY:RADIUS)^1.5.
 
 		PRINT "Horizontal Speed " + distanceToString(GROUNDSPEED, 2) + "/s     " AT (0, 0).
 		PRINT "Horizontal Acceleration " + distanceToString(hAccel, 2) + "/s^2    " AT (0, 1).
@@ -130,8 +121,6 @@ UNTIL mode > 5 {
 				SET message TO message + "Maximum Accel,".
 				SET message TO message + "Effective Accel,".
 				SET message TO message + "Gravity Accel,".
-				SET message TO message + "Min Time To Stop,".
-				SET message TO message + "Time to fall,".
 				SET message TO message + "Horizontal Speed,".
 				SET message TO message + "Horizontal Acceleration,".
 				SET message TO message + "Vertical Speed,".
@@ -154,8 +143,6 @@ UNTIL mode > 5 {
 			SET message TO message + "," + shipInfo["Maximum"]["Accel"].
 			SET message TO message + "," + effectiveAccel.
 			SET message TO message + "," + gravityAccel.
-			SET message TO message + "," + minTimeToStop.
-			SET message TO message + "," + timeToFall.
 			SET message TO message + "," + GROUNDSPEED.
 			SET message TO message + "," + hAccel.
 			SET message TO message + "," + VERTICALSPEED.
@@ -212,7 +199,9 @@ UNTIL mode > 5 {
 		PRINT "Slope = " + ROUND(groundSlope, 2) + "     " AT (40, 2).
 		PRINT "               " AT (40, 3).
 		PRINT "Slope < 5.0    " AT (40, 4).
-		SET T_PID:SETPOINT TO 0.0.
+		IF aboveGround < 1000 SET T_PID:SETPOINT TO 10.0.
+		ELSE IF aboveGround > 1250 SET T_PID:SETPOINT TO -10.0.
+		ELSE SET T_PID:SETPOINT TO 0.
 		SET H_PID:SETPOINT TO 10.0.
 
 	  SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
@@ -220,16 +209,16 @@ UNTIL mode > 5 {
 		ELSE SET headingSteeringAdjust TO 2 * sideSpeed.
 		IF headingSteeringAdjust > 30 SET headingSteeringAdjust TO 30.
 		IF headingSteeringAdjust < 30 SET headingSteeringAdjust TO -30.
-	  SET mySteer TO HEADING (groundSlopeHeading + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, downslopeSpeed)).
+	  SET mySteer TO HEADING (groundSlopeHeading + headingSteeringAdjust + 180, 90 - H_PID:UPDATE(TIME:SECONDS, downslopeSpeed)).
 
 		SET downslopeDirectionVecDraw:SHOW TO TRUE.
 		SET downslopeSpeedVecDraw:SHOW TO TRUE.
 		SET sideSpeedVecDraw:SHOW TO TRUE.
 	  SET downslopeDirectionVecDraw:VEC TO 10*HEADING(groundSlopeHeading, 0):VECTOR.
-	  SET downslopeSpeedVecDraw:VEC TO MIN(3, ABS(downslopeSpeed))*downslopeDirection.
-	  SET sideSpeedVecDraw:VEC TO MIN(3, ABS(sideSpeed))*sideDirection.
+	  SET downslopeSpeedVecDraw:VEC TO MIN(10, ABS(downslopeSpeed))*downslopeDirection.
+	  SET sideSpeedVecDraw:VEC TO MIN(10, ABS(sideSpeed))*sideDirection.
 
-		IF (aboveGround < 500 OR groundSlope < 5.0) advanceMode().
+		IF (aboveGround < 500 OR groundSlope < 0.0 OR AG1) advanceMode().
 	}
 	// Mode 4 - Maintain Vertical Speed at setpoint until height above ground is less than 2 meters
 	// Note that the steering is limited in patch based on height above ground. This cancels the last horizontal velocity

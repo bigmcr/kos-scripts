@@ -8,7 +8,7 @@ GLOBAL missionTimeOffset TO 0.					// Offset for MISSIONTIME to account for time
 GLOBAL g_0 IS 9.80665.               			// Gravitational acceleration constant (m/s²)
 GLOBAL augerList IS SHIP:PARTSTITLEDPATTERN("Auger").
 GLOBAL smelterList IS SHIP:PARTSTITLEDPATTERN("Smelter").
-GLOBAL minThrottle IS 0.
+GLOBAL minThrottle IS 0.2.
 GLOBAL facingVector   IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN SHIP:FACING:VECTOR * 10.}           , RED,   "                 Facing", 1).
 GLOBAL guidanceVector IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN STEERINGMANAGER:TARGET:VECTOR * 10.}, GREEN, "Guidance               ", 1).
 LOCAL shipInfoCurrentLoggingStarted IS FALSE.
@@ -686,14 +686,17 @@ FUNCTION heightPrediction {
 FUNCTION findDownSlopeInfo {
 	PARAMETER northOffset IS 0.0.
 	PARAMETER eastOffset IS 0.0.
-	LOCAL distance IS 5.0.
-	LOCAL terrainHeight IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distance*SHIP:NORTH:VECTOR + distance*east_for(SHIP)):TERRAINHEIGHT.
-	LOCAL heightNorth IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + northOffset)*SHIP:NORTH:VECTOR):TERRAINHEIGHT - terrainHeight.
-	LOCAL heightEast  IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + eastOffset )*   east_for(SHIP)):TERRAINHEIGHT - terrainHeight.
+	PARAMETER distance IS 0.5.
+	LOCAL terrainHeight IS                 SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (       0 + northOffset)*SHIP:NORTH:VECTOR + (       0 + eastOffset)*east_for(SHIP)):TERRAINHEIGHT.
+	LOCAL heightNorth   IS terrainHeight - SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + northOffset)*SHIP:NORTH:VECTOR + (       0 + eastOffset)*east_for(SHIP)):TERRAINHEIGHT.
+	LOCAL heightEast    IS terrainHeight - SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (       0 + northOffset)*SHIP:NORTH:VECTOR + (distance + eastOffset)*east_for(SHIP)):TERRAINHEIGHT.
 	LOCAL returnMe IS LEXICON().
-	returnMe:ADD("heading", ARCTAN2(heightNorth, heightEast) + 90).
-	returnMe:ADD("slope", ARCTAN2(V(heightNorth, heightEast, 0):MAG, V(distance + northOffset, distance + eastOffset, 0):MAG)).
-  returnMe:ADD("vector", 10*(SHIP:NORTH:VECTOR*ANGLEAXIS(-returnMe["slope"], east_for(ship)))*ANGLEAXIS(returnMe["heading"], SHIP:UP:VECTOR)).
+	returnMe:ADD("heading", ARCTAN2(heightNorth, heightEast)).
+	returnMe:ADD("slope", ARCTAN2(SQRT(heightNorth * heightNorth + heightEast * heightEast), distance)).
+  returnMe:ADD("vector", 1*(SHIP:NORTH:VECTOR*ANGLEAXIS(returnMe["slope"], east_for(ship)))*ANGLEAXIS(returnMe["heading"], SHIP:UP:VECTOR)).
+	returnMe:ADD("terrainHeight", terrainHeight).
+	returnMe:ADD("heightNorth", heightNorth).
+	returnMe:ADD("heightEast", heightEast).
 	RETURN returnMe.
 }
 
@@ -705,14 +708,12 @@ FUNCTION findDownSlopeInfo {
 FUNCTION findUpSlopeInfo {
 	PARAMETER northOffset IS 0.0.
 	PARAMETER eastOffset IS 0.0.
-	LOCAL distance IS 5.0.
-	LOCAL terrainHeight IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distance*SHIP:NORTH:VECTOR + distance*east_for(SHIP)):TERRAINHEIGHT.
-	LOCAL heightNorth IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + northOffset)*SHIP:NORTH:VECTOR):TERRAINHEIGHT - terrainHeight.
-	LOCAL heightEast  IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + eastOffset )*   east_for(SHIP)):TERRAINHEIGHT - terrainHeight.
+	PARAMETER distance IS 5.0.
+	LOCAL data IS findDownSlopeInfo(northOffset, eastOffset, distance).
 	LOCAL returnMe IS LEXICON().
-	returnMe:ADD("heading", ARCTAN2(heightNorth, heightEast) - 90).
-	returnMe:ADD("slope", ARCTAN2(V(heightNorth, heightEast, 0):MAG, V(distance + northOffset, distance + eastOffset, 0):MAG)).
-  returnMe:ADD("vector", 10*(SHIP:NORTH:VECTOR*ANGLEAXIS(-returnMe["slope"], east_for(ship)))*ANGLEAXIS(returnMe["heading"], SHIP:UP:VECTOR)).
+	returnMe:ADD("heading", data["heading"] + 180).
+	returnMe:ADD("slope", data["slope"]).
+	returnMe:ADD("vector", -data["vector"]).
 	RETURN returnMe.
 }
 
@@ -1801,7 +1802,7 @@ FUNCTION warpToTime
 }
 
 // Angle Difference
-// This function returns the angular distance between two angles, bound between [0, 180). All angles are in degrees.
+// This function returns the angular distance between two angles, bound between [-180, 180). All angles are in degrees.
 // Passed the following:
 //			angle 1 (scalar, degrees)
 //			angle 2 (scalar, degrees)
@@ -1811,7 +1812,7 @@ FUNCTION angleDifference
 {
 	PARAMETER angle1.
 	PARAMETER angle2.
-	RETURN ABS(MOD(angle1-angle2+180,360)-180).
+	RETURN MOD(ABS(angle1-angle2+180),360)-180.
 }
 
 // Time to Longitude
