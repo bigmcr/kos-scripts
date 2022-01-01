@@ -624,29 +624,30 @@ UNTIL done {
 						SET loopMessage TO "Part file created!".
 					} ELSE
 
-					IF inputstring = "Sun" {
-						// point toward the Sun, defined as the body that isn't orbiting something.
-						SET foundBody TO SHIP:BODY.
-						UNTIL NOT foundBody:HASBODY {
-							SET foundBody TO foundBody:BODY.
-						}
-						SET useMySteer TO TRUE.
-						SAS OFF.
-						LOCK mySteer TO LOOKDIRUP(foundBody:DIRECTION:VECTOR, SHIP:UP:VECTOR).
-						SET commandValid TO TRUE.
-						SET loopMessage TO "Steering locked to facing the " + foundBody:NAME.
-					} ELSE
-
 					// if inputString is "List Bodies", create and log to a file on the archive a list of all bodies and their properties.
 					IF inputString = "List bodies" {
 						LOG "Name,Description,Mass,Radius,Rotation Period,MU,SOI Radius" TO "Bodies.csv".
 						FOR bod in bodList {
-							IF (bod:NAME = "Sun" OR bod:NAME = "Kerbol") {LOG bod:NAME + "," + bod:DESCRIPTION:REPLACE(",","") + "," + bod:MASS + "," + bod:RADIUS + "," + bod:ROTATIONPERIOD + "," + bod:MU + ",infinite" TO "Bodies.csv".}
-							ELSE LOG bod:NAME + "," + bod:DESCRIPTION:REPLACE(",","") + "," + bod:MASS + "," + bod:RADIUS + "," + bod:ROTATIONPERIOD + "," + bod:MU + "," + bod:SOIRADIUS TO "Bodies.csv".
+							IF (bod:NAME = "Sun" OR bod:NAME = "Kerbol") {LOG bod:NAME + "," + bod:DESCRIPTION:REPLACE(",","") + "," + bod:MASS + "," + bod:RADIUS + "," + bod:ROTATIONPERIOD + "," + bod:MU + ",infinite" TO "0:Bodies.csv".}
+							ELSE LOG bod:NAME + "," + bod:DESCRIPTION:REPLACE(",","") + "," + bod:MASS + "," + bod:RADIUS + "," + bod:ROTATIONPERIOD + "," + bod:MU + "," + bod:SOIRADIUS TO "0:Bodies.csv".
 						}
 						SET commandValid TO TRUE.
 						SET loopMessage TO "Bodies.csv file created!".
-					} ELSE
+					}
+
+					SET foundBody TO -1.
+					FOR bod in bodList {
+						IF (inputString = bod:NAME) {
+							SET foundBody TO bod.
+						}
+					}
+					IF (foundBody <> -1) {
+						SET useMySteer TO TRUE.
+						SAS OFF.
+						LOCK mySteer TO LOOKDIRUP(foundBody:DIRECTION:VECTOR, SHIP:UP:VECTOR).
+						SET commandValid TO TRUE.
+						SET loopMessage TO "Steering locked to facing " + foundBody:NAME.
+					}
 
 					// if inputString is "body" point toward the body you are orbiting
 					IF inputString = "body" {SET useMySteer TO TRUE. SAS OFF. LOCK mySteer TO SHIP:BODY:DIRECTION. SET commandValid TO TRUE. SET loopMessage TO "Steering locked to facing " + SHIP:BODY:NAME.} ELSE
