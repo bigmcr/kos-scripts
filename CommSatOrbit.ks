@@ -51,7 +51,7 @@ FOR eachTarget IN possibleVessels {
 }
 
 // If this ship is already named to be in the constellation, don't rename it.
-IF (romanToNumber(SHIP:NAME:SUBSTRING(namePrefix:LENGTH, SHIP:NAME:LENGTH - namePrefix:LENGTH), -1) <> -1) {
+IF (SHIP:NAME:LENGTH > namePrefix:LENGTH) AND (romanToNumber(SHIP:NAME:SUBSTRING(namePrefix:LENGTH, SHIP:NAME:LENGTH - namePrefix:LENGTH), -1) <> -1) {
   SET thisSatNumber TO romanToNumber(SHIP:NAME:SUBSTRING(namePrefix:LENGTH, SHIP:NAME:LENGTH - namePrefix:LENGTH)).
 } ELSE {
   SET thisSatNumber TO foundSats + 1.
@@ -93,7 +93,7 @@ IF thisSatNumber <> 1 {
   LOCAL desiredPhaseOrbitSpeed IS SQRT(SHIP:BODY:MU * ( 2 / (POSITIONAT(SHIP, nodeTime) - SHIP:BODY:POSITION):MAG - 1 / phaseOrbitSMA)).
   LOCAL originalVAtBurn IS VELOCITYAT(SHIP, nodeTime):ORBIT.
   LOCAL desiredVAtBurn IS originalVAtBurn:NORMALIZED * desiredPhaseOrbitSpeed.
-  LOCAL deltaV IS desiredVAtBurn - originalVAtBurn.
+  LOCAL deltaV IS originalVAtBurn - desiredVAtBurn.
 
   IF timeChangeNeeded < 0 PRINT "Ship should move " + timeToString(-timeChangeNeeded) + " back in orbit".
   ELSE PRINT "Ship should move " + timeToString(timeChangeNeeded) + " forward in orbit".
@@ -149,10 +149,13 @@ IF thisSatNumber <> 1 {
     }
     PRINT "In final orbit".
     SET loopMessage TO SHIP:NAME + " is the " + thisSatNumber + " Comm Sat around " + SHIP:BODY:NAME.
+    AG1 OFF.
+
+    // Run the same script once again to see the results
+    RUNPATH("CommSatOrbit", constellationSize, visualize).
   }
   IF AG2 {
     SET loopMessage TO "CommSatOrbit calculations complete".
+    AG2 OFF.
   }
 }
-AG1 OFF.
-AG2 OFF.
