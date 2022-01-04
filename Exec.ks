@@ -139,14 +139,14 @@ IF errorCode = "None" {
 		logMe:ADD("ign_after_t_0,").				// 10
 		logMe:ADD("dV_before_t_0,").				// 11
 		logMe:ADD("t_burn_req,").					// 12
-		logMe:ADD("t_total," + t_total).
-		logMe:ADD("t_ign," + t_ign).
+		logMe:ADD("t_total," + t_total + ",s").
+		logMe:ADD("t_ign," + t_ign + ",s").
 		logMe:ADD("highestUsedStage," + highestUsedStage).
 		logMe:ADD("lowestUsedStage," + lowestUsedStage).
-		logMe:ADD("usedStages:LENGTH,"+usedStages:LENGTH).
-		logMe:ADD("a_i," + a_i).
-		logMe:ADD("a_f," + a_f).
-		logMe:ADD("dV_req," + dV_req).
+		logMe:ADD("usedStages:LENGTH,"+ usedStages:LENGTH).
+		logMe:ADD("a_i," + a_i + ",m/s^2").
+		logMe:ADD("a_f," + a_f + ",m/s^2").
+		logMe:ADD("dV_req," + dV_req + ",m/s").
 		FOR stageNumber IN RANGE(usedStages:LENGTH - 1, -1) {
 			SET logMe[0] TO logMe[0] + "Stage " + stageNumber + ",".
 			SET logMe[1] TO logMe[1] + Isp_stg[stageNumber] + ",".
@@ -171,7 +171,7 @@ IF errorCode = "None" {
 		SET logMe[7] TO logMe[7] + "kg/s,".
 		SET logMe[8] TO logMe[8] + "m/s,".
 		SET logMe[9] TO logMe[9] + "m/s,".
-//
+//  ign_after_t_0
 		SET logMe[11] TO logMe[11] + "m/s,".
 		SET logMe[12] TO logMe[12] + "m/s,".
 		FOR message IN logMe {
