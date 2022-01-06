@@ -2,10 +2,9 @@
 PARAMETER passedArgument IS "Apo".
 PARAMETER visualize IS FALSE.
 
-SET offset TO getOffset(passedArgument).
+LOCAL offset TO getOffset(passedArgument).
 
 LOCAL directions IS getOrbitDirectionsAt(offset, SHIP).
-
 SET directions["position"] TO directions["position"] - SHIP:BODY:POSITION.
 
 LOCAL desiredSpeed IS SQRT(SHIP:BODY:MU/directions["position"]:MAG).
