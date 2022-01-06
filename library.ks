@@ -1829,13 +1829,13 @@ FUNCTION timeToLongitude
 	RETURN TIME:SECONDS + angleDifference(SHIP:GEOPOSITION:LNG, desiredLongitude) / 360 * SHIP:BODY:ROTATIONPERIOD.
 }
 
-// Returns time in seconds to the next time SHIP crosses the input altitude or 0 if input altitude is never crossed
+// Returns time in seconds to the next time SHIP crosses the input altitude or -1 if input altitude is never crossed
 FUNCTION timeToAltitude
 {
   PARAMETER desiredAltitude.
 
   // return 0 if never reach altitude
-  IF desiredAltitude < SHIP:PERIAPSIS OR desiredAltitude > SHIP:APOAPSIS RETURN 0.
+  IF desiredAltitude < SHIP:PERIAPSIS OR desiredAltitude > SHIP:APOAPSIS RETURN -1.
 
   // query constants
   LOCAL ecc IS SHIP:ORBIT:ECCENTRICITY.
