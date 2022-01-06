@@ -1,5 +1,4 @@
 @LAZYGLOBAL OFF.
-CLEARSCREEN.
 
 PARAMETER desiredRelativeInclination IS 0.
 // Chosen Node can be "Highest" (default), "nearest", "farthest", "AN" or "DN"
@@ -39,6 +38,7 @@ LOCAL DNExists IS TRUE.
 
 LOCAL logFileName IS "0:incChange.csv".
 IF visualize AND connectionToKSC() {
+  CLEARSCREEN.
   IF EXISTS(logFileName) DELETEPATH(logFileName).
   LOG "Target's Orbit Normal Vector," + ROUNDV(VCRS(POSITIONAT(TARGET, TIME:SECONDS) - TARGET:BODY:POSITION, VELOCITYAT(TARGET, TIME:SECONDS):ORBIT):NORMALIZED, 11) TO logFileName.
   LOG "Body Angular Velocity Vector," + ROUNDV(SHIP:BODY:ANGULARVEL:NORMALIZED, 11) TO logFileName.
