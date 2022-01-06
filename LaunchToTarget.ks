@@ -3,25 +3,17 @@ PARAMETER waitPermission IS TRUE.
 
 CLEARSCREEN.
 
-PRINT "Select a target".
-
-UNTIL HASTARGET { WAIT 0.}
+RUNPATH("1:waitForTarget", 1.0).
 
 LOCAL inclinationModifier IS 1.
-// waitForTarget returns 1 or -1 depending on if we are approaching the ascending node or the descending node of the target.
-IF NOT SHIP:BODY:NAME = "Moon" {
-	IF waitPermission SET inclinationModifier TO waitForTarget(0.25).
-}
+IF distanceToTargetOrbitalPlane() < 0 SET inclinationModifier TO -1.
+
+PRINT "inclinationModifier set to " + inclinationModifier.
 
 LOCAL targetInclination IS TARGET:ORBIT:INCLINATION * inclinationModifier.
 LOCAL finalAltitude IS 30000.
-IF SHIP:BODY:ATM:EXISTS {
-	SET finalAltitude TO SHIP:BODY:ATM:HEIGHT - 10000.
-	RUNPATH("1:gravturnlaunch", targetInclination, TRUE, 10, finalAltitude).
-} ELSE {
-//	RUNPATH("1:VacLaunch", targetInclination, TRUE, 10, finalAltitude).
-	RUNPATH("1:gravturnlaunch", targetInclination, TRUE, 10, finalAltitude).
-}
+IF SHIP:BODY:ATM:EXISTS SET finalAltitude TO SHIP:BODY:ATM:HEIGHT - 5000.
+RUNPATH("1:gravturnlaunch", targetInclination, TRUE, 10, finalAltitude).
 
 // CLEARSCREEN.
 // PRINT "Now using the remaining fuel in the launch stage, and aiming prograde.".
