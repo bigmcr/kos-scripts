@@ -1,5 +1,4 @@
-CLEARSCREEN.
-
+@LAZYGLOBAL OFF.
 PARAMETER passedArgument IS "Apo".
 PARAMETER visualize IS FALSE.
 
@@ -17,6 +16,7 @@ LOCAL deltaV IS desiredVelocity - directions["velocity"].
 ADD NODE(TIME:SECONDS + offset, deltaV * directions["radial"], deltaV * directions["normal"], deltaV * directions["prograde"]).
 
 IF visualize {
+	CLEARSCREEN.
 	PRINT "Offset: " + timeToString(offset).
 	PRINT "Actual Speed: " + distanceToString(directions["velocity"]:MAG) + "/s".
 	PRINT "Desired Speed: " + distanceToString(desiredSpeed) + "/s".
