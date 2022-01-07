@@ -5,6 +5,7 @@ LOCAL localOrbit IS 0.
 IF HASTARGET SET localOrbit TO TARGET:ORBIT.
 ELSE SET localOrbit TO SHIP:ORBIT.
 
+IF HASTARGET PRINT "Data for target:".
 PRINT "Name " + localOrbit:NAME.
 PRINT "Apoapsis " + distanceToString(localOrbit:APOAPSIS, 4).
 PRINT "Periapsis " + distanceToString(localOrbit:PERIAPSIS, 4).
