@@ -300,9 +300,9 @@ UNTIL done {
 					} ELSE IF (inputStringList[0] = "node") {
 						// note that NODE has syntax of (radial, normal, prograde).
 						// this command rearranges that somewhat
-						IF inputStringList:LENGTH = 2 {ADD NODE(TIME:SECONDS + 60, 0, 0, inputStringList[1]:TONUMBER(0)).}
-						IF inputStringList:LENGTH = 3 {ADD NODE(TIME:SECONDS + 60, 0, inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
-						IF inputStringList:LENGTH = 4 {ADD NODE(TIME:SECONDS + 60, inputStringList[3]:TONUMBER(0), inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
+						IF inputStringList:LENGTH = 2 {ADD NODE(TIME:SECONDS +                              60,                              0,                              0, inputStringList[1]:TONUMBER(0)).}
+						IF inputStringList:LENGTH = 3 {ADD NODE(TIME:SECONDS +                              60,                              0, inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
+						IF inputStringList:LENGTH = 4 {ADD NODE(TIME:SECONDS +                              60, inputStringList[3]:TONUMBER(0), inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
 						IF inputStringList:LENGTH = 5 {ADD NODE(TIME:SECONDS + inputStringList[4]:TONUMBER(60), inputStringList[3]:TONUMBER(0), inputStringList[2]:TONUMBER(0), inputStringList[1]:TONUMBER(0)).}
 						SET loopMessage TO "Added a node".
 						SET commandValid TO TRUE.
