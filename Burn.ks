@@ -11,7 +11,8 @@ SET myThrottle TO throt.
 CLEARSCREEN.
 LOCAL startTime IS MISSIONTIME.
 UNTIL MISSIONTIME - startTime >= burnTime {
-	PRINT "There are " + timeToString(burnTime - (MISSIONTIME - startTime), 2) + " left in the burn     " AT (0,0).
+	PRINT "Time remaining in burn:" AT (0,0).
+	PRINT timeToString(burnTime - (MISSIONTIME - startTime), 2):PADLEFT(23) + "     " AT (0, 1). 
 	WAIT 0.
 }
 endScript().
