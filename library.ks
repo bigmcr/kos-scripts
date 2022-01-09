@@ -1585,21 +1585,10 @@ FUNCTION logPID
 	}
 	IF detailed {LOG timeSinceLaunch() + "," + PID:LastSampleTime + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output + "," + PID:PTerm + "," + PID:ITerm + "," + PID:DTerm + "," + PID:Kp + "," + PID:KI + "," + PID:Kd + "," + PID:MAXOUTPUT + "," + PID:MINOUTPUT TO filename.}
 	ELSE {LOG timeSinceLaunch() + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output TO filename.}
-	RETURN 0.
-}.
-
-// turn off all engines
-FUNCTION killEngines
-{
-	LOCAL myVariable TO LIST().
-	LIST ENGINES IN myVariable.
-	FOR eng IN myVariable {
-		IF (eng:IGNITION) { eng:SHUTDOWN(). }
-	}.
 }
 
-// Function that updates the stpred BOUNDS from the ship.
-// It should be called when the geometry of the ship changes.
+// Function that updates the stored BOUNDS from the ship.
+// It should be called when the geometry of the ship changes, and only then.
 FUNCTION updateBounds
 {
 	SET bounds TO SHIP:BOUNDS.
