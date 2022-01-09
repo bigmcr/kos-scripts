@@ -12,7 +12,7 @@ PRINT "inclinationModifier set to " + inclinationModifier.
 
 LOCAL targetInclination IS TARGET:ORBIT:INCLINATION * inclinationModifier.
 LOCAL finalAltitude IS 30000.
-IF SHIP:BODY:ATM:EXISTS SET finalAltitude TO SHIP:BODY:ATM:HEIGHT - 5000.
+IF SHIP:BODY:ATM:EXISTS SET finalAltitude TO SHIP:BODY:ATM:HEIGHT + 5000.
 RUNPATH("1:gravturnlaunch", targetInclination, TRUE, 10, finalAltitude).
 
 // CLEARSCREEN.
