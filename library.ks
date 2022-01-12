@@ -1449,6 +1449,7 @@ FUNCTION timeToString
 {
 	PARAMETER T IS 0.
 	PARAMETER digits IS 0.
+	PARAMETER padWithZeros IS FALSE.
 	LOCAL isNegative IS T < 0.
 	IF T < 0 SET T TO -T.
 
@@ -1465,12 +1466,20 @@ FUNCTION timeToString
 	IF digits > 0 SET seconds TO ROUND( MOD( T, 60), digits).
 	ELSE SET seconds TO ROUND( MOD( T, 60), 0).
 
+	LOCAL secondsString IS seconds:TOSTRING.
+	IF digits > 0 AND (secondsString:FINDLAST(".") <> -1) {
+		LOCAL firstPart IS secondsString:SUBSTRING(0, secondsString:FINDLAST(".") + 1).
+		LOCAL  lastPart IS secondsString:SUBSTRING(secondsString:FINDLAST(".") + 1, secondsString:LENGTH - 1 - secondsString:FINDLAST(".")):PADRIGHT(digits).
+		IF padWithZeros SET lastPart TO lastPart:REPLACE(" ","0").
+		SET secondsString TO firstPart + lastPart.
+	}
+
 	LOCAL firstSpace IS "".
 	IF isNegative SET message TO message + "-".
-	IF digits > -4 AND    days <> 0 {SET message TO message + firstSpace +    days + "d". SET firstSpace TO " ".}
-	IF digits > -3 AND   hours <> 0 {SET message TO message + firstSpace +   hours + "h". SET firstSpace TO " ".}
-	IF digits > -2 AND minutes <> 0 {SET message TO message + firstSpace + minutes + "m". SET firstSpace TO " ".}
-	IF digits > -1 AND seconds <> 0 {SET message TO message + firstSpace + seconds + "s". SET firstSpace TO " ".}
+	IF digits > -4 AND    days <> 0 {SET message TO message + firstSpace +          days + "d". SET firstSpace TO " ".}
+	IF digits > -3 AND   hours <> 0 {SET message TO message + firstSpace +         hours + "h". SET firstSpace TO " ".}
+	IF digits > -2 AND minutes <> 0 {SET message TO message + firstSpace +       minutes + "m". SET firstSpace TO " ".}
+	IF digits > -1 AND seconds <> 0 {SET message TO message + firstSpace + secondsString + "s". SET firstSpace TO " ".}
 
 	IF T = 0 SET message TO "0s".
 
@@ -1577,14 +1586,17 @@ FUNCTION logPID
 	PARAMETER filename IS "0:logfile.txt".
 	PARAMETER detailed IS TRUE.
 	PARAMETER number IS 0.
-	IF (initPIDLog:EMPTY OR NOT initPIDLog:CONTAINS(number))
-	{
-		IF detailed	{LOG "Time Since Launch,Last Sample Time,Input,Setpoint,Error,Output,P Term, I Term, D Term,Kp,Ki,Kd,Max Output,Min Output" TO filename. }
-		ELSE {LOG "Time Since Launch,Input,Setpoint,Error,Output" TO filename.}
-		initPIDLog:ADD(number).
+	LOCAL recordsToArchive IS filename:SUBSTRING(0, 1) = "0".
+	IF NOT recordsToArchive OR (recordsToArchive AND connectionToKSC()) {
+		IF (initPIDLog:EMPTY OR NOT initPIDLog:CONTAINS(number))
+		{
+			IF detailed	{LOG "Time Since Launch,Last Sample Time,Input,Setpoint,Error,Output,P Term, I Term, D Term,Kp,Ki,Kd,Max Output,Min Output" TO filename. }
+			ELSE {LOG "Time Since Launch,Input,Setpoint,Error,Output" TO filename.}
+			initPIDLog:ADD(number).
+		}
+		IF detailed {LOG timeSinceLaunch() + "," + PID:LastSampleTime + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output + "," + PID:PTerm + "," + PID:ITerm + "," + PID:DTerm + "," + PID:Kp + "," + PID:KI + "," + PID:Kd + "," + PID:MAXOUTPUT + "," + PID:MINOUTPUT TO filename.}
+		ELSE {LOG timeSinceLaunch() + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output TO filename.}
 	}
-	IF detailed {LOG timeSinceLaunch() + "," + PID:LastSampleTime + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output + "," + PID:PTerm + "," + PID:ITerm + "," + PID:DTerm + "," + PID:Kp + "," + PID:KI + "," + PID:Kd + "," + PID:MAXOUTPUT + "," + PID:MINOUTPUT TO filename.}
-	ELSE {LOG timeSinceLaunch() + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output TO filename.}
 }
 
 // Function that updates the stored BOUNDS from the ship.
