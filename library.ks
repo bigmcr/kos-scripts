@@ -362,7 +362,6 @@ FUNCTION logShipInfo {
 	CLEARSCREEN.
 	PRINT "Stage  Engines  Fuel Mass (kg)  Isp (s)  Delta V (m/s)".
 	PRINT deltaVDisplayList.
-	WAIT 5.
 }
 
 // Create Resource Log File Headers

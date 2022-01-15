@@ -606,6 +606,7 @@ UNTIL done {
 					IF inputString = "stageInfo" {
 						updateShipInfo().
 						logShipInfo().
+						WAIT 5.
 						SET commandValid TO TRUE.
 						SET loopMessage TO SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv has been created.".
 					} ELSE
