@@ -13,6 +13,7 @@ GLOBAL facingVector   IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN SH
 GLOBAL guidanceVector IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN STEERINGMANAGER:TARGET:VECTOR * 10.}, GREEN, "Guidance               ", 1).
 LOCAL shipInfoCurrentLoggingStarted IS FALSE.
 LOCAL logPhysicsTimeStamp IS 0.
+GLOBAL timeSinceLaunch IS 0.
 GLOBAL bounds IS SHIP:BOUNDS.
 CLEARVECDRAWS().
 
@@ -299,7 +300,8 @@ FUNCTION logShipInfo {
 					IF eachResource:NAME = f SET resourceDensity TO eachResource:DENSITY * 1000.
 				}
 			}
-			LOG ",," + f + "," + shipInfo["Stage " + stageNumber]["Resources"][f] + "," + (shipInfo["Stage " + stageNumber]["Resources"][f] / resourceDensity) TO fileName.
+			IF shipInfo["Stage " + stageNumber]["Resources"]:KEYS:CONTAINS(f) LOG ",," + f + "," + shipInfo["Stage " + stageNumber]["Resources"][f] + "," + (shipInfo["Stage " + stageNumber]["Resources"][f] / resourceDensity) TO fileName.
+			ELSE LOG ",," + f + ",0,0" TO fileName.
 		}
 		LOG ",FuelMass," + shipInfo["Stage " + stageNumber]["FuelMass"] + ",kg" TO fileName.
 		LOG ",Resource Mass," + shipInfo["Stage " + stageNumber]["resourceMass"] + ",kg" TO fileName.
@@ -1552,7 +1554,8 @@ FUNCTION printOrbit
 	PRINT orbName AT(Xcoord, Ycoord + 0).
 	PRINT "Apoapsis " + ROUND(orb:APOAPSIS, 2) + " m   " AT(Xcoord, Ycoord + 1).
 	PRINT "Periapsis " + ROUND(orb:PERIAPSIS, 2) + " m  " AT(Xcoord, Ycoord + 2).
-	PRINT "Period " + timeToString(orb:PERIOD) + "    " AT(Xcoord, Ycoord + 3).
+	IF orb:ECCENTRICITY < 1.0 PRINT "Period " + timeToString(orb:PERIOD) + "    " AT(Xcoord, Ycoord + 3).
+	ELSE PRINT "Period not defined    " AT(Xcoord, Ycoord + 3).
 	PRINT "Inclination " + ROUND(orb:INCLINATION, 4) + " degrees   " AT(Xcoord, Ycoord + 4).
 	PRINT "Eccentricity " + ROUND(orb:ECCENTRICITY, 4) + "   " AT(Xcoord, Ycoord + 5).
 	PRINT "Semi-Major Axis " + ROUND(orb:SEMIMAJORAXIS, 2) + "  " AT(Xcoord, Ycoord + 6).
@@ -1776,8 +1779,19 @@ FUNCTION warpToTime
 	}
 	// if the target doesn't have any interruptions, warp to it.
 	ELSE {
+		LOCAL startPower IS 0.
+		LOCAL RESLIST IS 0.
+		LIST RESOURCES IN RESLIST.
+		FOR RES IN RESLIST {
+			IF RES:NAME = "ElectricCharge" SET startPower TO RES:AMOUNT/RES:CAPACITY.
+		}
+		LOCAL currentPower IS 1.
 		// continue waiting until there is five seconds or less of real time remaining
 		UNTIL (timeLeft < 0.5) AND (KUNIVERSE:TIMEWARP:RATE = 1) {
+			LIST RESOURCES IN RESLIST.
+			FOR RES IN RESLIST {
+				IF RES:NAME = "ElectricCharge" SET currentPower TO RES:AMOUNT/RES:CAPACITY.
+			}
 			// if the rate is still changing, do nothing
 			IF KUNIVERSE:TIMEWARP:ISSETTLED {
 				// calculate how long it will take to get to the target value in real-world seconds
@@ -1789,7 +1803,9 @@ FUNCTION warpToTime
 				}
 
 				// warp faster, if not at max rate - this assumes that the next rate is 10x faster than the current rate
-				IF (timeLeft > 15) AND (KUNIVERSE:TIMEWARP:WARP <> KUNIVERSE:TimeWarp:RAILSRATELIST:LENGTH - 1) {
+				IF (timeLeft > 15) AND
+				(KUNIVERSE:TIMEWARP:WARP <> KUNIVERSE:TimeWarp:RAILSRATELIST:LENGTH - 1) AND
+				(currentPower > 0.2 * startPower) {
 					SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP + 1.
 				}
 			}
