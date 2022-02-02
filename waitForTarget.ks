@@ -1,3 +1,4 @@
+@LAZYGLOBAL OFF.
 CLEARSCREEN.
 PARAMETER offset IS 5.
 
@@ -18,11 +19,22 @@ FUNCTION helperFunction
 	LOCAL distanceRate IS 1.
 	LOCAL realTimeLeft IS 10.
 	LOCAL completedScans IS 0.
+	LOCAL startPower IS 0.
+	LOCAL RESLIST IS 0.
+	LIST RESOURCES IN RESLIST.
+	FOR RES IN RESLIST {
+		IF RES:NAME = "ElectricCharge" SET startPower TO RES:AMOUNT/RES:CAPACITY.
+	}
+	LOCAL currentPower IS 1.
 //	LOG "Time,Old Time,New Distance,Old Distance,distanceToTargetOrbitalPlane Rate,Real Time Left" TO "0:Warping.csv".
 //	LOG "s,s,km,km,km/s,s" TO "0:Warping.csv".
 
 	// continue waiting until there is five seconds or less of real time remaining, or the distanceToTargetOrbitalPlane is less than the target Distance
 	UNTIL ((realTimeLeft < 5) AND (KUNIVERSE:TIMEWARP:RATE = 1)) AND newTime > startTime + 10 {
+		LIST RESOURCES IN RESLIST.
+		FOR RES IN RESLIST {
+			IF RES:NAME = "ElectricCharge" SET currentPower TO RES:AMOUNT/RES:CAPACITY.
+		}
 		// if the rate is still changing, do nothing
 		IF KUNIVERSE:TIMEWARP:ISSETTLED {
 			SET newTime TO TIME:SECONDS.
@@ -51,12 +63,15 @@ FUNCTION helperFunction
 			}
 
 			// warp slower, if not at min rate
-			IF (realTimeLeft < 2) AND (KUNIVERSE:TIMEWARP:RATE <> 1) {
+			IF (realTimeLeft < 3) AND (KUNIVERSE:TIMEWARP:RATE <> 1) {
 				SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP - 1.
 			}
 
 			// warp faster, if not at max rate - this assumes that the next rate is 10x faster than the current rate
-			IF (realTimeLeft > 15) AND (KUNIVERSE:TIMEWARP:WARP <> KUNIVERSE:TimeWarp:RAILSRATELIST:LENGTH - 1) AND (KUNIVERSE:TIMEWARP:RATE <> maxWarpRate) {
+			IF (realTimeLeft > 20) AND
+				(KUNIVERSE:TIMEWARP:WARP <> KUNIVERSE:TimeWarp:RAILSRATELIST:LENGTH - 1) AND
+				(KUNIVERSE:TIMEWARP:RATE <> maxWarpRate) AND
+				(currentPower > 0.2 * startPower) {
 				SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP + 1.
 			}
 
@@ -67,11 +82,12 @@ FUNCTION helperFunction
 			SET oldTime TO newTime.
 			SET completedScans TO completedScans + 1.
 		}
-		PRINT "Completed Scans: " + completedScans + "       " AT (0, 19).
-		PRINT "Speed Toward Plane " + distanceToString(distanceRate * 1000, 1) + "/s   " AT (0, 20).
-		PRINT "Real Time Left " + timeToString(realTimeLeft, 2) + " s     " AT (0, 21).
-		PRINT "Real Time Rate " + ROUND(KUNIVERSE:TIMEWARP:RATE, 2) + " s/s   " AT (0, 22).
-		PRINT "Distance from Plane " + distanceToString(newDistance * 1000, 1) + "    " AT (0, 23).
+		PRINT "Current Power: " + ROUND(currentPower*100, 2) + "%       "  							      AT (0, 18).
+		PRINT "Completed Scans: " + completedScans + "       " 													      AT (0, 19).
+		PRINT "Speed Relative to Plane " + distanceToString(distanceRate * 1000, 1) + "/s   " AT (0, 20).
+		PRINT "Distance from Plane " + distanceToString(newDistance * 1000, 1) + "    "  			AT (0, 21).
+		PRINT "Real Time Left " + timeToString(realTimeLeft, 2) + " s     "              			AT (0, 22).
+		PRINT "Real Time Rate " + ROUND(KUNIVERSE:TIMEWARP:RATE, 2) + " s/s   "          			AT (0, 23).
 		WAIT 0.
 	}
 
