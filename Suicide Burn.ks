@@ -1,65 +1,184 @@
 @LAZYGLOBAL OFF.
+PARAMETER margin IS 10.
+PARAMETER useVelocity IS TRUE.
+LOCAL burnInfo IS SuicideBurnInfo().
+LOCAL aboveGround IS heightAboveGround().
+LOCAL burnStartTime IS 0.
+LOCAL RTTimeToBurn IS 0.
+IF useVelocity SET margin TO 1.
+
+// List of constants to apply to a polynomial to correct the burn distance.
+// Empirically derived based on testing on the Moon, in RSS.
+// Might well need changes based on planet's local g value.
+// For f(x) = ax^2+bx+b,                        c,           b,           a
+LOCAL burnDistanceCorrections IS LIST(-23.9625505, 1.033597489, 8.32543E-07).
+
+LOCAL T_PID_Spd IS PIDLOOP(0.3, 0.1, 0.1, 0, 1).			// PID loop to control trottle during vertical descent phase
+
+updateShipInfo().
+
+SAS OFF.
+RCS OFF.
+SET useMyThrottle TO true.
+SET useMySteer TO true.
+SET mySteer TO -VELOCITY:SURFACE.
+LOCAL mode IS 0.
+LOCAL currentMargin IS 0.
+LOCAL requiredVerticalVelocity IS 0.
+LOCAL recordedData IS LEXICON().
+recordedData:ADD("Apoapsis", APOAPSIS).
+recordedData:ADD("Start TWR", shipInfo["Maximum"]["TWR"]).
+recordedData:ADD("End TWR", 0).
+recordedData:ADD("Start Altitude", 0).
+recordedData:ADD("End Altitude", 0).
+recordedData:ADD("Burn Time", 0).
+recordedData:ADD("Burn Distance", 0).
+recordedData:ADD("Safety Margin", margin).
+
+FUNCTION advanceMode {
+	SET mode TO mode + 1.
+}
+
+// When we are close to landing, prep the craft and stop time warp
+WHEN aboveGround < 1000 THEN {
+	GEAR ON.
+	PANELS OFF.
+	LIGHTS ON.
+	KUNIVERSE:TIMEWARP:CANCELWARP().
+}
+
 CLEARSCREEN.
-GLOBAL pitchPID TO PIDLOOP(2, 0.3, 0, -1, 1).
-LOCK STEERING TO -VELOCITY:SURFACE.
+//LOCAL startTime IS MISSIONTIME.
+//IF EXISTS("0:altitude.csv") DELETEPATH("0:altitude.csv").
+//IF connectionToKSC() LOG "Time,mode,Altitude,Height Above Ground,Vertical Speed,Horizontal Speed,Ground Speed Magnitude,Pitch,Thrust,Mass,Suicide Burn Distance," +
+//												 "Suicide Burn Time,Suicide Burn Delta V,Warp Rate,Warp Type,Throttle,RTTimeToBurn,Required Vertical Velocity" TO "0:altitude.csv".
+//FUNCTION logInfo {
+//	LOCAL message IS "".
+//	SET message TO message + (missionTime - startTime).
+//	SET message TO message + "," + mode.
+//	SET message TO message + "," + ALTITUDE.
+//	SET message TO message + "," + aboveGround.
+//	SET message TO message + "," + VERTICALSPEED.
+//	SET message TO message + "," + GROUNDSPEED.
+//	IF VERTICALSPEED < 0 SET message TO message + "," + -VELOCITY:SURFACE:MAG.
+//	ELSE                 SET message TO message + "," +  VELOCITY:SURFACE:MAG.
+//	SET message TO message + "," + pitch_for(SHIP).
+//	SET message TO message + "," + shipInfo["Current"]["Thrust"]..
+//	SET message TO message + "," + MASS * 1000.
+//	SET message TO message + "," + burnInfo["distance"].
+//	SET message TO message + "," + burnInfo["time"].
+//	SET message TO message + "," + burnInfo["deltaV"].
+//	SET message TO message + "," + KUNIVERSE:TIMEWARP:RATE.
+//	SET message TO message + "," + KUNIVERSE:TIMEWARP:MODE.
+//	SET message TO message + "," + THROTTLE.
+//	SET message TO message + "," + RTTimeToBurn.
+//	SET message TO message + "," + requiredVerticalVelocity.
+//	IF connectionToKSC() LOG message TO "0:altitude.csv".
+//}
 
-LOCAL myVariable TO LIST().
-LIST ENGINES IN myVariable.
-LOCAL TWR IS 1.
-LOCAL thrust is myVariable[0]:MAXTHRUST.
-LOCAL ISP is myVariable[0]:VACUUMISP.
-LOCAL t IS 1.
-LOCAL MMHUse IS 6.5787.
-LOCAL NTOUse IS 10.8262.
-LOCAL MMHAmount IS 0.
-LOCAL NTOAmount IS 0.
+UNTIL mode > 3 {
+	updateShipInfoCurrent().
+	SET burnInfo TO SuicideBurnInfo().
+	SET aboveGround TO heightAboveGround().
+	SET currentMargin TO aboveground - evaluatePolynomial(burnInfo["distance"], burnDistanceCorrections) - margin.
+	// If we are using the partial version, overestimate the distance it takes to stop.
+	// Adding 1/9 of the burn distance should result in ~90% throttle during most of the burn.
+	IF useVelocity SET currentMargin TO currentMargin - burnInfo["distance"] / 9.
+	LOCAL v_e IS shipInfo["CurrentStage"]["Isp"] * g_0.
+	LOCAL m_dot IS shipInfo["Maximum"]["mDot"].
+	LOCAL m_i IS SHIP:MASS * 1000.
+	LOCAL t IS burnInfo["time"].
+	LOCAL x_i IS aboveGround.
+	LOCAL x_f IS margin.
+	LOCAL g_avg IS burnInfo["g_avg"].
+	SET requiredVerticalVelocity TO 0.9*((x_f - v_e*(t - m_i/m_dot)*LN(m_i/(m_i - m_dot*t)) - x_i)/t - v_e + g_avg * t / 2.0).
 
-SET t TO 1.
-LOCAL resList IS STAGE:RESOURCES.
-FOR res IN resList {
-	IF RES:NAME = "MMH" { SET MMHAmount TO RES:AMOUNT.}
-	IF RES:NAME = "NTO" { SET NTOAmount TO RES:AMOUNT.}
-}
-SET t TO MIN (MMHAmount / MMHUse, NTOAmount / NTOUse).
-LOCAL g0 IS BODY("Earth"):MU / ((BODY("Earth"):RADIUS)^2).
-LOCAL g IS SHIP:BODY:MU / ((ALTITUDE + SHIP:BODY:RADIUS)^2).
-LOCAL v0 IS SHIP:VELOCITY:ORBIT:MAG.
-LOCAL m0 IS SHIP:MASS*1000.
-LOCAL equation IS ALT:RADAR + 10.
-LOG "MET,g,m0,t,v0,TWR,equation,ALT:RADAR,ALTITUDE,MMH Amount,MMH Time,NTO Amount,NTO Time" TO "SuicideBurn.csv".
-
-UNTIL FALSE {
-	SET g TO SHIP:BODY:MU / ((ALTITUDE + SHIP:BODY:RADIUS)^2).
-	SET v0 TO SHIP:VELOCITY:ORBIT:MAG.
-	SET m0 TO SHIP:MASS * 1000.
-	SET TWR TO SHIP:MAXTHRUST / g.
-	SET resList TO STAGE:RESOURCES.
-	FOR res IN resList {
-		IF RES:NAME = "MMH" { SET MMHAmount TO RES:AMOUNT.}
-		IF RES:NAME = "NTO" { SET NTOAmount TO RES:AMOUNT.}
+	SET RTTimeToBurn TO currentMargin/(-VERTICALSPEED*KUNIVERSE:TIMEWARP:RATE).
+	IF useVelocity logPID(T_PID_Spd, "0:T_PID_Spd logfile.csv", TRUE, 2).
+	IF VERTICALSPEED > 0 {
+		SET RTTimeToBurn TO 10.
+		PRINT "SB Mode: " + mode + "    Real Time to Burn: NA     " AT (0, 0).
+	} ELSE {
+		PRINT "SB Mode: " + mode + "    Real Time to Burn: " + timeToString(RTTimeToBurn) + "     " AT (0, 0).
 	}
-	SET t TO MIN (MMHAmount / MMHUse, NTOAmount / NTOUse).
-	SET equation TO (Isp*t)/g0 + (g*t^2)/2 + t*V0 + (m0*Isp^2*LN(m0*Isp - thrust*g0*t))/(thrust*g0^2).
-	PRINT "g is " + ROUND(g, 4) + "      " AT (0, 5).
-	PRINT "m0 is " + ROUND(m0, 4) + "      " AT (0, 6).
-	PRINT "t is " + ROUND(t, 4) + "      " AT (0, 7).
-	PRINT "v0 is " + ROUND(v0, 4) + "      " AT (0, 8).
-	PRINT "TWR is " + ROUND(TWR, 4) + "      " AT (0, 9).
-	PRINT "Equation is " + ROUND(equation, 2) + "     " AT (0, 10).
-	PRINT "Radar Altitude is " + ROUND(ALT:RADAR, 2) + "     " AT (0, 11).
-	PRINT "Pure Altitude is " + ROUND(ALTITUDE, 2) + "     " AT (0, 12).
-	PRINT "There is " + ROUND(MMHAmount, 2) + ", or " + ROUND(MMHAmount / MMHUse, 2) + " second's worth of MMH   " AT (0, 16).
-	PRINT "There is " + ROUND(NTOAmount, 2) + ", or " + ROUND(NTOAmount / NTOUse, 2) + " second's worth of NTO   " AT (0, 17).
-	
-	LOG MISSIONTIME + "," + g + "," + m0 + "," + t + "," + v0 + "," + TWR + "," + equation + "," + ALT:RADAR + "," + ALTITUDE + "," + MMHAmount + "," + MMHAmount / MMHUse + "," + NTOAmount + "," + NTOAmount / NTOUse TO "SuicideBurn.csv".
+	PRINT "           Suicide Burn      Available        " AT (0, 1).
+	PRINT "Distance:  " + ROUND(burnInfo["distance"]):TOSTRING:PADLEFT(12) + ROUND(aboveGround):TOSTRING:PADLEFT(15) + " m       " AT (0, 2).
+	PRINT "Time:      " + ROUND(burnInfo["time"]):TOSTRING:PADLEFT(12) + ROUND(ABS(aboveGround/VERTICALSPEED)):TOSTRING:PADLEFT(15) +     " s       " AT (0, 3).
+	PRINT "Delta V:   " + ROUND(burnInfo["deltaV"]):TOSTRING:PADLEFT(12) + ROUND(shipInfo["CurrentStage"]["DeltaV"]):TOSTRING:PADLEFT(15) +   " m/s     " AT (0, 4).
+//	logInfo().
 
+	IF recordedData["Apoapsis"] < APOAPSIS SET recordedData["Apoapsis"] TO APOAPSIS.
+
+	// coast to close to ignition time. (within 1 second at current velocity)
+	IF mode = 0 {
+		SET mySteer TO -VELOCITY:SURFACE.
+		IF VERTICALSPEED < 0 AND KUNIVERSE:TIMEWARP:ISSETTLED AND KUNIVERSE:TIMEWARP:RATE <> 0 AND RTTimeToBurn < 10 SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP - 1.
+		IF RTTimeToBurn < 10 AND VERTICALSPEED < -10 AND KUNIVERSE:TIMEWARP:RATE = 1 {
+			SET KUNIVERSE:timewarp:warp TO 0.
+			SET KUNIVERSE:timewarp:mode TO "PHYSICS".
+			advanceMode().
+		}
+	}
+	// wait for ignition time.
+	IF mode = 1 {
+		IF (GROUNDSPEED < 0.25) SET mySteer TO SHIP:UP:VECTOR.
+		ELSE SET mySteer TO -VELOCITY:SURFACE.
+		IF KUNIVERSE:TimeWarp:WARP <> 0 {
+			SET KUNIVERSE:timewarp:mode TO "PHYSICS".
+			SET KUNIVERSE:timewarp:warp TO 0.
+		}
+		IF currentMargin < 0.0 OR useVelocity AND (VERTICALSPEED) {
+			advanceMode().
+			SET recordedData["Burn Time"] TO burnInfo["time"].
+			SET recordedData["Burn Distance"] TO burnInfo["distance"].
+			SET recordedData["Start Altitude"] TO aboveGround.
+			SET burnStartTime TO MISSIONTIME.
+			IF useVelocity T_PID_Spd:RESET().
+			IF KUNIVERSE:TimeWarp:WARP <> physicsWarpPerm {
+				SET KUNIVERSE:timewarp:mode TO "PHYSICS".
+				SET KUNIVERSE:timewarp:warp TO physicsWarpPerm.
+			}
+		}
+	}
+	// suicide burn
+	IF mode = 2 {
+		IF useVelocity {
+			SET T_PID_Spd:SETPOINT TO requiredVerticalVelocity.
+			IF VERTICALSPEED < 0 SET myThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, -VELOCITY:SURFACE:MAG).
+			ELSE                 SET myThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, VELOCITY:SURFACE:MAG).
+		} ELSE SET myThrottle TO 1.
+		IF (GROUNDSPEED < 0.1) SET mySteer TO SHIP:UP:VECTOR.
+		ELSE SET mySteer TO -VELOCITY:SURFACE.
+		PRINT "Time remaining in burn:" AT (0, 5).
+		PRINT timeToString(recordedData["Burn Time"] - (MISSIONTIME - burnStartTime), 2):PADLEFT(23) + "     " AT (0, 6).
+		IF VERTICALSPEED > 0 OR aboveGround < 0.5 OR (NOT useVelocity AND ABS(recordedData["Burn Time"] - (MISSIONTIME - burnStartTime)) < 0.1) {
+			advanceMode().
+			SET recordedData["End TWR"] TO shipInfo["Maximum"]["TWR"].
+			SET recordedData["End Altitude"] TO aboveGround.
+			IF connectionToKSC() LOG "" + recordedData["Apoapsis"] + "," + recordedData["Start TWR"] + "," + recordedData["End TWR"] +
+			                         "," + recordedData["Start Altitude"] + "," + recordedData["End Altitude"] + "," + recordedData["Burn Time"] +
+															 "," + recordedData["Burn Distance"] + "," + recordedData["Safety Margin"] + "," + SHIP:GEOPOSITION:TERRAINHEIGHT +
+															 "," + BODY:NAME + "," + useVelocity TO "0:suicideBurnCalcs.csv".
+			SET myThrottle TO 0.
+			WAIT 0.
+		}
+	}
+	// constant speed descent
+	IF mode = 3 {
+		IF useVelocity advanceMode().
+		IF aboveGround > 5 SET T_PID_Spd:SETPOINT TO -1.
+		IF aboveGround > 50 SET T_PID_Spd:SETPOINT TO -10.
+		IF aboveGround > 500 SET T_PID_Spd:SETPOINT TO -25.
+		IF aboveGround > 1000 SET T_PID_Spd:SETPOINT TO -50.
+		PRINT "Verical Velocity Setpoint: " + ROUND(T_PID_Spd:SETPOINT, 2) AT (0, 6).
+		SET myThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, VERTICALSPEED).
+		IF (GROUNDSPEED < 0.1) SET mySteer TO SHIP:UP:VECTOR.
+		ELSE SET mySteer TO -VELOCITY:SURFACE.
+		IF aboveGround < 0.5 advanceMode().
+	}
 }
-// use RCS to settle any ullage concerns.
-RCS ON. 
-SET SHIP:CONTROL:FORE TO 1.0.
-SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
-
-PRINT "Ullage starting".
+SET mySteer TO HEADING(90, 90).
+SET myThrottle TO 0.
 WAIT 5.
-
-LOCK THROTTLE TO 1.
+PANELS ON.
+SET loopMessage TO "SB Ended: " + distanceToString(recordedData["End Altitude"]) + " above ground".
