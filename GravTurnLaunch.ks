@@ -30,12 +30,13 @@ LOCAL mode IS 0.
 // Mode 6 - Maintain vertical speed of 0 m/s
 
 LOCAL yawValue IS 0.										// yaw adjustment factor for inclination tuning
-LOCAL PITCH_PID IS PIDLOOP(0.1, 0.25, 0.5).	// PID loop to control pitch
+LOCAL PITCH_PID IS PIDLOOP(2.0, 0.25, 2.0).	// PID loop to control pitch
 LOCAL YAW_PID IS PIDLOOP(1, 0.1, 50).		// PID loop to control yaw
 LOCAL gravTurnStart TO 1000.						// The altitude of the start of the gravity turn
 LOCAL gravTurnExponent TO 0.740740741.	// The exponent used in the calculation of the gravity turn
 LOCAL endMessage IS "Blank".						// Used to determine the reason for exiting the loop
 LOCAL engineList IS LIST().							// Used to list all of the engines for staging
+LOCAL pitchValue IS 0.									// Used for calculating the desired pitch of the craft
 
 LOCAL body_g IS CONSTANT:G * SHIP:BODY:MASS/(SHIP:BODY:RADIUS * SHIP:BODY:RADIUS).
 
@@ -67,6 +68,8 @@ WHEN PERIAPSIS > 0 AND physicsWarpPerm THEN {
 }
 
 LOCAL modeStartYaw TO launchAzimuth.
+
+//LOG "Time,Mode,Stage,Mass (kg),Actual Pitch (deg),Prograde Pitch (deg),Pitch Value (deg),Horizontal Speed (m/s),Current Accel (m/s^2),Centripital Accel (m/s^2),Altitude (m),Local g (m/s^2),Vertical Accel Req'd (m/s^2),Required Pitch (deg),Vertical Speed (m/s)" TO "0:pitchCalcs.csv".
 
 // whenever the mode changes, initialize things for the new mode.
 ON mode {
@@ -120,7 +123,7 @@ ON mode {
 	// Maintain vertical speed
 	IF mode = 6 {
 		PRINT "V Speed      " AT (40, 1).
-		PRINT "Setpoint = " + ROUND(PITCH_PID:SETPOINT) + "   " AT (40, 2).
+		PRINT "Setpoint = " + distanceToString(PITCH_PID:SETPOINT) + "   " AT (40, 2).
 		PRINT "             " AT (40, 3).
 		activateOmniAntennae().
 	}
@@ -128,7 +131,20 @@ ON mode {
 	RETURN TRUE.
 }
 
+LOCAL centripitalAccel IS 0.
+LOCAL local_g IS 0.
+LOCAL required_vertical_accel IS 0.
+LOCAL accelRatios IS 0.
+
 UNTIL mode > 6 {
+	SET centripitalAccel TO GROUNDSPEED^2/(ALTITUDE + SHIP:BODY:RADIUS).
+	SET local_g TO SHIP:BODY:MU/(ALTITUDE + SHIP:BODY:RADIUS)^2.
+	SET required_vertical_accel TO local_g - centripitalAccel.
+	IF (shipInfo["Current"]["Accel"] <> 0) SET accelRatios TO required_vertical_accel / shipInfo["Current"]["Accel"].
+	IF accelRatios > SIN(85) SET accelRatios TO SIN(85).
+	IF accelRatios < 0 SET accelRatios TO 0.
+//	LOG MISSIONTIME + "," + mode + "," + (shipInfo["NumberOfStages"] - 1) + "," + SHIP:MASS*1000 + "," + (90 - vang(SHIP:UP:VECTOR, SHIP:FACING:FOREVECTOR)) + "," + (90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE)) + "," + pitchValue + "," + GROUNDSPEED + "," +
+//			shipInfo["Current"]["Accel"] + "," + centripitalAccel + "," + ALTITUDE + "," + local_g + "," + required_vertical_accel + "," + ARCSIN(accelRatios) + "," + VERTICALSPEED TO "0:pitchCalcs.csv".
 	engineInfo(0, 20, TRUE).
 	// Prelaunch - stage the LF engines
 	IF mode = 0 {
@@ -139,8 +155,9 @@ UNTIL mode > 6 {
 
 	// Engine ramp up
 	IF mode = 1 {
+		SET pitchValue TO 90.
 		// if the active engines have reached full thrust, stage and switch modes
-		SET mySteer TO HEADING(0, 90).
+		SET mySteer TO HEADING(0, pitchValue).
 		IF isLFFullThrust() {
 			SET mode TO 2.
 			stageFunction().
@@ -149,7 +166,8 @@ UNTIL mode > 6 {
 
 	// Vertical climb
 	IF mode = 2 {
-		SET mySteer TO HEADING(0, 90).
+		SET pitchValue TO 90.
+		SET mySteer TO HEADING(0, pitchValue).
 		IF ALT:RADAR > 100 {
 			SET gravTurnStart TO ALTITUDE.
 
@@ -167,7 +185,8 @@ UNTIL mode > 6 {
 
 	// Roll, continue climb
 	IF mode = 3 {
-		SET mySteer TO HEADING(launchAzimuth,90).
+		SET pitchValue TO 90.
+		SET mySteer TO HEADING(launchAzimuth,pitchValue).
 		IF ALT:RADAR > 500 {
 			PITCH_PID:RESET().
 			SET PITCH_PID:MAXOUTPUT TO maxAOA.
@@ -200,16 +219,18 @@ UNTIL mode > 6 {
 	IF (mode >= 4) {
 		updateShipInfoCurrent(FALSE).
 		IF debug {
-			PRINT "Pitch Setpoint " + ROUND ( PITCH_PID:SETPOINT, 2) + "    " AT(0, 5).
+			IF (mode = 6) PRINT "Pitch Setpoint " + distanceToString( PITCH_PID:SETPOINT, 2) + "/s      " AT(0, 5).
+			ELSE					 PRINT "Pitch Setpoint " + ROUND( PITCH_PID:SETPOINT, 2) + " deg      " AT(0, 5).
 			PRINT "Prograde Pitch: " + ROUND(90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE), 2) + "    " AT (0, 6).
-			PRINT "Facing Pitch: " + ROUND(90 - vang(SHIP:UP:VECTOR, SHIP:FACING:FOREVECTOR), 2) + "    " AT (0, 7).
-			PRINT "Yaw PID Setpoint " + ROUND(YAW_PID:SETPOINT, 4) + "    " AT (0, 8).
-			PRINT "Yaw PID Input " + ROUND(SHIP:ORBIT:INCLINATION, 4) + "    " AT (0, 9).
-			PRINT "Facing Yaw " + ROUND(yaw_for(SHIP), 2) + "    " AT (0, 10).
-			PRINT "Current Accel " + ROUND(shipInfo["Current"]["Accel"], 4) + " m/s^2    " AT (0, 11).
-			PRINT "Maximum Accel " + ROUND(shipInfo["Maximum"]["Accel"], 4) + " m/s^2    " AT (0, 12).
-			PRINT "Current Accel " + ROUND(shipInfo["Current"]["Accel"]/body_g, 4) + " g's      " AT (0, 13).
-			PRINT "Maximum Accel " + ROUND(shipInfo["Maximum"]["Accel"]/body_g, 4) + " g's      " AT (0, 14).
+			PRINT "Verical Speed: " + distanceToString(VERTICALSPEED, 2) + "/s    " AT (0, 7).
+			PRINT "Facing Pitch: " + ROUND(90 - vang(SHIP:UP:VECTOR, SHIP:FACING:FOREVECTOR), 2) + "    " AT (0, 8).
+			PRINT "Yaw PID Setpoint " + ROUND(YAW_PID:SETPOINT, 4) + "    " AT (0, 9).
+			PRINT "Yaw PID Input " + ROUND(SHIP:ORBIT:INCLINATION, 4) + "    " AT (0, 10).
+			PRINT "Facing Yaw " + ROUND(yaw_for(SHIP), 2) + "    " AT (0, 11).
+			PRINT "Current Accel " + ROUND(shipInfo["Current"]["Accel"], 4) + " m/s^2    " AT (0, 12).
+			PRINT "Maximum Accel " + ROUND(shipInfo["Maximum"]["Accel"], 4) + " m/s^2    " AT (0, 13).
+			PRINT "Current Accel " + ROUND(shipInfo["Current"]["Accel"]/body_g, 4) + " g's      " AT (0, 14).
+			PRINT "Maximum Accel " + ROUND(shipInfo["Maximum"]["Accel"]/body_g, 4) + " g's      " AT (0, 15).
 		}
 
 		// attempt at calculating the throttle to ensure maxGs acceleration at most
@@ -218,8 +239,7 @@ UNTIL mode > 6 {
 		IF (shipInfo["Maximum"]["Variable"]["Accel"] <> 0) {
 			IF minThrottle <> 1	SET myThrottle TO (((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]) - minThrottle)/(1-minThrottle).
 			ELSE				SET myThrottle TO  ((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]).
-		} ELSE SET myThrottle TO 1.
-//		SET myThrottle TO (maxGs * body_g) / shipInfo["Maximum"]["Accel"].
+		} ELSE SET myThrottle TO 1.0.
 		SET myThrottle TO MIN( MAX( myThrottle, 0.05), 1.0).
 
 		// Engine staging
@@ -260,7 +280,7 @@ UNTIL mode > 6 {
 		// Note that this gravity turn uses a PID to maintain the prograde vector at the correct pitch
 		IF mode = 4 {
 			SET PITCH_PID:SETPOINT TO gravityTurn(gravTurnStart, gravTurnEnd, 90, gravTurnAngleEnd, gravTurnExponent).
-			LOCAL pitchValue IS PITCH_PID:SETPOINT + PITCH_PID:UPDATE( TIME:SECONDS, 90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE)).
+			SET pitchValue TO PITCH_PID:SETPOINT + PITCH_PID:UPDATE( TIME:SECONDS, 90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE)).
 			IF pitchValue < 0 SET pitchValue TO 0.
 			IF pitchValue > 90 SET pitchValue TO 90.
 
@@ -274,14 +294,15 @@ UNTIL mode > 6 {
 
 		// Horizontal flight
 		IF mode = 5 {
+			SET pitchValue TO 0.0.
 			// This needs to be updated every scan to keep the pitch at 0 as the craft moves around the planet
-			SET mySteer TO HEADING(modeStartYaw + yawValue, 0).
+			SET mySteer TO HEADING(modeStartYaw + yawValue, pitchValue).
 
 			// when vertical speed is below 0.5 m/s, start controlling pitch to maintain 0 vertical speed
 			IF VERTICALSPEED < 0.5 {
 				PITCH_PID:RESET().
-				SET PITCH_PID:MAXOUTPUT TO 45.
-				SET PITCH_PID:MINOUTPUT TO 0.
+				SET PITCH_PID:MAXOUTPUT TO 15.
+				SET PITCH_PID:MINOUTPUT TO -15.
 				SET mode to 6.
 			}
 		}
@@ -290,12 +311,13 @@ UNTIL mode > 6 {
 		IF mode = 6 {
 			IF SHIP:BODY:ATM:EXISTS {
 				IF (ALTITUDE > SHIP:BODY:ATM:HEIGHT + 10000) SET PITCH_PID:SETPOINT TO 0.
-				ELSE IF (ALTITUDE > SHIP:BODY:ATM:HEIGHT + 5000) SET PITCH_PID:SETPOINT TO (ALTITUDE-SHIP:BODY:ATM:HEIGHT)/5000.
+				ELSE IF (ALTITUDE > SHIP:BODY:ATM:HEIGHT + 5000) SET PITCH_PID:SETPOINT TO (ALTITUDE - SHIP:BODY:ATM:HEIGHT) / 500.0.
+				ELSE SET PITCH_PID:SETPOINT TO (ALTITUDE - SHIP:BODY:ATM:HEIGHT) / 250.0.
 			} ELSE {
 				SET PITCH_PID:SETPOINT TO 0.
 			}
-			LOCAL pitchValue IS PITCH_PID:UPDATE( TIME:SECONDS, VERTICALSPEED).
-
+			SET PITCH_PID:KD TO MAX(4.0 * (1 - GROUNDSPEED/ABS(SQRT(BODY:MU/(ALTITUDE + BODY:RADIUS)))), 0.0).
+			SET pitchValue TO ARCSIN(accelRatios) + PITCH_PID:UPDATE( TIME:SECONDS, VERTICALSPEED).
 			SET mySteer TO HEADING (modeStartYaw + yawValue, pitchValue).
 		}
 
@@ -320,6 +342,7 @@ UNTIL mode > 6 {
 			SET mode to 7.
 		}
 	}
+	logPID(PITCH_PID, "0:PITCH_PID.csv", TRUE, 0).
 }
 SET myThrottle TO 0.0.
 
