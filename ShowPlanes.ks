@@ -8,6 +8,7 @@ LOCAL startedWithTarget IS HASTARGET.
 LOCAL done IS FALSE.
 LOCAL vecDrawWidth IS 0.1.
 LOCAL arrowsInPlane IS 8.
+IF NOT SHIP:BODY:HASBODY SET showEcliptic TO FALSE.
 
 MAPVIEW ON.
 
@@ -16,7 +17,7 @@ ON AG1 {
 }
 
 ON AG2 {
-	SET showEcliptic TO NOT showEcliptic.
+	SET showEcliptic TO NOT showEcliptic AND SHIP:BODY:HASBODY.
 	RETURN TRUE.
 }
 
@@ -32,7 +33,8 @@ IF startedWithTarget {
 	SET targetNormVector TO radius * VCRS(TARGET:VELOCITY:ORBIT, TARGET:POSITION - bodyPos):NORMALIZED.
 }
 
-LOCAL eclipticNormVector TO radius * 2 * VCRS(SHIP:BODY:VELOCITY:ORBIT, SHIP:BODY:POSITION - SHIP:BODY:BODY:POSITION):NORMALIZED.
+LOCAL eclipticNormVector TO V(0, 0, 0).
+IF showEcliptic SET eclipticNormVector TO radius * 2 * VCRS(SHIP:BODY:VELOCITY:ORBIT, SHIP:BODY:POSITION - SHIP:BODY:BODY:POSITION):NORMALIZED.
 
 LOCAL shipLANVector TO (SOLARPRIMEVECTOR * ANGLEAXIS(-SHIP:ORBIT:LAN, northV)):NORMALIZED.
 LOCAL shipNormVector TO VCRS(SHIP:VELOCITY:ORBIT, SHIP:POSITION - bodyPos):NORMALIZED.
@@ -123,13 +125,15 @@ UNTIL done OR NOT MAPVIEW
 	}
 	SET shipLANVector TO (SOLARPRIMEVECTOR * ANGLEAXIS(-SHIP:ORBIT:LAN, northV)):NORMALIZED.
 	SET shipNormVector TO VCRS(SHIP:VELOCITY:ORBIT, SHIP:POSITION - bodyPos):NORMALIZED.
-	SET eclipticNormVector TO VCRS(-SHIP:BODY:BODY:VELOCITY:ORBIT, SHIP:BODY:POSITION - SHIP:BODY:BODY:POSITION):NORMALIZED.
+	IF showEcliptic	SET eclipticNormVector TO VCRS(-SHIP:BODY:BODY:VELOCITY:ORBIT, SHIP:BODY:POSITION - SHIP:BODY:BODY:POSITION):NORMALIZED.
 
 	// draw several vectors - from target to body, from position to body, from position to velocity, from target to target velocity,
 	// from LAN of ship to body, from LAN of target to body
-	FOR vecNumber IN RANGE(0, vecDraws["TargetPlane"]:LENGTH) {
-		SET vecDraws["TargetPlane"][vecNumber]:START TO radius * targetLANVector * ANGLEAXIS(-45 * vecNumber, targetNormVector) + bodyPos.
-		SET vecDraws["TargetPlane"][vecNumber]:VEC   TO radius * (targetLANVector * ANGLEAXIS(-45 * (vecNumber + 1), targetNormVector) - targetLANVector * ANGLEAXIS(-45 * vecNumber, targetNormVector)).
+	IF startedWithTarget {
+		FOR vecNumber IN RANGE(0, vecDraws["TargetPlane"]:LENGTH) {
+			SET vecDraws["TargetPlane"][vecNumber]:START TO radius * targetLANVector * ANGLEAXIS(-45 * vecNumber, targetNormVector) + bodyPos.
+			SET vecDraws["TargetPlane"][vecNumber]:VEC   TO radius * (targetLANVector * ANGLEAXIS(-45 * (vecNumber + 1), targetNormVector) - targetLANVector * ANGLEAXIS(-45 * vecNumber, targetNormVector)).
+		}
 	}
 
 	FOR vecNumber IN RANGE(0, vecDraws["ShipPlane"]:LENGTH) {
