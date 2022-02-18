@@ -135,10 +135,11 @@ LOCAL centripitalAccel IS 0.
 LOCAL local_g IS 0.
 LOCAL required_vertical_accel IS 0.
 LOCAL accelRatios IS 0.
+LOCAL mu IS SHIP:BODY:MU.
 
 UNTIL mode > 6 {
-	SET centripitalAccel TO GROUNDSPEED^2/(ALTITUDE + SHIP:BODY:RADIUS).
-	SET local_g TO SHIP:BODY:MU/(ALTITUDE + SHIP:BODY:RADIUS)^2.
+	SET centripitalAccel TO VXCL(SHIP:UP:VECTOR, SHIP:VELOCITY:ORBIT):SQRMAGNITUDE/(SHIP:POSITION - SHIP:BODY:POSITION):MAG.
+	SET local_g TO mu/(ALTITUDE + SHIP:BODY:RADIUS)^2.
 	SET required_vertical_accel TO local_g - centripitalAccel.
 	IF (shipInfo["Current"]["Accel"] <> 0) SET accelRatios TO required_vertical_accel / shipInfo["Current"]["Accel"].
 	IF accelRatios > SIN(85) SET accelRatios TO SIN(85).
@@ -298,8 +299,8 @@ UNTIL mode > 6 {
 			// This needs to be updated every scan to keep the pitch at 0 as the craft moves around the planet
 			SET mySteer TO HEADING(modeStartYaw + yawValue, pitchValue).
 
-			// when vertical speed is below 0.5 m/s, start controlling pitch to maintain 0 vertical speed
-			IF VERTICALSPEED < 0.5 {
+			// when vertical speed is within one second of falling below zero, start controlling pitch to maintain 0 vertical speed
+			IF VERTICALSPEED < local_g {
 				PITCH_PID:RESET().
 				SET PITCH_PID:MAXOUTPUT TO 15.
 				SET PITCH_PID:MINOUTPUT TO -15.
@@ -342,7 +343,7 @@ UNTIL mode > 6 {
 			SET mode to 7.
 		}
 	}
-	logPID(PITCH_PID, "0:PITCH_PID.csv", TRUE, 0).
+//	logPID(PITCH_PID, "0:PITCH_PID.csv", TRUE, 0).
 }
 SET myThrottle TO 0.0.
 
