@@ -19,9 +19,10 @@ updateShipInfo().
 
 SAS OFF.
 RCS OFF.
+SET myThrottle TO 0.
 SET useMyThrottle TO true.
-SET useMySteer TO true.
 SET mySteer TO -VELOCITY:SURFACE.
+SET useMySteer TO true.
 LOCAL mode IS 0.
 LOCAL currentMargin IS 0.
 LOCAL requiredVerticalVelocity IS 0.
@@ -146,11 +147,16 @@ UNTIL mode > 3 {
 			SET T_PID_Spd:SETPOINT TO requiredVerticalVelocity.
 			IF VERTICALSPEED < 0 SET myThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, -VELOCITY:SURFACE:MAG).
 			ELSE                 SET myThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, VELOCITY:SURFACE:MAG).
+			PRINT "Time remaining in burn:" AT (0, 5).
+			PRINT timeToString(recordedData["Burn Time"] - (MISSIONTIME - burnStartTime), 2):PADLEFT(23) + "     " AT (0, 6).
 		} ELSE SET myThrottle TO 1.
 		IF (GROUNDSPEED < 0.1) SET mySteer TO SHIP:UP:VECTOR.
-		ELSE SET mySteer TO -VELOCITY:SURFACE.
-		PRINT "Time remaining in burn:" AT (0, 5).
-		PRINT timeToString(recordedData["Burn Time"] - (MISSIONTIME - burnStartTime), 2):PADLEFT(23) + "     " AT (0, 6).
+		ELSE {
+			IF GROUNDSPEED < 1 					SET mySteer TO HEADING(yaw_vector(-VELOCITY:SURFACE), pitch_vector(-VELOCITY:SURFACE) - 1).
+			ELSE IF GROUNDSPEED < 10 		SET mySteer TO HEADING(yaw_vector(-VELOCITY:SURFACE), pitch_vector(-VELOCITY:SURFACE) - 2).
+			ELSE IF GROUNDSPEED < 100		SET mySteer TO HEADING(yaw_vector(-VELOCITY:SURFACE), pitch_vector(-VELOCITY:SURFACE) - 5).
+			ELSE 												SET mySteer TO HEADING(yaw_vector(-VELOCITY:SURFACE), pitch_vector(-VELOCITY:SURFACE) - 10).
+		}
 		IF VERTICALSPEED > 0 OR aboveGround < 0.5 OR (NOT useVelocity AND ABS(recordedData["Burn Time"] - (MISSIONTIME - burnStartTime)) < 0.1) {
 			advanceMode().
 			SET recordedData["End TWR"] TO shipInfo["Maximum"]["TWR"].
