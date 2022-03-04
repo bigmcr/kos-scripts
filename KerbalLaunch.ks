@@ -1,6 +1,6 @@
 PARAMETER finalInclination IS 0.					// The initial heading to launch at
-PARAMETER altitudeTarget IS 20000.			// The desired final altitude
-PARAMETER maxGs IS 1.5.
+PARAMETER altitudeTarget IS 30000.			// The desired final altitude
+PARAMETER maxGs IS 3.
 PARAMETER initialStage IS TRUE.				// Whether or not to trigger the stage function to start with
 
 // If the body has an atmosphere and altitudeTarget is the default, set the
