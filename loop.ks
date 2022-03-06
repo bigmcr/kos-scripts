@@ -12,6 +12,14 @@ IF runLocal {
 // avoiding the use of a file extension allows RUNPATH to determine the file extension
 RUNPATH("Library").
 
+ON MAPVIEW {
+	SET facingVector:SHOW TO useMySteer AND NOT MAPVIEW.
+	SET facingVectorFace:SHOW TO useMySteer AND NOT MAPVIEW.
+	SET guidanceVector:SHOW TO useMySteer AND NOT MAPVIEW.
+	SET guidanceVectorFace:SHOW TO useMySteer AND NOT MAPVIEW.
+	RETURN TRUE.
+}
+
 GLOBAL loopMessage IS "".
 GLOBAL errorValue IS -1234.
 GLOBAL mySteer IS VELOCITY:ORBIT.
@@ -291,7 +299,7 @@ UNTIL done {
 								SET commandValid TO TRUE.
 								SET loopMessage TO "Steering held to (" + inputStringList[1] + "," + inputStringList[2] + ")".
 						}
-					} ELSE IF (inputStringList[0] = "node") AND (inputstringList[1] = "delete") {
+					} ELSE IF (inputStringList[0] = "node") AND (inputStringList[1] = "delete" OR inputStringList[1] = "remove") {
 						IF HASNODE {
 							REMOVE NEXTNODE.
 							SET loopMessage TO "Removed next node".
@@ -367,7 +375,7 @@ UNTIL done {
 							IF inputStringList[1] = "" {
 								SET useMySteer TO TRUE.
 								SAS OFF.
-								LOCK mySteer TO TARGET:POSITION.
+								LOCK mySteer TO TARGET:POSITION - SHIP:CONTROLPART:POSITION.
 								SET commandValid TO TRUE.
 								IF TARGET:ISTYPE("Part") OR TARGET:ISTYPE("DockingPort") SET loopMessage TO "Steering locked to " + TARGET:TITLE + " on " + TARGET:SHIP:NAME.
 								ELSE SET loopMessage TO "Steering locked to " + TARGET:NAME.
@@ -382,14 +390,16 @@ UNTIL done {
 							IF inputStringList[1] = "retro" OR inputStringList[0] = "retrograde" {
 								SET useMySteer TO TRUE.
 								SAS OFF.
-								LOCK mySteer TO (TARGET:VELOCITY:ORBIT - SHIP:VELOCITY:ORBIT).
+								IF TARGET:ISTYPE("Part") OR TARGET:ISTYPE("DockingPort") LOCK mySteer TO (TARGET:SHIP:VELOCITY:ORBIT - SHIP:VELOCITY:ORBIT).
+								ELSE LOCK mySteer TO (TARGET:VELOCITY:ORBIT - SHIP:VELOCITY:ORBIT).
 								SET commandValid TO TRUE.
 								SET loopMessage TO "Steering locked to target retrograde".
 							}
 							IF inputStringList[1] = "pro" OR inputStringList[0] = "prograde" {
 								SET useMySteer TO TRUE.
 								SAS OFF.
-								LOCK mySteer TO (SHIP:VELOCITY:ORBIT - TARGET:VELOCITY:ORBIT).
+								IF TARGET:ISTYPE("Part") OR TARGET:ISTYPE("DockingPort") LOCK mySteer TO (SHIP:VELOCITY:ORBIT - TARGET:SHIP:VELOCITY:ORBIT).
+								ELSE LOCK mySteer TO (SHIP:VELOCITY:ORBIT - TARGET:VELOCITY:ORBIT).
 								SET commandValid TO TRUE.
 								SET loopMessage TO "Steering locked to target prograde".
 							}
@@ -552,7 +562,7 @@ UNTIL done {
 						IF connectionToKSC() {
 							copyToLocal().
 							SET loopMessage TO "Updated all scripts, running locally".
-						} ELSE SET loopMessage TO "Running locally".
+						} ELSE SET loopMessage TO "Already running locally".
 						SWITCH TO 1.
 						SET runLocal TO TRUE.
 					} ELSE
@@ -595,7 +605,7 @@ UNTIL done {
 						SET commandValid TO TRUE.
 					}
 
-					// if inputString is stageInfo, recalculate the staging information for the ship, and log it to a file
+					// if inputString is stageInfo, recalculate the staging information for the ship, but do not log it to a file
 					IF inputString = "stageUpdate" {
 						updateShipInfo().
 						SET commandValid TO TRUE.
@@ -702,6 +712,10 @@ UNTIL done {
 			IF previousCommandIndex < 0 SET previousCommandIndex TO 0.
 			IF (previousCommandIndex < previousCommands:LENGTH) SET inputString TO previousCommands[previousCommandIndex].
 			TOGGLE updateScreen.
+		} ELSE
+		IF tempChar = TERMINAL:INPUT:DELETERIGHT {
+			SET inputString TO "".
+			TOGGLE updateScreen.
 		}
 		// otherwise, add the character to the input string
 		ELSE {
@@ -709,8 +723,6 @@ UNTIL done {
 			TOGGLE updateScreen.
 		}
 	}
-	SET facingVector:SHOW TO useMySteer AND NOT MAPVIEW.
-	SET guidanceVector:SHOW TO useMySteer AND NOT MAPVIEW.
 	IF count > 50 {
 		SET count TO 1.
 		TOGGLE updateScreen.
