@@ -14,14 +14,14 @@ PRINT "Orbited Body MU " + BODY:MU + " m^3/s^2".
 PRINT "Orbited Body Radius " + distanceToString(BODY:Radius, 4).
 PRINT "Period " + timeToString(localOrbit:PERIOD, 4).
 PRINT "Period " + localOrbit:PERIOD + " s".
-PRINT "Inclination " + ROUND(localOrbit:INCLINATION, 4).
+PRINT "Inclination " + ROUND(localOrbit:INCLINATION, 4) + " deg".
 PRINT "Eccentricity " + ROUND(localOrbit:ECCENTRICITY, 4).
 PRINT "Semi-Major Axis " + distanceToString(localOrbit:SEMIMAJORAXIS, 4).
 PRINT "Semi-Minor Axis " + distanceToString(localOrbit:SEMIMINORAXIS, 4).
-PRINT "Longitude of Ascending Node " + ROUND(localOrbit:LAN, 4).
-PRINT "Argument of Periapsis " + ROUND(localOrbit:ARGUMENTOFPERIAPSIS, 4).
-PRINT "True Anomaly  " + ROUND(localOrbit:TRUEANOMALY, 4).
-PRINT "Mean Anomaly at Epoch " + ROUND(localOrbit:MEANANOMALYATEPOCH, 4).
+PRINT "Longitude of Ascending Node " + ROUND(localOrbit:LAN, 4) + " deg".
+PRINT "Argument of Periapsis " + ROUND(localOrbit:ARGUMENTOFPERIAPSIS, 4) + " deg".
+PRINT "True Anomaly  " + ROUND(localOrbit:TRUEANOMALY, 4) + " deg".
+PRINT "Mean Anomaly at Epoch " + ROUND(localOrbit:MEANANOMALYATEPOCH, 4) + " deg".
 PRINT "Epoch " + localOrbit:EPOCH.
 PRINT "Transition " + localOrbit:TRANSITION.
 PRINT "Position (r) " + distanceToString(SHIP:BODY:POSITION:MAG, 4).
