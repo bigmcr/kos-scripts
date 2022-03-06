@@ -22,3 +22,4 @@ UNTIL MISSIONTIME - startTime >= burnTime {
 endScript().
 
 SET SHIP:CONTROL:MAINTHROTTLE TO 0.
+SET loopMessage TO "Burned for " + timeToString(burnTime).
