@@ -5,8 +5,6 @@ PARAMETER maxVelocity IS 50.
 
 SET maxVelocity TO ABS(maxVelocity).
 
-endScript().
-
 SET mySteer TO -VELOCITY:SURFACE.
 SET myThrottle TO 0.
 
@@ -18,8 +16,6 @@ RCS OFF.
 LOCAL V_PID IS PIDLOOP(0.5, 0.1, 0, 0, 1).			// PID loop to control trottle based on speed
 LOCAL X_PID IS PIDLOOP(0.05, 0.01, 0.05, -maxVelocity, maxVelocity).			// PID loop to control V_PID based on position
 LOCAL surfaceVelocityVecDraw IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN SHIP:VELOCITY:SURFACE:NORMALIZED * 10.}, BLUE, "Surface Velocity" , 1.0, TRUE, 0.2).
-SET facingVector:SHOW TO TRUE.
-SET guidanceVector:SHOW TO TRUE.
 
 LOCAL done IS FALSE.
 LOCAL startTime is TIME:SECONDS.
@@ -49,7 +45,7 @@ ON AG2 {
 UNTIL done {
   SET elapsedTime TO TIME:SECONDS - startTime.
 	SET aboveGround TO heightAboveGround().
-	SET velocityPitch   TO pitch_vector(-VELOCITY:SURFACE).
+	SET velocityPitch   TO pitch_for(-VELOCITY:SURFACE).
   SET aboveGround TO heightAboveGround().
 
   IF (TIME:SECONDS <> oldTime) {
@@ -96,8 +92,8 @@ UNTIL done {
 
   IF NOT cancelHoriz SET mySteer TO HEADING (0, 90).
   ELSE {
-    IF VERTICALSPEED > 0 SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
-    ELSE SET mySteer TO HEADING (yaw_vector(VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+    IF VERTICALSPEED > 0 SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+    ELSE SET mySteer TO HEADING (yaw_for(VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
   }
 
   IF (elapsedTime > 300.0) SET done TO TRUE.
@@ -105,4 +101,3 @@ UNTIL done {
 
 SET useMySteer TO FALSE.
 SET useMyThrottle TO FALSE.
-endScript().

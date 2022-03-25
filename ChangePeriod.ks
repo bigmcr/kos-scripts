@@ -44,5 +44,3 @@ ADD X.            // adds maneuver to flight plan
 IF interactive WAIT 5.
 
 IF interactive SET loopMessage TO "Period change node created".
-
-endScript().

@@ -1,4 +1,4 @@
-function yaw_vector {
+function yaw_for {
   parameter vect.
 
   local trig_x is vdot(SHIP:north:vector, vect).
@@ -32,7 +32,7 @@ FUNCTION findSlopeOfGround {
 	LOCAL EWVector IS distEast *east_for(SHIP)    + heightEast  * SHIP:UP:VECTOR.
 	LOCAL angleVector IS VCRS(NSVector, EWVector).
 	LOCAL tilt IS VANG( angleVector, SHIP:UP:VECTOR).
-	LOCAL compass IS yaw_vector(angleVector).
+	LOCAL compass IS yaw_for(angleVector).
 	LOCAL pointHeight IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + distNorth*SHIP:NORTH:VECTOR + distEast*east_for(SHIP)):TERRAINHEIGHT - SHIP:GEOPOSITION:TERRAINHEIGHT.
 	IF tilt > 90 SET tilt TO 180 - tilt.
 //	LOG MISSIONTIME + "," + distNorth + "," + distEast + "," + heightNorth + "," + heightEast + "," + tilt + "," + NSVector + "," + EWVector + "," + angleVector + "," + SHIP:UP:VECTOR TO "LatLong.csv".

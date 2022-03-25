@@ -2,8 +2,6 @@
 
 CLEARSCREEN.
 
-endScript().
-
 // This landing script uses multiple modes:
 // Mode 1 - Burn surface retrograde until periapsis is 45% of the atmosphere's thickness above the ground
 // Mode 2 - Activate warp to until altitude is below 45% of the atmosphere's thickness
@@ -18,7 +16,7 @@ LOCAL oldTime IS ROUND(TIME:SECONDS, 1).
 LOCAL oldVSpeed IS 0.
 LOCAL oldHSpeed IS 0.
 LOCAL oldDistance IS SHIP:BODY:RADIUS.
-LOCAL velocityPitch IS pitch_vector(-VELOCITY:SURFACE).
+LOCAL velocityPitch IS pitch_for(-VELOCITY:SURFACE).
 LOCAL hAccel IS 0.
 LOCAL vAccel IS 0.
 LOCAL aboveGround IS heightAboveGround().
@@ -69,7 +67,7 @@ WHEN (NOT CHUTESSAFE) THEN {
 UNTIL mode > 6 {
 	PRINT "Mode " + mode AT (40, 0).
 	SET aboveGround TO heightAboveGround().
-	SET velocityPitch   TO pitch_vector(-VELOCITY:SURFACE).
+	SET velocityPitch   TO pitch_for(-VELOCITY:SURFACE).
 
 	IF (TIME:SECONDS <> oldTime) {
 		SET hAccel TO (GROUNDSPEED - oldHSpeed)/(TIME:SECONDS - oldTime).
@@ -209,7 +207,7 @@ UNTIL mode > 6 {
 		IF NOT cancelHoriz AND GROUNDSPEED > 0.5 SET cancelHoriz TO TRUE.
 
 		IF NOT cancelHoriz SET mySteer TO HEADING (0, 90).
-		ELSE SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+		ELSE SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
 
 		GEAR ON.
 		LIGHTS ON.
@@ -231,8 +229,6 @@ SET myThrottle TO 0.
 SET mySteer TO SHIP:UP.
 SET useMySteer TO FALSE.
 SET useMyThrottle TO FALSE.
-
-endScript().
 
 IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Landed on " + SHIP:BODY:NAME.
 ELSE SET loopMessage TO "Something went wrong - still moving relative to surface of " + SHIP:BODY:NAME.

@@ -131,7 +131,7 @@ UNTIL mode > 5 {
 		LOCAL pitchValue IS pitchPID:UPDATE( TIME:SECONDS, VERTICALSPEED).
 		
 		// make the heading the same direction as surface retrograde
-		SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), pitchValue).
+		SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), pitchValue).
 		IF debug {LOGPID(pitchPID, "GravTurnLandPitchPID.csv", TRUE, 0).}
 	}
 
@@ -143,7 +143,7 @@ UNTIL mode > 5 {
 		PRINT "HSpd <= " + ROUND(initialSpeed * 0.05) + "  " AT (40, 4).
 		LOCAL pitchValue IS pitchPID:UPDATE( TIME:SECONDS, VERTICALSPEED).
 		// make the heading the same direction as surface retrograde
-		SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), pitchValue).
+		SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), pitchValue).
 		IF debug {LOGPID(pitchPID, "GravTurnLandPitchPID.csv", TRUE, 0).}
 	}
 

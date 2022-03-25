@@ -33,10 +33,10 @@ IF (RCSThrust = 0) SET errorCode TO "Maximum engine thrust is Zero!".
 IF errorCode = "None" {
 	RCS ON.																// as the script requires RCS, turn it on
 	SAS OFF.															// always turn SAS off, as it interferes with steering control
-	
+
 	SET mySteer TO SHIP:FACING.
 	SET useMySteer TO TRUE.
-	
+
 	LOCAL ND TO NEXTNODE.
 	LOCK ND TO NEXTNODE.
 
@@ -53,7 +53,7 @@ IF errorCode = "None" {
 	LOCAL a_f IS RCSThrust / m_f.										// final acceleration at the end of the burn (m/s^2)
 	LOCAL m_dry TO SHIP:DRYMASS * 1000.									// mass of the ship with all fuel used (kg)
 	LOCAL m_wet TO SHIP:MASS * 1000.									// mass of the ship without all fuel used (kg)
-	
+
 	// move all Ablator mass from wetmass to drymass.
 	// assumes that ablator cannot be used as RCS fuel.
 	FOR eachPart IN SHIP:PARTS {
@@ -64,7 +64,7 @@ IF errorCode = "None" {
 			}
 		}
 	}
-	
+
 	LOCAL dV_avail TO v_e*LN(m_wet/m_dry).
 	LOCAL dv_prev TO 0.
 	LOCAL dV_req_stage TO MIN(MAX(dV_req-dV_prev,0),dV_avail).
@@ -131,7 +131,7 @@ IF errorCode = "None" {
 	// always turn off physics warp
 	SET KUNIVERSE:TIMEWARP:WARP TO 0.
 	SET KUNIVERSE:TIMEWARP:MODE TO "RAILS".
-	
+
 	// if ullage is not a concern, warp to 15 seconds before burntime
 	warpToTime(TIME:SECONDS + ND:ETA - t_ign - 15).
 	IF debug PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
@@ -141,17 +141,17 @@ IF errorCode = "None" {
 		SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
 	}
 	WAIT UNTIL (ND:ETA <= t_ign).
-	
+
 	IF debug PRINT "Starting the burn!".
-	
+
 	SET SHIP:CONTROL:FORE TO 1.											// set the throttle to max
 	LOCK mySteer TO ND:DELTAV.
-	
+
 	IF physicsWarpPerm AND t_total > 30 {								// only actually use physics warp if the burn duration is greater than 30 seconds
 		SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
 		SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
 	}
-	
+
 	// If we are nearing the end of the burn (less than 1 second), stop physics warp to allow for more precision
 	WHEN ((ND:DELTAV:MAG <= a_f) AND physicsWarpPerm) THEN {
 		SET KUNIVERSE:TIMEWARP:WARP TO 0.
@@ -178,12 +178,11 @@ IF errorCode = "None" {
 	UNLOCK mySteer.
 
 	SET useMySteer TO FALSE.
-	
+
 	SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
-	
-	endScript().
+
 	updateShipInfo().													// update the shipInfo structure with current status of the ship
-	
+
 	SET SHIP:CONTROL:FORE TO 0.
 	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
 	SET loopMessage TO "Node executed correctly! " + ROUND(ND:DELTAV:MAG, 1) + " m/s left.".

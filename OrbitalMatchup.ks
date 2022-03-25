@@ -7,7 +7,7 @@ FUNCTION closestApproach {
 	PARAMETER initialGuess IS TIME:SECONDS.
 	PARAMETER initialStepSize IS 10.
 	IF (initialGuess < TIME:SECONDS) SET initialGuess TO TIME:SECONDS.
-	
+
 	LOCAL stepSize is initialStepSize.
 
 	FUNCTION distanceAtTime {
@@ -16,7 +16,7 @@ FUNCTION closestApproach {
 	}
 
 	LOCAL iteration IS 0.
-	
+
 //	LOG "Approach Time,Step Size,Distance At Approach,Distance At Approach + Step,Distance At Approach - Step,Iteration" TO "HillClimb.csv".
 	// Do the hill climbing
 	LOCAL approachTime is initialGuess.
@@ -48,7 +48,7 @@ IF (mode <> "Done") {
 	SET myThrottle TO 0.
 	SET useMySteer TO TRUE.
 	SET useMyThrottle TO TRUE.
-	
+
 	SAS OFF.
 	RCS OFF.
 
@@ -56,7 +56,7 @@ IF (mode <> "Done") {
 	PRINT "Now warping close to the burn time.".
 	warpToTime(closestApproach()[0] - 30).
 	CLEARSCREEN.
-	
+
 	LOCAL targetVelocity IS V(0,0,0).
 	LOCK targetVelocity TO (SHIP:VELOCITY:ORBIT - TARGET:VELOCITY:ORBIT).
 
@@ -87,7 +87,7 @@ IF (mode <> "Done") {
 		PRINT "Closest Approach Distance: " + ROUND(closestApproachTime[1], 2) + " m  " AT (0, 3).
 		PRINT "Target Velocity: " + ROUND(targetVelocity:MAG, 2) + " m/s  " AT (0, 4).
 		PRINT "Target Distance: " + ROUND(TARGET:POSITION:MAG, 2) + " m  " AT (0, 5).
-		
+
 		IF (mode = "Waiting") {
 			SET myThrottle TO 0.
 			IF (timeToRez - burnTime < 5) {
@@ -128,4 +128,3 @@ IF (mode <> "Done") {
 }
 SET useMySteer TO FALSE.
 SET useMyThrottle TO FALSE.
-endScript().

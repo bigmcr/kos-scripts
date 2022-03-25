@@ -13,7 +13,7 @@ IF (mode <> "Done") {
 	SET myThrottle TO 0.
 	SET useMySteer TO TRUE.
 	SET useMyThrottle TO TRUE.
-	
+
 	SAS OFF.
 	RCS OFF.
 
@@ -35,7 +35,7 @@ IF (mode <> "Done") {
 	// warp until the target is approximately 10 km from the burnDistance away
 	warpToTime((targetDistance - (burnDistance + 10000) ) / targetSpeed + TIME:SECONDS).
 	CLEARSCREEN.
-	
+
 	LOCAL elapsedTime TO TIME:SECONDS - startTime.
 
 	LOCAL tgtPos IS VECDRAW(SHIP:POSITION, V(0,0,0), YELLOW, "Tgt Pos", 1.0, TRUE, 0.2).
@@ -63,7 +63,7 @@ IF (mode <> "Done") {
 		PRINT "Burn Distance: " + distanceToString(burnDistance, 2) + "    " AT (0, 4).
 		PRINT "Target Velocity: " + distanceToString(targetSpeed, 1) + "/s  " AT (0, 5).
 		PRINT "Target Distance: " + distanceToString(targetDistance, 2) + "   " AT (0, 6).
-		
+
 		IF (mode = "Waiting") {
 			SET myThrottle TO 0.
 			IF (burnDistance >= targetDistance - 1000) {
@@ -101,4 +101,3 @@ IF (mode <> "Done") {
 }
 SET useMySteer TO FALSE.
 SET useMyThrottle TO FALSE.
-endScript().

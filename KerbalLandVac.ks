@@ -19,7 +19,7 @@ LOCAL oldTime IS ROUND(TIME:SECONDS, 1).
 LOCAL oldVSpeed IS 0.
 LOCAL oldHSpeed IS 0.
 LOCAL oldDistance IS SHIP:BODY:RADIUS.
-LOCAL velocityPitch IS pitch_vector(-VELOCITY:SURFACE).
+LOCAL velocityPitch IS pitch_for(-VELOCITY:SURFACE).
 LOCAL hAccel IS 0.
 LOCAL vAccel IS 0.
 LOCAL aboveGround IS heightAboveGround().
@@ -88,7 +88,7 @@ UNTIL mode > 5 {
 	SET sideDirection      TO HEADING(groundSlopeHeading + 90, 0):VECTOR:NORMALIZED.
 	SET downslopeSpeed  TO VELOCITY:SURFACE * downslopeDirection.
 	SET sideSpeed       TO VELOCITY:SURFACE * sideDirection.
-	SET velocityPitch   TO pitch_vector(-VELOCITY:SURFACE).
+	SET velocityPitch   TO pitch_for(-VELOCITY:SURFACE).
 
 	SET downslopeVecDraw:VEC TO 10*downSlopeVector.
 	SET downslopeDirectionVecDraw:VEC TO 10*SHIP:NORTH:VECTOR * ANGLEAXIS(groundSlopeHeading, UP:VECTOR).
@@ -190,7 +190,7 @@ UNTIL mode > 5 {
 		ELSE {advanceMode().}
 		SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 		IF GROUNDSPEED < 0.1 SET mySteer TO HEADING (0, 90).
-		ELSE SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(70, velocityPitch)).
+		ELSE SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(70, velocityPitch)).
 	}
 	// Mode 3 - Maintain height above ground with 10 m/s horizontal speed in the direction of downslope until slope is less than 5.0 degrees
 	// Note that the steering is limited to a pitch of 85 degrees at minimum. This limits the remaining horizontal velocity
@@ -235,7 +235,7 @@ UNTIL mode > 5 {
 		IF cancelHoriz AND GROUNDSPEED < 0.25 SET cancelHoriz TO FALSE.
 		IF NOT cancelHoriz AND GROUNDSPEED > 0.5 SET cancelHoriz TO TRUE.
 		IF NOT cancelHoriz SET mySteer TO HEADING (0, 90).
-		ELSE SET mySteer TO HEADING (yaw_vector(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+		ELSE SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
 		GEAR ON.
 		LIGHTS ON.
 		SET downslopeDirectionVecDraw:SHOW TO FALSE.
@@ -263,8 +263,6 @@ SET myThrottle TO 0.
 SET mySteer TO SHIP:UP.
 SET useMySteer TO FALSE.
 SET useMyThrottle TO FALSE.
-
-endScript().
 
 IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Landed on " + SHIP:BODY:NAME.
 ELSE SET loopMessage TO "Something went wrong - still moving relative to surface of " + SHIP:BODY:NAME.

@@ -942,83 +942,55 @@ FUNCTION engineStatsRCS {
 	RETURN LIST(F_max / (g_0 * mDot_max), F_cur, mDot_cur, F_max, mDot_max).
 }
 
-// Yaw Vector
-// This function recieves a vector and returns the compass heading that points in the direction of that vector
-// Returns the compass heading for the given vector
+// East For
+// This function recieves a vessel and returns a vector pointing east from that vessel.
 // Passed the following
-//			vector to be looked at (vector, any units)
+//			ves (vessel)
 // Returns the following:
-//			heading of vector (scalar, degrees from north)
-function yaw_vector {
-  parameter vect.
-
-  local east is east_for(SHIP).
-
-  local trig_x is vdot(SHIP:north:vector, vect).
-  local trig_y is vdot(east, vect).
-
-  local result is arctan2(trig_y, trig_x).
-
-  if result < 0 {
-    return 360 + result.
-  } else {
-    return result.
-  }
-}
-
-// Pitch Vector
-// This function recieves a vector and returns the pitch that points in the direction of that vector
-// Returns the pitch for the given vector
-// Passed the following
-//			vector to be looked at (vector, any units)
-// Returns the following:
-//			pitch of vector (scalar, degrees above (or below, for negative) the horizon)
-function pitch_vector {
-  parameter vect.
-
-  return 90 - vang(SHIP:up:vector, vect).
-}
-
-function east_for {
-  parameter ves.
-
-  return vcrs(ves:up:vector, ves:north:vector).
+// 			east vector
+FUNCTION east_for {
+  PARAMETER ves.
+  RETURN VCRS(ves:UP:VECTOR, VES:NORTH:VECTOR).
 }
 
 // Yaw For
-// This function recieves a vessel and returns the yaw (compass heading) that the vessel is pointing toward
+// This function recieves a vessel, vector or direction and returns the yaw (compass heading) that the input is pointing toward
 // Passed the following
-//			vessel to be looked at (vessel)
+//			input (vessel, vector or direction)
 // Returns the following:
-//			heading of vessel (scalar, degrees from north)
-function yaw_for {
-  parameter ves.
+//			heading of input (scalar, degrees from north)
+FUNCTION yaw_for {
+  PARAMETER input.
+	LOCAL pointing IS V(0,0,0).
+	     IF input:TYPENAME = "vessel" 		SET pointing TO input:FACING:FOREVECTOR.
+	ELSE IF input:TYPENAME = "vector"     SET pointing TO input.
+	ELSE IF input:TYPENAME = "direction"  SET pointing TO input:VECTOR.
 
-  local pointing is ves:FACING:FOREVECTOR.
-  local east is east_for(ves).
+  LOCAL east IS east_for(SHIP).
 
-  local trig_x is vdot(ves:north:vector, pointing).
-  local trig_y is vdot(east, pointing).
+  LOCAL trig_x IS VDOT(SHIP:NORTH:VECTOR, pointing).
+  LOCAL trig_y IS VDOT(east, pointing).
 
-  local result is arctan2(trig_y, trig_x).
+  LOCAL result IS ARCTAN2(trig_y, trig_x).
 
-  if result < 0 {
-    return 360 + result.
-  } else {
-    return result.
-  }
+  IF result < 0 RETURN 360 + result.
+  RETURN result.
 }
 
 // Pitch For
-// This function recieves a vessel and returns the pitch that the vessel is pointing toward
+// This function recieves a vessel, vector or direction and returns the pitch (degrees above horizon) that the input is pointing toward
 // Passed the following
-//			vessel to be looked at (vessel)
+//			input (vessel, vector or direction)
 // Returns the following:
 //			pitch of vector (scalar, degrees above (or below, for negative) the horizon)
-function pitch_for {
-  parameter ves.
+FUNCTION pitch_for {
+  PARAMETER input.
+	LOCAL pointing IS V(0,0,0).
+	     IF input:TYPENAME = "vessel" 		SET pointing TO input:FACING:FOREVECTOR.
+	ELSE IF input:TYPENAME = "vector"     SET pointing TO input.
+	ELSE IF input:TYPENAME = "direction"  SET pointing TO input:VECTOR.
 
-  return 90 - vang(ves:up:vector, ves:facing:forevector).
+  RETURN 90 - VANG(SHIP:UP:vector, pointing).
 }
 
 // Roll For

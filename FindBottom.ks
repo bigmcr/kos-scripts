@@ -24,7 +24,7 @@ LOCAL oldTime IS ROUND(TIME:SECONDS, 1).
 LOCAL oldVSpeed IS 0.
 LOCAL oldHSpeed IS 0.
 LOCAL oldDistance IS SHIP:BODY:RADIUS.
-LOCAL velocityPitch IS pitch_vector(-VELOCITY:SURFACE).
+LOCAL velocityPitch IS pitch_for(-VELOCITY:SURFACE).
 LOCAL hAccel IS 0.
 LOCAL vAccel IS 0.
 LOCAL aboveGround IS heightAboveGround().
@@ -83,7 +83,7 @@ UNTIL AG1 {
 	IF VANG(sideDirection, VELOCITY:SURFACE) > 90 SET sideDirection      TO HEADING(downSlopeInfo["heading"] - 90, 0):VECTOR:NORMALIZED.
 	SET downslopeSpeed  TO VELOCITY:SURFACE * downslopeDirection.
 	SET sideSpeed       TO VELOCITY:SURFACE * sideDirection.
-	SET velocityPitch   TO pitch_vector(-VELOCITY:SURFACE).
+	SET velocityPitch   TO pitch_for(-VELOCITY:SURFACE).
 
 	SET downslopeVecDraw:VEC TO 10*downSlopeInfo["Vector"].
 
@@ -194,8 +194,6 @@ SET myThrottle TO 0.
 SET mySteer TO SHIP:UP.
 SET useMySteer TO FALSE.
 SET useMyThrottle TO FALSE.
-
-endScript().
 
 IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Landed on " + SHIP:BODY:NAME.
 ELSE SET loopMessage TO "Something went wrong - still moving relative to surface of " + SHIP:BODY:NAME.

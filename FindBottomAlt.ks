@@ -36,7 +36,7 @@ LOCAL oldTime IS ROUND(TIME:SECONDS, 1).
 LOCAL oldVSpeed IS 0.
 LOCAL oldHSpeed IS 0.
 LOCAL oldDistance IS SHIP:BODY:RADIUS.
-LOCAL velocityPitch IS pitch_vector(-VELOCITY:SURFACE).
+LOCAL velocityPitch IS pitch_for(-VELOCITY:SURFACE).
 LOCAL hAccel IS 0.
 LOCAL vAccel IS 0.
 LOCAL aboveGround IS heightAboveGround().
@@ -132,14 +132,14 @@ boundaryVDs["short"]:ADD(VECDRAW(-rangeData["short"]["distance"]*north - rangeDa
 LOCAL headingOffsetVD IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Heading Offset", 1.0, TRUE, 0.2).
 LOCAL headingCourseVD IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Heading Course", 1.0, TRUE, 0.2).
 LOCAL groundVelocity IS VXCL(SHIP:UP:VECTOR, VELOCITY:SURFACE).
-LOCAL highDirectionSpeed IS VDOT(groundVelocity, HEADING(yaw_vector(rangeData["long"]["northOffset"] * north + rangeData["long"]["eastOffset"] * east), 0):VECTOR).
+LOCAL highDirectionSpeed IS VDOT(groundVelocity, HEADING(yaw_for(rangeData["long"]["northOffset"] * north + rangeData["long"]["eastOffset"] * east), 0):VECTOR).
 
 UNTIL AG1 {
 	SET downSlopeInfo TO findDownSlopeInfo().
 	SET aboveGround TO heightAboveGround().
 	SET east TO east_for(SHIP).
 	SET groundVelocity TO VXCL(SHIP:UP:VECTOR, VELOCITY:SURFACE).
-	SET highDirectionSpeed TO VDOT(groundVelocity, HEADING(yaw_vector(rangeData["long"]["northOffset"] * north + rangeData["long"]["eastOffset"] * east), 0):VECTOR).
+	SET highDirectionSpeed TO VDOT(groundVelocity, HEADING(yaw_for(rangeData["long"]["northOffset"] * north + rangeData["long"]["eastOffset"] * east), 0):VECTOR).
 	findLowestSpot(rangeData["long"], TRUE).
 	findLowestSpot(rangeData["medium"], TRUE).
 	findLowestSpot(rangeData["short"], TRUE).
@@ -248,20 +248,20 @@ UNTIL AG1 {
 //	ELSE IF rangeData["medium"]["terrainHeight"] > rangeData["short"]["terrainHeight"] SET H_PID:SETPOINT TO 10.0.
 //	ELSE SET H_PID:SETPOINT TO 5.0.
 
-	IF rangeData["long"]["northOffset"] <> 0 AND rangeData["long"]["northOffset"] <> 0 SET desiredHeading TO yaw_vector(rangeData["long"]["northOffset"] * NORTH + rangeData["long"]["eastOffset"] * east).
-	ELSE 																																							 SET desiredHeading TO yaw_vector(rangeData["medium"]["northOffset"] * NORTH + rangeData["medium"]["eastOffset"] * east).
+	IF rangeData["long"]["northOffset"] <> 0 AND rangeData["long"]["northOffset"] <> 0 SET desiredHeading TO yaw_for(rangeData["long"]["northOffset"] * NORTH + rangeData["long"]["eastOffset"] * east).
+	ELSE 																																							 SET desiredHeading TO yaw_for(rangeData["medium"]["northOffset"] * NORTH + rangeData["medium"]["eastOffset"] * east).
   SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-	SET headingSteeringAdjust TO -2 * ABS(angleDifference(desiredHeading, yaw_vector(VELOCITY:SURFACE))).
+	SET headingSteeringAdjust TO -2 * ABS(angleDifference(desiredHeading, yaw_for(VELOCITY:SURFACE))).
 	IF H_PID:INPUT < 0 SET headingSteeringAdjust TO -headingSteeringAdjust.
 	IF headingSteeringAdjust > 30 SET headingSteeringAdjust TO 30.
 	IF headingSteeringAdjust < 30 SET headingSteeringAdjust TO -30.
   SET mySteer TO HEADING (desiredHeading + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, highDirectionSpeed)).
 	PRINT "desiredHeading at " + ROUND(desiredHeading, 2) + " deg from north    " AT (0, 12).
-	PRINT "Surface Velocity heading at " + ROUND(yaw_vector(VELOCITY:SURFACE), 2) + " deg from north     " AT (0, 13).
+	PRINT "Surface Velocity heading at " + ROUND(yaw_for(VELOCITY:SURFACE), 2) + " deg from north     " AT (0, 13).
 	PRINT "headingSteeringAdjust at " + ROUND(headingSteeringAdjust, 2) + " deg    " AT (0, 14).
 	PRINT "mySteer at " + ROUND(mySteer:YAW, 2) + " deg from north    " AT (0, 15).
 	PRINT "Horizontal Speed SP " + distanceToString(H_PID:SETPOINT, 2) + "/s     " AT (0, 16).
-	PRINT "Item 1 " + ROUND(angleDifference(desiredHeading, yaw_vector(VELOCITY:SURFACE))) + " degrees difference    " AT (0, 17).
+	PRINT "Item 1 " + ROUND(angleDifference(desiredHeading, yaw_for(VELOCITY:SURFACE))) + " degrees difference    " AT (0, 17).
 
 	SET headingOffsetVD:VEC TO 10*HEADING(desiredHeading + headingSteeringAdjust, 0):VECTOR.
 	SET headingCourseVD:VEC TO 10*HEADING(desiredHeading                        , 0):VECTOR.
@@ -273,8 +273,6 @@ SET myThrottle TO 0.
 SET mySteer TO SHIP:UP.
 SET useMySteer TO FALSE.
 SET useMyThrottle TO FALSE.
-
-endScript().
 
 IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Landed on " + SHIP:BODY:NAME.
 ELSE SET loopMessage TO "Something went wrong - still moving relative to surface of " + SHIP:BODY:NAME.
