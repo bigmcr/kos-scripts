@@ -119,6 +119,7 @@ FUNCTION updateScreen {
     LOCAL freeSpaces IS "".
     LOCAL fileCounts IS "".
     LOCAL powerReqs IS "".
+    LOCAL bootFiles IS "".
     LOCAL processorList IS LIST().
     LIST PROCESSORS IN processorList.
     FOR eachProc IN processorList {
@@ -128,6 +129,7 @@ FUNCTION updateScreen {
       SET freeSpaces TO freeSpaces + eachProc:VOLUME:FREESPACE:TOSTRING:PADLEFT(10).
       SET fileCounts TO fileCounts + CORE:VOLUME:FILES:LENGTH:TOSTRING:PADLEFT(10).
       SET powerReqs TO powerReqs + ROUND(CORE:VOLUME:POWERREQUIREMENT, 2):TOSTRING:PADLEFT(10).
+      SET bootFiles TO bootFiles + CORE:BOOTFILENAME:PADLEFT(10).
     }
     PRINT "Processor count           " + processorList:LENGTH:TOSTRING:PADLEFT(10) AT (0, 13).
     PRINT "Volume Name               " + names AT (0, 14).
@@ -135,6 +137,7 @@ FUNCTION updateScreen {
     PRINT "Volume Free Space         " + freeSpaces + " bytes" AT (0, 16).
     PRINT "Volume File Count         " + fileCounts AT (0, 17).
     PRINT "Volume Power Requirement  " + powerReqs + " E/s" AT (0, 18).
+    PRINT "Core Boot File            " + bootFiles AT (0, 19).
   }
 
 	SET timeDelta TO MISSIONTIME - oldTime.
