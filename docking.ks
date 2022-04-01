@@ -12,10 +12,10 @@ LOCAL targetVelocity IS V(0,0,0).
 IF TARGET:TYPENAME = "DockingPort" LOCK targetVelocity TO TARGET:SHIP:VELOCITY:ORBIT - SHIP:VELOCITY:ORBIT.
 ELSE LOCK targetVelocity TO TARGET:VELOCITY:ORBIT - SHIP:VELOCITY:ORBIT.
 
-SET mySteer TO SHIP:FACING.
-SET myThrottle TO 0.
-SET useMySteer TO TRUE.
-SET useMyThrottle TO TRUE.
+SET globalSteer TO SHIP:FACING.
+SET globalThrottle TO 0.
+setLockedSteering(TRUE).
+setLockedThrottle(TRUE).
 
 SET RCS TO useRCS.
 SAS OFF.
@@ -54,7 +54,6 @@ LOCAL dirDistance IS getDirDistance().
 LOCAL dirVelocity IS V(0,0,0).
 LOCAL startPartCount TO SHIP:PARTS:LENGTH.
 LOCAL logFileName IS "0:Docking.csv".
-LOCK mySteer TO (-(TARGET:FACING:VECTOR)):DIRECTION.
 
 ON (NOT HASTARGET) {
 	SET mode TO "Done".
@@ -63,6 +62,7 @@ ON (NOT HASTARGET) {
 IF connectionToKSC() LOG "Elapsed Time,Position PID Setpoint,Position PID Input,Position PID Output,Velocity PID Setpoint,Velocity PID Input,Velocity PID Output" TO logFileName.
 
 UNTIL mode = "Done" {
+	SET globalSteer TO (-(TARGET:FACING:VECTOR)):DIRECTION.
 	SET dirDistance TO getDirDistance().
 	SET elapsedTime TO TIME:SECONDS - startTime.
 	SET dirVelocity TO getDirVelocity().
@@ -103,3 +103,5 @@ UNTIL mode = "Done" {
 	SET oldDistance TO getDirDistance().
 	WAIT 0.
 }
+
+SET loopMessage TO "Sucessfully docked!".

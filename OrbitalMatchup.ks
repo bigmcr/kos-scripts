@@ -44,10 +44,10 @@ IF NOT HASTARGET {SET mode TO "Done". SET loopMessage TO "Error! No target selec
 
 IF (mode <> "Done") {
 	LOCAL closestApproachTime IS closestApproach().
-	SET mySteer TO SHIP:FACING.
-	SET myThrottle TO 0.
-	SET useMySteer TO TRUE.
-	SET useMyThrottle TO TRUE.
+	SET globalSteer TO SHIP:FACING.
+	SET globalThrottle TO 0.
+	setLockedSteering(TRUE).
+	setLockedThrottle(TRUE).
 
 	SAS OFF.
 	RCS OFF.
@@ -89,7 +89,7 @@ IF (mode <> "Done") {
 		PRINT "Target Distance: " + ROUND(TARGET:POSITION:MAG, 2) + " m  " AT (0, 5).
 
 		IF (mode = "Waiting") {
-			SET myThrottle TO 0.
+			SET globalThrottle TO 0.
 			IF (timeToRez - burnTime < 5) {
 				SET mode TO "Throttling".
 				SET KUNIVERSE:TIMEWARP:WARP TO 0.
@@ -100,8 +100,8 @@ IF (mode <> "Done") {
 		}
 		IF (mode = "Throttling") {
 			SET T_PID:SETPOINT TO burnTime.
-			SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, timeToRez).
-			SET mySteer TO ((-targetVelocity) * ROTATEFROMTO(-TARGET:POSITION, -targetVelocity)) * ROTATEFROMTO(-TARGET:POSITION, -targetVelocity).
+			SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, timeToRez).
+			SET globalSteer TO ((-targetVelocity) * ROTATEFROMTO(-TARGET:POSITION, -targetVelocity)) * ROTATEFROMTO(-TARGET:POSITION, -targetVelocity).
 			IF TARGET:POSITION:MAG < 1000 {
 				SET mode TO "Final".
 				SET KUNIVERSE:TIMEWARP:WARP TO 0.
@@ -109,9 +109,9 @@ IF (mode <> "Done") {
 			}
 		}
 		IF (mode = "Final") {
-			SET mySteer TO -targetVelocity.
+			SET globalSteer TO -targetVelocity.
 			IF (isStockRockets()) {
-				SET myThrottle TO MIN(1, MAX(targetVelocity:MAG / finalVelocity, 0.1)).
+				SET globalThrottle TO MIN(1, MAX(targetVelocity:MAG / finalVelocity, 0.1)).
 			}
 			IF (targetVelocity:MAG < 1) {SET mode TO "Done". SET loopMessage TO "Sucessfully zeroed out target velocity".}
 		}
@@ -126,5 +126,5 @@ IF (mode <> "Done") {
 		WAIT 0.
 	}
 }
-SET useMySteer TO FALSE.
-SET useMyThrottle TO FALSE.
+setLockedSteering(FALSE).
+setLockedThrottle(FALSE).

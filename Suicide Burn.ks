@@ -13,16 +13,16 @@ IF useVelocity SET margin TO 1.
 // For f(x) = ax^2+bx+b,                        c,           b,           a
 LOCAL burnDistanceCorrections IS LIST(-23.9625505, 1.033597489, 8.32543E-07).
 
-LOCAL T_PID_Spd IS PIDLOOP(0.3, 0.1, 0.1, 0, 1).			// PID loop to control trottle during vertical descent phase
+LOCAL T_PID_Spd IS PIDLOOP(0.1, 0.3, 0.1, 0, 1).			// PID loop to control trottle during vertical descent phase
 
 updateShipInfo().
 
 SAS OFF.
 RCS OFF.
-SET myThrottle TO 0.
-SET useMyThrottle TO true.
-SET mySteer TO -VELOCITY:SURFACE.
-SET useMySteer TO true.
+SET globalThrottle TO 0.
+setLockedThrottle(TRUE).
+SET globalSteer TO -VELOCITY:SURFACE.
+setLockedSteering(TRUE).
 LOCAL mode IS 0.
 LOCAL currentMargin IS 0.
 LOCAL requiredVerticalVelocity IS 0.
@@ -112,7 +112,7 @@ UNTIL mode > 3 {
 
 	// coast to close to ignition time. (within 1 second at current velocity)
 	IF mode = 0 {
-		SET mySteer TO -VELOCITY:SURFACE.
+		SET globalSteer TO -VELOCITY:SURFACE.
 		IF VERTICALSPEED < 0 AND KUNIVERSE:TIMEWARP:ISSETTLED AND KUNIVERSE:TIMEWARP:RATE <> 0 AND RTTimeToBurn < 10 SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP - 1.
 		IF RTTimeToBurn < 10 AND VERTICALSPEED < -10 AND KUNIVERSE:TIMEWARP:RATE = 1 {
 			SET KUNIVERSE:timewarp:warp TO 0.
@@ -122,8 +122,8 @@ UNTIL mode > 3 {
 	}
 	// wait for ignition time.
 	IF mode = 1 {
-		IF (GROUNDSPEED < 0.25) SET mySteer TO SHIP:UP:VECTOR.
-		ELSE SET mySteer TO -VELOCITY:SURFACE.
+		IF (GROUNDSPEED < 0.25) SET globalSteer TO SHIP:UP:VECTOR.
+		ELSE SET globalSteer TO -VELOCITY:SURFACE.
 		IF KUNIVERSE:TimeWarp:WARP <> 0 {
 			SET KUNIVERSE:timewarp:mode TO "PHYSICS".
 			SET KUNIVERSE:timewarp:warp TO 0.
@@ -145,17 +145,21 @@ UNTIL mode > 3 {
 	IF mode = 2 {
 		IF useVelocity {
 			SET T_PID_Spd:SETPOINT TO requiredVerticalVelocity.
-			IF VERTICALSPEED < 0 SET myThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, -VELOCITY:SURFACE:MAG).
-			ELSE                 SET myThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, VELOCITY:SURFACE:MAG).
+			IF VERTICALSPEED < 0 SET globalThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, -VELOCITY:SURFACE:MAG).
+			ELSE                 SET globalThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, VELOCITY:SURFACE:MAG).
+		} ELSE {
+			SET globalThrottle TO 1.
 			PRINT "Time remaining in burn:" AT (0, 5).
 			PRINT timeToString(recordedData["Burn Time"] - (MISSIONTIME - burnStartTime), 2):PADLEFT(23) + "     " AT (0, 6).
-		} ELSE SET myThrottle TO 1.
-		IF (GROUNDSPEED < 0.1) SET mySteer TO SHIP:UP:VECTOR.
+		}
+		IF (GROUNDSPEED < 0.1) SET globalSteer TO SHIP:UP:VECTOR.
 		ELSE {
-			IF GROUNDSPEED < 1 					SET mySteer TO HEADING(yaw_vector(-VELOCITY:SURFACE), pitch_vector(-VELOCITY:SURFACE) - 1).
-			ELSE IF GROUNDSPEED < 10 		SET mySteer TO HEADING(yaw_vector(-VELOCITY:SURFACE), pitch_vector(-VELOCITY:SURFACE) - 2).
-			ELSE IF GROUNDSPEED < 100		SET mySteer TO HEADING(yaw_vector(-VELOCITY:SURFACE), pitch_vector(-VELOCITY:SURFACE) - 5).
-			ELSE 												SET mySteer TO HEADING(yaw_vector(-VELOCITY:SURFACE), pitch_vector(-VELOCITY:SURFACE) - 10).
+			LOCAL pitchOffset IS 0.
+			IF GROUNDSPEED < 1 					SET pitchOffset TO 1.
+			ELSE IF GROUNDSPEED < 10 		SET pitchOffset TO 2.
+			ELSE IF GROUNDSPEED < 100		SET pitchOffset TO 5.
+			ELSE 												SET pitchOffset TO 10.
+			SET globalSteer TO HEADING(yaw_for(-VELOCITY:SURFACE), pitch_for(-VELOCITY:SURFACE) - pitchOffset).
 		}
 		IF VERTICALSPEED > 0 OR aboveGround < 0.5 OR (NOT useVelocity AND ABS(recordedData["Burn Time"] - (MISSIONTIME - burnStartTime)) < 0.1) {
 			advanceMode().
@@ -165,7 +169,7 @@ UNTIL mode > 3 {
 			                         "," + recordedData["Start Altitude"] + "," + recordedData["End Altitude"] + "," + recordedData["Burn Time"] +
 															 "," + recordedData["Burn Distance"] + "," + recordedData["Safety Margin"] + "," + SHIP:GEOPOSITION:TERRAINHEIGHT +
 															 "," + BODY:NAME + "," + useVelocity TO "0:suicideBurnCalcs.csv".
-			SET myThrottle TO 0.
+			SET globalThrottle TO 0.
 			WAIT 0.
 		}
 	}
@@ -177,14 +181,14 @@ UNTIL mode > 3 {
 		IF aboveGround > 500 SET T_PID_Spd:SETPOINT TO -25.
 		IF aboveGround > 1000 SET T_PID_Spd:SETPOINT TO -50.
 		PRINT "Verical Velocity Setpoint: " + ROUND(T_PID_Spd:SETPOINT, 2) AT (0, 6).
-		SET myThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		IF (GROUNDSPEED < 0.1) SET mySteer TO SHIP:UP:VECTOR.
-		ELSE SET mySteer TO -VELOCITY:SURFACE.
+		SET globalThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, VERTICALSPEED).
+		IF (GROUNDSPEED < 0.1) SET globalSteer TO SHIP:UP:VECTOR.
+		ELSE SET globalSteer TO -VELOCITY:SURFACE.
 		IF aboveGround < 0.5 advanceMode().
 	}
 }
-SET mySteer TO HEADING(90, 90).
-SET myThrottle TO 0.
+SET globalSteer TO HEADING(90, 90).
+SET globalThrottle TO 0.
 WAIT 5.
 PANELS ON.
 SET loopMessage TO "SB Ended: " + distanceToString(recordedData["End Altitude"]) + " above ground".

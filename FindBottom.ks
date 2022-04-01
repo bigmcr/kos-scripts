@@ -32,13 +32,11 @@ LOCAL update IS 0.
 LOCAL mode TO 1.
 LOCAL cancelHoriz IS TRUE.
 
-UNLOCK mySteer.
-UNLOCK myThrottle.
-SET mySteer TO -VELOCITY:SURFACE.
-SET myThrottle TO 0.
+SET globalSteer TO -VELOCITY:SURFACE.
+SET globalThrottle TO 0.
 
-SET useMySteer TO TRUE.
-SET useMyThrottle TO TRUE.
+setLockedSteering(TRUE).
+setLockedThrottle(TRUE).
 SAS OFF.
 RCS OFF.
 PANELS OFF.
@@ -49,7 +47,7 @@ WHEN MAXTHRUST = 0 THEN {
 	stageFunction().
 }
 
-SET myThrottle TO 1.
+SET globalThrottle TO 1.
 
 LOCAL pitchValue IS 0.
 LOCAL headingValue IS 90.
@@ -175,12 +173,12 @@ UNTIL AG1 {
 //	SET T_PID:SETPOINT TO ALT_PID:UPDATE(TIME:SECONDS, aboveGround).
 	SET H_PID:SETPOINT TO 5.0.
 
-  SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
+  SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 	IF H_PID:OUTPUT < 0 SET headingSteeringAdjust TO - 2 * sideSpeed.
 	ELSE SET headingSteeringAdjust TO 2 * sideSpeed.
 	IF headingSteeringAdjust > 30 SET headingSteeringAdjust TO 30.
 	IF headingSteeringAdjust < 30 SET headingSteeringAdjust TO -30.
-  SET mySteer TO HEADING (downSlopeInfo["heading"] + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, downslopeSpeed)).
+  SET globalSteer TO HEADING (downSlopeInfo["heading"] + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, downslopeSpeed)).
 
 	SET downslopeSpeedVecDraw:SHOW TO TRUE.
 	SET sideSpeedVecDraw:SHOW TO TRUE.
@@ -190,10 +188,10 @@ UNTIL AG1 {
 	WAIT 0.
 }
 
-SET myThrottle TO 0.
-SET mySteer TO SHIP:UP.
-SET useMySteer TO FALSE.
-SET useMyThrottle TO FALSE.
+SET globalThrottle TO 0.
+SET globalSteer TO SHIP:UP.
+setLockedSteering(FALSE).
+setLockedThrottle(FALSE).
 
 IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Landed on " + SHIP:BODY:NAME.
 ELSE SET loopMessage TO "Something went wrong - still moving relative to surface of " + SHIP:BODY:NAME.

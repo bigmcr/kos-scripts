@@ -24,13 +24,10 @@ LOCAL update IS 0.
 LOCAL mode TO 1.
 LOCAL cancelHoriz IS TRUE.
 
-UNLOCK mySteer.
-UNLOCK myThrottle.
-SET mySteer TO -VELOCITY:SURFACE.
-SET myThrottle TO 0.
-
-SET useMySteer TO TRUE.
-SET useMyThrottle TO TRUE.
+SET globalSteer TO -VELOCITY:SURFACE.
+SET globalThrottle TO 0.
+setLockedSteering(TRUE).
+setLockedThrottle(TRUE).
 SAS OFF.
 RCS OFF.
 PANELS OFF.
@@ -40,7 +37,7 @@ FUNCTION advanceMode {
 	SET mode TO mode + 1.
 }
 
-SET myThrottle TO 1.
+SET globalThrottle TO 1.
 
 LOCAL pitchValue IS 0.
 LOCAL headingValue IS 90.
@@ -154,8 +151,8 @@ UNTIL mode > 6 {
 		PRINT "Peri = " + distanceToString(PERIAPSIS, 2) AT (40, 1).
 		PRINT "Peri < " + distanceToString(desiredPeri, 2) AT (40, 2).
 
-		SET myThrottle TO 1.
-		SET mySteer TO -VELOCITY:SURFACE.
+		SET globalThrottle TO 1.
+		SET globalSteer TO -VELOCITY:SURFACE.
 		IF (SHIP:ORBIT:PERIAPSIS < desiredPeri) {advanceMode().}
 	}
 
@@ -163,8 +160,8 @@ UNTIL mode > 6 {
 	IF mode = 2 {
 		PRINT "AGL = " + distanceToString(ALTITUDE, 2) + "        " AT (40, 1).
 		PRINT "AGL < " + distanceToString(desiredPeri, 2) + "    " AT (40, 2).
-		SET myThrottle TO 0.
-		SET mySteer TO -VELOCITY:SURFACE.
+		SET globalThrottle TO 0.
+		SET globalSteer TO -VELOCITY:SURFACE.
 		IF (ALTITUDE < desiredPeri) {advanceMode().}
 		IF ALTITUDE > SHIP:BODY:ATM:HEIGHT + 2500 {
 			SET KUNIVERSE:TIMEWARP:MODE TO "RAILS".
@@ -178,8 +175,8 @@ UNTIL mode > 6 {
 	IF mode = 3 {
 		PRINT "Speed SP = " + distanceToString(initialSpeed * 0.25, 2) + "/s    " AT (40, 1).
 		PRINT "Speed = " + distanceToString(VELOCITY:SURFACE:MAG, 2) + "/s     " AT (40, 2).
-	  SET myThrottle TO 1.
-		SET mySteer TO -VELOCITY:SURFACE.
+	  SET globalThrottle TO 1.
+		SET globalSteer TO -VELOCITY:SURFACE.
 
 		IF (VELOCITY:SURFACE:MAG < initialSpeed * 0.25) advanceMode().
 	}
@@ -189,8 +186,8 @@ UNTIL mode > 6 {
 		PRINT "Chutes = " + CHUTES + "        " AT (40, 1).
 		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 2).
 		PRINT "AGL = 1000        " AT (40, 3).
-		SET myThrottle TO 0.
-		SET mySteer TO -VELOCITY:SURFACE.
+		SET globalThrottle TO 0.
+		SET globalSteer TO -VELOCITY:SURFACE.
 		IF (CHUTES AND (aboveGround < 1000)) advanceMode().
 	}
 	// Mode 5 - Maintain Vertical Speed at setpoint until height above ground is less than 2 meters
@@ -202,12 +199,12 @@ UNTIL mode > 6 {
 		IF (aboveGround > 50) {SET T_PID:SETPOINT TO -aboveGround/5. SET minPitch TO 70.}
 		ELSE IF (aboveGround > 25) {SET T_PID:SETPOINT TO -1. SET KUNIVERSE:TIMEWARP:WARP TO 0. SET minPitch TO 85.}
 		ELSE IF (aboveGround < 2) {advanceMode().}
-		SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
+		SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 		IF cancelHoriz AND GROUNDSPEED < 0.25 SET cancelHoriz TO FALSE.
 		IF NOT cancelHoriz AND GROUNDSPEED > 0.5 SET cancelHoriz TO TRUE.
 
-		IF NOT cancelHoriz SET mySteer TO HEADING (0, 90).
-		ELSE SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+		IF NOT cancelHoriz SET globalSteer TO HEADING (0, 90).
+		ELSE SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
 
 		GEAR ON.
 		LIGHTS ON.
@@ -218,17 +215,17 @@ UNTIL mode > 6 {
 		RCS ON.
 		PRINT "Vertical Drop    " AT (40, 1).
 		PRINT "AGL = " + ROUND(aboveGround) + "       " AT (40, 2).
-		SET myThrottle TO 0.
-		SET mySteer TO SHIP:UP.
+		SET globalThrottle TO 0.
+		SET globalSteer TO SHIP:UP.
 		IF (TIME:SECONDS > startTime + 5) advanceMode().
 	}
 	WAIT 0.
 }
 
-SET myThrottle TO 0.
-SET mySteer TO SHIP:UP.
-SET useMySteer TO FALSE.
-SET useMyThrottle TO FALSE.
+SET globalThrottle TO 0.
+SET globalSteer TO SHIP:UP.
+setLockedSteering(FALSE).
+setLockedThrottle(FALSE).
 
 IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Landed on " + SHIP:BODY:NAME.
 ELSE SET loopMessage TO "Something went wrong - still moving relative to surface of " + SHIP:BODY:NAME.

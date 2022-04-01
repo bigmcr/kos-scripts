@@ -5,13 +5,15 @@ CLEARSCREEN.
 LOCAL desiredPeri IS 60000.
 LOCAL facePrograde IS false.
 
+setLockedSteering(TRUE).
+
 SAS OFF.
 RCS ON.
 
 // If the current periapsis is not within 1km of the desired periapsis, use RCS to adjust periapsis
 IF (ABS(PERIAPSIS - desiredPeri) > 1000) {
 	PRINT "Periapsis Incorrect, adjusting using RCS".
-	LOCK mySteer TO SHIP:VELOCITY:ORBIT.
+	SET globalSteer TO SHIP:VELOCITY:ORBIT.
 	PRINT "Pointing Prograde".
 	waitUntilFinishedRotating().
 	PRINT "Raising Periapsis".
@@ -25,7 +27,7 @@ IF (ABS(PERIAPSIS - desiredPeri) > 1000) {
 		IF (PERIAPSIS < desiredPeri - 5000) SET SHIP:CONTROL:FORE TO 1.
 		ELSE SET SHIP:CONTROL:FORE TO 0.25.
 	}
-	
+
 	// After periapsis adjustment, kill all FORE control
 	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
 }
@@ -33,7 +35,7 @@ IF (ABS(PERIAPSIS - desiredPeri) > 1000) {
 RCS OFF.
 
 PRINT "Locking steering to the primary".
-LOCK mySteer TO BODY("Sun"):DIRECTION.
+SET globalSteer TO BODY("Sun"):DIRECTION.
 
 waitUntilFinishedRotating().
 
@@ -42,12 +44,12 @@ warpToTime(TIME:SECONDS + ETA:PERIAPSIS - 5 * 60).
 
 IF NOT facePrograde {
 	PRINT "Locking steering to surface retrograde".
-	// for the first part, lock steering to surface retrograde
-	LOCK mySteer TO -SHIP:VELOCITY:SURFACE.
+	// for the first part, set steering to surface retrograde
+	SET globalSteer TO -SHIP:VELOCITY:SURFACE.
 } ELSE {
 	PRINT "Locking steering to surface prograde".
-	// for the first part, lock steering to surface retrograde
-	LOCK mySteer TO SHIP:VELOCITY:SURFACE.
+	// for the first part, set steering to surface retrograde
+	SET globalSteer TO SHIP:VELOCITY:SURFACE.
 }
 
 SAS OFF.
@@ -68,6 +70,5 @@ UNTIL ALTITUDE < 20000 AND SHIP:VELOCITY:SURFACE:MAG < 1000 {
 	SET prevTime TO TIME:SECONDS.
 	WAIT 0.1.
 }
-UNLOCK mySteer.
 stageFunction().													// this is supposed to trigger the parachutes
 SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot

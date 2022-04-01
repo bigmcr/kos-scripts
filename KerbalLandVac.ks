@@ -27,13 +27,11 @@ LOCAL update IS 0.
 LOCAL mode TO 1.
 LOCAL cancelHoriz IS TRUE.
 
-UNLOCK mySteer.
-UNLOCK myThrottle.
-SET mySteer TO -VELOCITY:SURFACE.
-SET myThrottle TO 0.
+SET globalSteer TO -VELOCITY:SURFACE.
+SET globalThrottle TO 0.
 
-SET useMySteer TO TRUE.
-SET useMyThrottle TO TRUE.
+setLockedSteering(TRUE).
+setLockedThrottle(TRUE).
 SAS OFF.
 RCS OFF.
 PANELS OFF.
@@ -49,7 +47,7 @@ FUNCTION advanceMode {
 	SET mode TO mode + 1.
 }
 
-SET myThrottle TO 1.
+SET globalThrottle TO 1.
 
 LOCAL pitchValue IS 0.
 LOCAL headingValue IS 90.
@@ -171,7 +169,7 @@ UNTIL mode > 5 {
 		PRINT "SrfVel Pitch > 45" AT (40, 2).
 		PRINT "             " AT (40, 3).
 		PRINT "SrfVel Pitch " + ROUND(velocityPitch, 2) + "      " AT (40, 4).
-		SET mySteer TO -VELOCITY:SURFACE.
+		SET globalSteer TO -VELOCITY:SURFACE.
 		IF (velocityPitch > 45) {
 			advanceMode().
 		}
@@ -188,9 +186,9 @@ UNTIL mode > 5 {
 		ELSE IF (aboveGround > 10000) SET T_PID:SETPOINT TO -200.
 		ELSE IF (aboveGround > 1000) SET T_PID:SETPOINT TO -50.
 		ELSE {advanceMode().}
-		SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		IF GROUNDSPEED < 0.1 SET mySteer TO HEADING (0, 90).
-		ELSE SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(70, velocityPitch)).
+		SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
+		IF GROUNDSPEED < 0.1 SET globalSteer TO HEADING (0, 90).
+		ELSE SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(70, velocityPitch)).
 	}
 	// Mode 3 - Maintain height above ground with 10 m/s horizontal speed in the direction of downslope until slope is less than 5.0 degrees
 	// Note that the steering is limited to a pitch of 85 degrees at minimum. This limits the remaining horizontal velocity
@@ -204,12 +202,12 @@ UNTIL mode > 5 {
 		ELSE SET T_PID:SETPOINT TO 0.
 		SET H_PID:SETPOINT TO 10.0.
 
-	  SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
+	  SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 		IF H_PID:OUTPUT < 0 SET headingSteeringAdjust TO - 2 * sideSpeed.
 		ELSE SET headingSteeringAdjust TO 2 * sideSpeed.
 		IF headingSteeringAdjust > 30 SET headingSteeringAdjust TO 30.
 		IF headingSteeringAdjust < 30 SET headingSteeringAdjust TO -30.
-	  SET mySteer TO HEADING (groundSlopeHeading + headingSteeringAdjust + 180, 90 - H_PID:UPDATE(TIME:SECONDS, downslopeSpeed)).
+	  SET globalSteer TO HEADING (groundSlopeHeading + headingSteeringAdjust + 180, 90 - H_PID:UPDATE(TIME:SECONDS, downslopeSpeed)).
 
 		SET downslopeDirectionVecDraw:SHOW TO TRUE.
 		SET downslopeSpeedVecDraw:SHOW TO TRUE.
@@ -231,11 +229,11 @@ UNTIL mode > 5 {
 		ELSE IF (aboveGround > 50) {SET T_PID:SETPOINT TO -10. SET minPitch TO 70.}
 		ELSE IF (aboveGround > 25) {SET T_PID:SETPOINT TO -1. SET KUNIVERSE:TIMEWARP:WARP TO 0. SET minPitch TO 85.}
 		ELSE IF (aboveGround < 2) {advanceMode().}
-		SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
+		SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 		IF cancelHoriz AND GROUNDSPEED < 0.25 SET cancelHoriz TO FALSE.
 		IF NOT cancelHoriz AND GROUNDSPEED > 0.5 SET cancelHoriz TO TRUE.
-		IF NOT cancelHoriz SET mySteer TO HEADING (0, 90).
-		ELSE SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+		IF NOT cancelHoriz SET globalSteer TO HEADING (0, 90).
+		ELSE SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
 		GEAR ON.
 		LIGHTS ON.
 		SET downslopeDirectionVecDraw:SHOW TO FALSE.
@@ -252,17 +250,17 @@ UNTIL mode > 5 {
 		PRINT "AGL = " + ROUND(aboveGround) + "       " AT (40, 2).
 		PRINT "SrfSpd " + ROUND(VELOCITY:SURFACE:MAG, 3) + "     " AT (40, 3).
 		PRINT "SrfSpd < 0.5     " AT (40, 4).
-		SET myThrottle TO 0.
-		SET mySteer TO SHIP:UP.
+		SET globalThrottle TO 0.
+		SET globalSteer TO SHIP:UP.
 		IF (TIME:SECONDS > startTime + 5) AND (VELOCITY:SURFACE:MAG < 0.5) advanceMode().
 	}
 	WAIT 0.
 }
 
-SET myThrottle TO 0.
-SET mySteer TO SHIP:UP.
-SET useMySteer TO FALSE.
-SET useMyThrottle TO FALSE.
+SET globalThrottle TO 0.
+SET globalSteer TO SHIP:UP.
+setLockedSteering(FALSE).
+setLockedThrottle(FALSE).
 
 IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Landed on " + SHIP:BODY:NAME.
 ELSE SET loopMessage TO "Something went wrong - still moving relative to surface of " + SHIP:BODY:NAME.

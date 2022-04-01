@@ -24,15 +24,16 @@ IF (shipInfo["CurrentStage"]["ENGINES"]:LENGTH <> 0) IF VANG(shipInfo["CurrentSt
 // only run the script if there is a node to execute
 IF errorCode = "None" {
 	updateShipInfoCurrent(FALSE).
-	updateShipInfoResources().											// update the shipInfo structure with current status of the ship
+	updateShipInfoResources().									// update the shipInfo structure with current status of the ship
 	LOCAL oldRCS IS RCS.												// record the current status of RCS
 	LOCAL oldSAS IS SAS.												// record the current status of SAS
 
-	SET RCS TO useRCSforRotation.										// set RCS to the allowed state for the rotations
-	SAS OFF.															// always turn SAS off, as it interferes with steering control
+	SET RCS TO useRCSforRotation.								// set RCS to the allowed state for the rotations
+	SAS OFF.																		// always turn SAS off, as it interferes with steering control
 
-	SET mySteer TO SHIP:FACING.
-	SET useMySteer TO TRUE.
+	setLockedSteering(FALSE).
+	SET globalSteer TO SHIP:FACING.
+	setLockedSteering(TRUE).
 
 	LOCAL ND TO NEXTNODE.
 	LOCK ND TO NEXTNODE.
@@ -211,11 +212,11 @@ IF errorCode = "None" {
 	IF faceSun AND ND:ETA > 60*60 {
 		LOCAL faceBody IS BODY("Sun").
 		IF debug AND NOT suppressPrinting PRINT "Aligning with the Sun. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
-		LOCK mySteer TO faceBody:POSITION.
+		SET globalSteer TO faceBody:POSITION.
 		//now we need to wait until the body's position vector and ship's facing are aligned
 		WAIT UNTIL ((VANG(FACING:VECTOR, ND:DELTAV) < pointingError ) AND SHIP:ANGULARVEL:MAG < 0.1) OR (ND:ETA <= t_ign + ullage).
 	} ELSE {
-		LOCK mySteer TO ND:DELTAV.
+		SET globalSteer TO ND:DELTAV.
 		IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
 		//now we need to wait until the burn vector and ship's facing are aligned
 		WAIT UNTIL (VANG(FACING:VECTOR, ND:DELTAV) < pointingError AND SHIP:ANGULARVEL:MAG < 0.1) OR (ND:ETA <= t_ign + ullage).
@@ -230,7 +231,7 @@ IF errorCode = "None" {
 	IF (isStockRockets() OR (ullage = 0)) {
 		warpToTime(TIME:SECONDS + ND:ETA - MAX(1.5*t_ign, 30)).
 		IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
-		LOCK mySteer TO ND:DELTAV.
+		SET globalSteer TO ND:DELTAV.
 		IF physicsWarpPerm {
 			SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
 			SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
@@ -243,7 +244,7 @@ IF errorCode = "None" {
 
 		IF faceSun {
 			IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
-			LOCK mySteer TO ND:DELTAV.
+			SET globalSteer TO ND:DELTAV.
 		} ELSE {IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).}
 
 		IF physicsWarpPerm {
@@ -273,26 +274,36 @@ IF errorCode = "None" {
 		}
 	}
 
-	SET myThrottle TO 1.												// set the throttle to max
-	SET useMyThrottle TO TRUE.
-	LOCK mySteer TO ND:DELTAV.
-
 	IF physicsWarpPerm AND t_total > 30 {								// only actually use physics warp if the burn duration is greater than 30 seconds
 		SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
 		SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
 	}
 
+	LOCAL maxStages IS 20.
+	LOCAL executedStages IS 0.
 	LOCAL done TO FALSE.
 	//initial deltav
 	LOCAL DV0 TO ND:DELTAV.
+	SET globalThrottle TO 0.
+	setLockedThrottle(TRUE).
 	UNTIL done
 	{
+		SET globalSteer TO ND:DELTAV.
 		updateShipInfoCurrent(FALSE).
-		IF (MAXTHRUST = 0) {PRINT "Staging from maxthrust". stageFunction().}
+		IF (MAXTHRUST = 0) {SET executedStages TO executedStages + 1. PRINT "Staging from maxthrust". stageFunction().}
+
+		// This drops any empty fuel tanks
+		IF (shipInfo["CurrentStage"]["ResourceMass"] < 1.0 ) {
+			PRINT "Staging from resources".
+			SET executedStages TO executedStages + 1.
+			IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
+			ELSE stageFunction().
+		}
+
 
 		SET dV_req TO ND:DELTAV.
 		// cut the throttle as soon as our nd:deltaV and initial deltaV start facing opposite directions
-		IF VDOT(DV0, ND:DELTAV) < 0
+		IF (VDOT(DV0, ND:DELTAV) < 0) OR (executedStages >= maxStages)
 		{
 			IF debug AND NOT suppressPrinting PRINT "End burn, remaining dV " + distanceToString(ND:DELTAV:MAG, 1) + "/s, vdot: " + ROUND(VDOT(DV0, ND:DELTAV),1).
 			SET done TO TRUE.
@@ -302,13 +313,14 @@ IF errorCode = "None" {
 		IF ND:DELTAV:MAG <= a_f AND physicsWarpPerm {
 			SET KUNIVERSE:TIMEWARP:WARP TO 0.
 			IF (isStockRockets()) {
-				SET myThrottle TO MAX(ND:DELTAV:MAG / a_f, 0.1).
+				SET globalThrottle TO MAX(ND:DELTAV:MAG / a_f, 0.1).
 			}
+		} ELSE {
+			SET globalThrottle TO  1.
 		}
 		WAIT 0.
 	}
-	SET myThrottle TO 0.
-	UNLOCK mySteer.
+	SET globalThrottle TO 0.
 	WAIT 0.
 
 	updateShipInfo().
@@ -324,12 +336,6 @@ IF errorCode = "None" {
 		}
 	}
 
-	SET useMyThrottle TO FALSE.
-	SET useMySteer TO FALSE.
-
-	SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
-
-	endScript().
 	updateShipInfo().													// update the shipInfo structure with current status of the ship
 
 	SET RCS TO oldRCS.													// restore the previous RCS state

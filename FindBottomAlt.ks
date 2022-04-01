@@ -44,14 +44,10 @@ LOCAL update IS 0.
 LOCAL mode TO 1.
 LOCAL cancelHoriz IS TRUE.
 
-UNLOCK mySteer.
-UNLOCK myThrottle.
-SET mySteer TO -VELOCITY:SURFACE.
-SET myThrottle TO 0.
-
-SET useMySteer TO TRUE.
-SET useMyThrottle TO TRUE.
-SAS OFF.
+SET globalSteer TO -VELOCITY:SURFACE.
+SET globalThrottle TO 0.
+setLockedSteering(TRUE).
+setLockedThrottle(TRUE).
 RCS OFF.
 PANELS OFF.
 
@@ -61,7 +57,7 @@ WHEN MAXTHRUST = 0 THEN {
 	stageFunction().
 }
 
-SET myThrottle TO 1.
+SET globalThrottle TO 1.
 
 LOCAL pitchValue IS 0.
 LOCAL headingValue IS 90.
@@ -250,16 +246,16 @@ UNTIL AG1 {
 
 	IF rangeData["long"]["northOffset"] <> 0 AND rangeData["long"]["northOffset"] <> 0 SET desiredHeading TO yaw_for(rangeData["long"]["northOffset"] * NORTH + rangeData["long"]["eastOffset"] * east).
 	ELSE 																																							 SET desiredHeading TO yaw_for(rangeData["medium"]["northOffset"] * NORTH + rangeData["medium"]["eastOffset"] * east).
-  SET myThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
+  SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 	SET headingSteeringAdjust TO -2 * ABS(angleDifference(desiredHeading, yaw_for(VELOCITY:SURFACE))).
 	IF H_PID:INPUT < 0 SET headingSteeringAdjust TO -headingSteeringAdjust.
 	IF headingSteeringAdjust > 30 SET headingSteeringAdjust TO 30.
 	IF headingSteeringAdjust < 30 SET headingSteeringAdjust TO -30.
-  SET mySteer TO HEADING (desiredHeading + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, highDirectionSpeed)).
+  SET globalSteer TO HEADING (desiredHeading + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, highDirectionSpeed)).
 	PRINT "desiredHeading at " + ROUND(desiredHeading, 2) + " deg from north    " AT (0, 12).
 	PRINT "Surface Velocity heading at " + ROUND(yaw_for(VELOCITY:SURFACE), 2) + " deg from north     " AT (0, 13).
 	PRINT "headingSteeringAdjust at " + ROUND(headingSteeringAdjust, 2) + " deg    " AT (0, 14).
-	PRINT "mySteer at " + ROUND(mySteer:YAW, 2) + " deg from north    " AT (0, 15).
+	PRINT "globalSteer at " + ROUND(globalSteer:YAW, 2) + " deg from north    " AT (0, 15).
 	PRINT "Horizontal Speed SP " + distanceToString(H_PID:SETPOINT, 2) + "/s     " AT (0, 16).
 	PRINT "Item 1 " + ROUND(angleDifference(desiredHeading, yaw_for(VELOCITY:SURFACE))) + " degrees difference    " AT (0, 17).
 
@@ -269,10 +265,10 @@ UNTIL AG1 {
 	WAIT 0.
 }
 
-SET myThrottle TO 0.
-SET mySteer TO SHIP:UP.
-SET useMySteer TO FALSE.
-SET useMyThrottle TO FALSE.
+SET globalThrottle TO 0.
+SET globalSteer TO SHIP:UP.
+setLockedSteering(FALSE).
+setLockedThrottle(FALSE).
 
 IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Landed on " + SHIP:BODY:NAME.
 ELSE SET loopMessage TO "Something went wrong - still moving relative to surface of " + SHIP:BODY:NAME.

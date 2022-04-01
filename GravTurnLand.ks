@@ -76,11 +76,11 @@ IF debug PRINT "Main Engines Starting!".
 SET SHIP:CONTROL:FORE TO 0.0.
 RCS OFF.
 
-SET MYTHROTTLE TO 1.
-SET useMyThrottle TO TRUE.
+SET globalThrottle TO 1.
+setLockedThrottle(TRUE).
 
-SET mySteer TO -VELOCITY:SURFACE.
-SET useMySteer TO TRUE.
+SET globalSteer TO -VELOCITY:SURFACE.
+setLockedSteering(TRUE).
 
 // Engine staging - this should drop any used stage
 WHEN MAXTHRUST = 0 THEN {
@@ -131,7 +131,7 @@ UNTIL mode > 5 {
 		LOCAL pitchValue IS pitchPID:UPDATE( TIME:SECONDS, VERTICALSPEED).
 		
 		// make the heading the same direction as surface retrograde
-		SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), pitchValue).
+		SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), pitchValue).
 		IF debug {LOGPID(pitchPID, "GravTurnLandPitchPID.csv", TRUE, 0).}
 	}
 
@@ -143,7 +143,7 @@ UNTIL mode > 5 {
 		PRINT "HSpd <= " + ROUND(initialSpeed * 0.05) + "  " AT (40, 4).
 		LOCAL pitchValue IS pitchPID:UPDATE( TIME:SECONDS, VERTICALSPEED).
 		// make the heading the same direction as surface retrograde
-		SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), pitchValue).
+		SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), pitchValue).
 		IF debug {LOGPID(pitchPID, "GravTurnLandPitchPID.csv", TRUE, 0).}
 	}
 
@@ -154,7 +154,7 @@ UNTIL mode > 5 {
 		PRINT "             " AT (40, 3).
 		PRINT "ETA SB < 0.1 " AT (40, 4).
 		SET throt TO minThrottle.
-		SET mySteer TO -VELOCITY:SURFACE.
+		SET globalSteer TO -VELOCITY:SURFACE.
 	}
 
 	// Mode 3 - Suicide Burn until vertical speed is -10 m/s
@@ -163,8 +163,8 @@ UNTIL mode > 5 {
 		PRINT "VSrf = " + ROUND(VELOCITY:SURFACE:MAG, 0) + "   " AT (40, 2).
 		PRINT "             " AT (40, 3).
 		PRINT "VSrf < 10    " AT (40, 4).
-		SET MYTHROTTLE TO 1.
-		SET mySteer TO -VELOCITY:SURFACE.
+		SET globalThrottle TO 1.
+		SET globalSteer TO -VELOCITY:SURFACE.
 		RUNONCEPATH("SBOnline.ks").
 	}
 
@@ -174,9 +174,9 @@ UNTIL mode > 5 {
 		PRINT "AGL = " + ROUND(aboveGround) + "   " AT (40, 2).
 		PRINT "             " AT (40, 3).
 		PRINT "AGL < 10     " AT (40, 4).
-		SET MYTHROTTLE TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
+		SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 		IF debug {LOGPID(T_PID, "GravTurnLandThrottlePID.csv", TRUE, 1).}
-		SET mySteer TO -VELOCITY:SURFACE.
+		SET globalSteer TO -VELOCITY:SURFACE.
 	}
 
 	// Mode 5 - Drop to the surface and use RCS to stabilize
@@ -185,8 +185,8 @@ UNTIL mode > 5 {
 		PRINT "              " AT (40, 2).
 		PRINT "              " AT (40, 3).
 		PRINT "SVel <= 1.0   " AT (40, 4).
-		SET mySteer TO SHIP:UP.
-		SET MYTHROTTLE TO 0.
+		SET globalSteer TO SHIP:UP.
+		SET globalThrottle TO 0.
 		RCS ON.
 	}
 
@@ -203,8 +203,8 @@ UNTIL mode > 5 {
 	WAIT 0.
 }
 
-SET useMyThrottle TO FALSE.
-SET useMySteer TO FALSE.
+setLockedThrottle(FALSE).
+setLockedSteering(FALSE).
 
 SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
 WAIT 0.1.

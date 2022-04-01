@@ -9,12 +9,12 @@ PARAMETER hardReentry IS FALSE.
 SAS OFF.
 RCS ON.
 
-SET useMySteer TO TRUE.
+setLockedSteering(TRUE).
 
 // If the current periapsis is not within 1km of the desired periapsis, use RCS to adjust periapsis
 IF (ABS(PERIAPSIS - desiredPeri) > 1000) {
 	PRINT "Periapsis Incorrect, adjusting using RCS".
-	LOCK mySteer TO SHIP:VELOCITY:ORBIT.
+	SET globalSteer TO SHIP:VELOCITY:ORBIT.
 	PRINT "Pointing Prograde".
 	waitUntilFinishedRotating().
 	PRINT "Lowering Periapsis".
@@ -28,7 +28,7 @@ IF (ABS(PERIAPSIS - desiredPeri) > 1000) {
 		IF (PERIAPSIS < desiredPeri - 5000) SET SHIP:CONTROL:FORE TO 1.
 		ELSE SET SHIP:CONTROL:FORE TO 0.25.
 	}
-	
+
 	// After periapsis adjustment, kill all FORE control
 	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
 }
@@ -36,7 +36,7 @@ IF (ABS(PERIAPSIS - desiredPeri) > 1000) {
 RCS OFF.
 
 PRINT "Locking steering to the primary".
-LOCK mySteer TO BODY("Sun"):DIRECTION.
+SET globalSteer TO BODY("Sun"):DIRECTION.
 
 waitUntilFinishedRotating().
 
@@ -45,27 +45,26 @@ warpToTime(TIME:SECONDS + ETA:PERIAPSIS - 5 * 60).
 
 IF NOT facePrograde {
 	PRINT "Locking steering to surface retrograde".
-	// for the first part, lock steering to surface retrograde
-	LOCK mySteer TO -SHIP:VELOCITY:SURFACE.
+	// for the first part, set steering to surface retrograde
+	SET globalSteer TO -SHIP:VELOCITY:SURFACE.
 } ELSE {
 	PRINT "Locking steering to surface prograde".
-	// for the first part, lock steering to surface retrograde
-	LOCK mySteer TO SHIP:VELOCITY:SURFACE.
+	// for the first part, set steering to surface retrograde
+	SET globalSteer TO SHIP:VELOCITY:SURFACE.
 }
 
 IF NOT hardReentry {
 	PRINT "Cooked Steering, Level" AT(0,0).
 //	WAIT UNTIL ALTITUDE < 110000 {
 
-	LOCK mySteer TO HEADING(yaw_for(SHIP), 30).
+	SET globalSteer TO HEADING(yaw_for(SHIP), 30).
 
 	PRINT "Cooked Steering, Angled" AT(0,0).
 //	WAIT UNTIL ALTITUDE < 100000 {
 
 	PRINT "Manual Steering" AT (0,0).
 
-	SET useMySteer TO FALSE.
-	UNLOCK mySteer.
+	setLockedSteering(FALSE).
 
 	GLOBAL rollTorquePID TO PIDLOOP(2, 0.3, 0, -1, 1).
 	GLOBAL rollVelocityPID TO PIDLOOP(0.03, 0.01, 0.0625, -0.5, 0.5).
@@ -88,7 +87,7 @@ IF NOT hardReentry {
 	SET SHIP:CONTROL:PITCH TO 0.
 	SET SHIP:CONTROL:YAW TO 0.
 } ELSE {
-	LOCK mySteer TO -SHIP:VELOCITY:SURFACE.
+	SET globalSteer TO -SHIP:VELOCITY:SURFACE.
 }
 
 UNTIL ALTITUDE < 20000 AND SHIP:VELOCITY:SURFACE:MAG < 1000 {
@@ -103,7 +102,7 @@ stageFunction().																// this is supposed to trigger the parachutes
 SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
 
 UNTIL heightAboveGround() < 100 {
-	SET mySteer TO -SHIP:VELOCITY:SURFACE.
+	SET globalSteer TO -SHIP:VELOCITY:SURFACE.
 	WAIT 0.1.
 	IF (NOT CHUTESSAFE) {CHUTESSAFE ON.}
 }

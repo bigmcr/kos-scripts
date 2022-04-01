@@ -28,11 +28,11 @@ LOCAL body_g IS CONSTANT:G * SHIP:BODY:MASS/(SHIP:BODY:RADIUS * SHIP:BODY:RADIUS
 
 SET missionTimeOffset TO MISSIONTIME.		// Used to offset MISSIONTIME to account for time waiting on the pad
 
-SET mySteer TO SHIP:UP.						// Direction for cooked steering
-SET myThrottle TO 1.0.
+SET globalSteer TO SHIP:UP.						// Direction for cooked steering
+SET globalThrottle TO 1.0.
 
-SET useMyThrottle TO TRUE.
-SET useMySteer TO TRUE.
+setLockedThrottle(TRUE).
+setLockedSteering(TRUE).
 
 CLEARSCREEN.
 
@@ -104,7 +104,7 @@ UNTIL mode > 3 {
 	
 	// Vertical climb
 	IF mode = 1 {
-		SET mySteer TO HEADING(0, 90).
+		SET globalSteer TO HEADING(0, 90).
 		// If there is no atmosphere on this body, start the grav turn more quickly
 		IF ALT:RADAR > 100 {
 			SET mode TO 2.
@@ -132,10 +132,10 @@ UNTIL mode > 3 {
 		// note that maxGs is relative to sea level on THIS BODY, not Earth/Kerbin.
 		// desired throttle = (maxGs + body_g - accel from SRBs)/available accel from variable engines
 		IF (shipInfo["Maximum"]["Variable"]["Accel"] <> 0) {
-			SET myThrottle TO ((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]).
-		} ELSE SET myThrottle TO 1.
-//		SET myThrottle TO (maxGs * body_g) / shipInfo["Maximum"]["Accel"].
-		SET myThrottle TO MIN( MAX( myThrottle, 0.05), 1.0).
+			SET globalThrottle TO ((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]).
+		} ELSE SET globalThrottle TO 1.
+//		SET globalThrottle TO (maxGs * body_g) / shipInfo["Maximum"]["Accel"].
+		SET globalThrottle TO MIN( MAX( globalThrottle, 0.05), 1.0).
 
 		logPhysics("0:" + SHIP:NAME + " VacLaunch Physics.csv").
 
@@ -173,7 +173,7 @@ UNTIL mode > 3 {
 			IF ALT:RADAR > 7500 SET mode TO 3.
 
 			// This needs to be updated every scan to keep the pitch at 0 as the craft moves around the planet
-			SET mySteer TO HEADING(modeStartYaw, pitchSetpoint).
+			SET globalSteer TO HEADING(modeStartYaw, pitchSetpoint).
 		}
 		
 		// Maintain vertical speed
@@ -181,7 +181,7 @@ UNTIL mode > 3 {
 			SET PITCH_PID:SETPOINT TO 0.
 			LOCAL pitchValue IS PITCH_PID:UPDATE( TIME:SECONDS, VERTICALSPEED).
 
-			SET mySteer TO HEADING (modeStartYaw, pitchValue).
+			SET globalSteer TO HEADING (modeStartYaw, pitchValue).
 		}
 
 		// when any of the following conditions are met, kill the engine and stop the program
@@ -203,10 +203,10 @@ UNTIL mode > 3 {
 		}
 	}
 }
-SET myThrottle TO 0.0.
+SET globalThrottle TO 0.0.
 
-SET useMyThrottle TO FALSE.
-SET useMySteer TO FALSE.
+setLockedThrottle(FALSE).
+setLockedSteering(FALSE).
 
 SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
 WAIT 0.1.

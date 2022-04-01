@@ -34,8 +34,8 @@ IF errorCode = "None" {
 	RCS ON.																// as the script requires RCS, turn it on
 	SAS OFF.															// always turn SAS off, as it interferes with steering control
 
-	SET mySteer TO SHIP:FACING.
-	SET useMySteer TO TRUE.
+	SET globalSteer TO SHIP:FACING.
+	setLockedSteering(TRUE).
 
 	LOCAL ND TO NEXTNODE.
 	LOCK ND TO NEXTNODE.
@@ -121,7 +121,7 @@ IF errorCode = "None" {
 		SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
 	}
 
-	LOCK mySteer TO ND:DELTAV.
+	SET globalSteer TO ND:DELTAV.
 	IF debug PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
 	//now we need to wait until the burn vector and ship's facing are aligned
 	WAIT UNTIL (ABS(ND:DELTAV:DIRECTION:PITCH - FACING:PITCH) < 0.15 AND ABS(ND:DELTAV:DIRECTION:YAW - FACING:YAW) < 0.15 AND SHIP:ANGULARVEL:MAG < 0.01).
@@ -135,7 +135,6 @@ IF errorCode = "None" {
 	// if ullage is not a concern, warp to 15 seconds before burntime
 	warpToTime(TIME:SECONDS + ND:ETA - t_ign - 15).
 	IF debug PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
-	LOCK mySteer TO ND:DELTAV.
 	IF physicsWarpPerm {
 		SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
 		SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
@@ -145,7 +144,6 @@ IF errorCode = "None" {
 	IF debug PRINT "Starting the burn!".
 
 	SET SHIP:CONTROL:FORE TO 1.											// set the throttle to max
-	LOCK mySteer TO ND:DELTAV.
 
 	IF physicsWarpPerm AND t_total > 30 {								// only actually use physics warp if the burn duration is greater than 30 seconds
 		SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
@@ -161,6 +159,7 @@ IF errorCode = "None" {
 	LOCAL DV0 TO ND:DELTAV.
 	UNTIL done
 	{
+		SET globalSteer TO ND:DELTAV.
 		SET dV_req TO ND:DELTAV.
 		// cut the throttle as soon as our nd:deltaV and initial deltaV start facing opposite directions
 		IF VDOT(DV0, ND:DELTAV) < 0
@@ -175,9 +174,8 @@ IF errorCode = "None" {
 		}
 		WAIT 0.
 	}
-	UNLOCK mySteer.
 
-	SET useMySteer TO FALSE.
+	setLockedSteering(FALSE).
 
 	SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
 

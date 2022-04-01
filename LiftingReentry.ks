@@ -3,16 +3,16 @@ CLEARSCREEN.
 SAS OFF.
 RCS ON.
 
-// for the first part, lock steering to surface retrograde
+// for the first part, set steering to surface retrograde
 
-LOCK mySteer TO -SHIP:VELOCITY:SURFACE.
+SET globalSteer TO -SHIP:VELOCITY:SURFACE.
 
 UNTIL ALTITUDE < 110000 {
 	PRINT "Cooked Steering, Level" AT(0,0).
 	WAIT 0.5.
 }
 
-LOCK mySteer TO HEADING(yaw_for(SHIP), 30).
+SET globalSteer TO HEADING(yaw_for(SHIP), 30).
 
 UNTIL ALTITUDE < 100000 {
 	PRINT "Cooked Steering, Angled" AT(0,0).
@@ -20,8 +20,6 @@ UNTIL ALTITUDE < 100000 {
 }
 
 PRINT "Manual Steering" AT (0,0).
-
-UNLOCK mySteer.
 
 GLOBAL rollTorquePID TO PIDLOOP(2, 0.3, 0, -1, 1).
 GLOBAL rollVelocityPID TO PIDLOOP(0.03, 0.01, 0.0625, -0.5, 0.5).
@@ -75,7 +73,7 @@ SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
 
 
 UNTIL heightAboveGround() < 100 {
-	SET mySteer TO -SHIP:VELOCITY:SURFACE.
+	SET globalSteer TO -SHIP:VELOCITY:SURFACE.
 	WAIT 0.1.
 	IF (NOT CHUTESSAFE) {CHUTESSAFE ON.}
 }

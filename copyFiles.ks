@@ -12,9 +12,7 @@ colorList:ADD(WHITE).
 colorList:ADD(BLACK).
 
 LOCAL processorList IS LIST().
-FOR eachPart IN SHIP:PARTS {
-  IF eachPart:HASMODULE("kOSProcessor") processorList:ADD(eachPart).
-}
+LIST PROCESSORS IN processorList.
 
 LOCAL coreHighlight TO LIST().
 FOR eachProcessor IN processorList {

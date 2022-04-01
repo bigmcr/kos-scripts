@@ -9,12 +9,15 @@ GLOBAL g_0 IS 9.80665.               			// Gravitational acceleration constant (
 GLOBAL augerList IS SHIP:PARTSTITLEDPATTERN("Auger").
 GLOBAL smelterList IS SHIP:PARTSTITLEDPATTERN("Smelter").
 GLOBAL minThrottle IS 0.2.
-GLOBAL facingVector   IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN SHIP:FACING:VECTOR * 10.}           , RED,   "                 Facing", 1).
-GLOBAL guidanceVector IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN STEERINGMANAGER:TARGET:VECTOR * 10.}, GREEN, "Guidance               ", 1).
+GLOBAL facingVector   IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN SHIP:FACING:VECTOR * 10.}           , RED,   ".                 Facing", 1, TRUE).
+GLOBAL guidanceVector IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION.}, {RETURN STEERINGMANAGER:TARGET:VECTOR * 10.}, GREEN, "Guidance                ", 1, TRUE).
+GLOBAL facingVectorFace   IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION + SHIP:FACING:VECTOR * 10.}, {RETURN SHIP:FACING:TOPVECTOR * 5.}           , RED,   "", 1, TRUE).
+GLOBAL guidanceVectorFace IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION + STEERINGMANAGER:TARGET:VECTOR * 10.}, {RETURN STEERINGMANAGER:TARGET:TOPVECTOR * 5.}, GREEN, "", 1, TRUE).
 LOCAL shipInfoCurrentLoggingStarted IS FALSE.
 LOCAL logPhysicsTimeStamp IS 0.
 GLOBAL timeSinceLaunch IS 0.
 GLOBAL bounds IS SHIP:BOUNDS.
+GLOBAL resourceList IS LEXICON().
 CLEARVECDRAWS().
 
 LOCK timeSinceLaunch TO MISSIONTIME - missionTimeOffset.
@@ -25,6 +28,13 @@ LOCAL partListTree IS LEXICON().
 LOCAL decouplerList IS LIST().
 
 updateShipInfo().
+
+FUNCTION updateFacingVectors {
+	SET facingVector:SHOW TO NOT MAPVIEW.
+	SET guidanceVector:SHOW TO NOT MAPVIEW AND STEERINGMANAGER:ENABLED.
+	SET facingVectorFace:SHOW TO NOT MAPVIEW.
+	SET guidanceVectorFace:SHOW TO NOT MAPVIEW AND STEERINGMANAGER:ENABLED.
+}
 
 FUNCTION isDecoupler {
 	PARAMETER examinePart.
@@ -268,6 +278,15 @@ FUNCTION updateShipInfo {
 	SET augerList TO SHIP:PARTSTITLEDPATTERN("Auger").
 	SET smelterList TO SHIP:PARTSTITLEDPATTERN("Smelter").
 	updateBounds().
+
+	resourceList:CLEAR.
+	FOR eachResource IN SHIP:RESOURCES {
+		resourceList:ADD(eachResource:NAME, LEXICON(    "Quantity", eachResource:AMOUNT,
+																								        "Mass", eachResource:AMOUNT * eachResource:DENSITY * 1000,
+																								     "Density", eachResource:DENSITY,
+																								"Quantity Use", 0,
+																								    "Mass Use", 0)).
+	}
 }
 
 // Log Ship Info
@@ -1266,7 +1285,7 @@ FUNCTION engineInfo {
 	LOCAL maxLength IS 0.
 	LOCAL engineStat IS LIST().
 	LOCAL thrustDecimals IS 2.
-	LOCAL throttleAdjust IS THROTTLE.
+	LOCAL throttleAdjust IS 0.
 	FOR engType IN engineData:KEYS {
 		IF engType:LENGTH > maxLength SET maxLength TO engType:LENGTH.
 	}
@@ -1324,46 +1343,6 @@ FUNCTION engineInfo {
 //			current height above ground (scalar, meters)
 FUNCTION heightAboveGround {
 	RETURN bounds:BOTTOMALTRADAR.
-}
-
-// Stage Function
-// This function activates a stage and updates the appropriate stage information
-// If the rocket is below 75% of the way through the atmosphere, the rocket points prograde before and
-// after staging. The reason is to allow the staged rocket parts to drop behind without colliding with
-// the rocket. This prevents the spent stage from being pushed into the rocket by aerodynamic forces.
-// Passed the following
-//			waitTime (scalar, seconds rocket should point prograde before and after staging)
-// Returns the following:
-//			nothing
-FUNCTION stageFunction {
-	PARAMETER waitTime IS 0.5.
-	PARAMETER forceLongWait IS FALSE.
-	LOCAL stageInAtm IS ((SHIP:BODY:ATM:EXISTS) AND
-											 (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) / SHIP:BODY:ATM:SEALEVELPRESSURE > 0.05) AND
-											 (SHIP:VELOCITY:SURFACE:MAG > 10.0)).
-	IF stageInAtm {
-		PRINT "Staging in atmosphere!".
-	}
-	IF forceLongWait SET waitTime TO 5.0.
-
-	LOCAL stageStartTime IS TIME:SECONDS.
-	LOCAL facingVect IS SHIP:FACING:VECTOR.
-	// this pause is to allow time for the rocket to face pure prograde
-	UNTIL TIME:SECONDS > stageStartTime + waitTime {
-		IF stageInAtm SET mySteer TO SHIP:VELOCITY:SURFACE.
-		ELSE SET mySteer TO facingVect.
-		WAIT 0.
-	}
-	STAGE.
-	SET stageStartTime TO TIME:SECONDS.
-	SET facingVect TO SHIP:FACING:VECTOR.
-	// this pause is to allow time for the spent stage to go past the rocket
-	UNTIL TIME:SECONDS > stageStartTime + waitTime {
-		IF stageInAtm SET mySteer TO SHIP:VELOCITY:SURFACE.
-		ELSE SET mySteer TO facingVect.
-		WAIT 0.
-	}
-	updateShipInfo().
 }
 
 FUNCTION resourcesInParts {
@@ -1858,42 +1837,6 @@ FUNCTION timeToAltitude
   LOCAL meanMotion IS Constant:PI * 2 / SHIP:ORBIT:PERIOD. // in deg/s
 
   RETURN (desiredMeanAnomaly - currentMeanAnomaly) / meanMotion.
-}
-
-// End Script
-// This function completely unlocks all control over the ship.
-// Passed the following:
-//			no arguments
-// Returns the following:
-//			null
-FUNCTION endScript {
-	SAS OFF.
-	RCS OFF.
-	UNLOCK useMySteer.
-	SET useMySteer TO FALSE.
-	UNLOCK mySteer.
-	SET mySteer TO SHIP:FACING.
-	UNLOCK steering.
-
-	UNLOCK useMyThrottle.
-	SET useMyThrottle TO FALSE.
-	UNLOCK myThrottle.
-	SET myThrottle TO 0.0.
-	UNLOCK throttle.
-
-	SET SHIP:CONTROL:FORE TO 0.0.
-	SET SHIP:CONTROL:STARBOARD TO 0.0.
-	SET SHIP:CONTROL:PITCH TO 0.0.
-	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
-	SET SHIP:CONTROL:MAINTHROTTLE TO 0.
-	WAIT 0.0.
-	SET SHIP:CONTROL:FORE TO 0.0.
-	SET SHIP:CONTROL:STARBOARD TO 0.0.
-	SET SHIP:CONTROL:PITCH TO 0.0.
-	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
-	SET SHIP:CONTROL:MAINTHROTTLE TO 0.
-	CLEARVECDRAWS().
-	SET KUNIVERSE:TIMEWARP:WARP TO 0.
 }
 
 FUNCTION greatCircleDistance

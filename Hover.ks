@@ -5,11 +5,11 @@ PARAMETER maxVelocity IS 50.
 
 SET maxVelocity TO ABS(maxVelocity).
 
-SET mySteer TO -VELOCITY:SURFACE.
-SET myThrottle TO 0.
+SET globalSteer TO -VELOCITY:SURFACE.
+SET globalThrottle TO 0.
 
-SET useMySteer TO TRUE.
-SET useMyThrottle TO TRUE.
+setLockedSteering(TRUE).
+setLockedThrottle(TRUE).
 SAS OFF.
 RCS OFF.
 
@@ -85,19 +85,19 @@ UNTIL done {
   PRINT "Throttle at " + ROUND(THROTTLE * 100, 2) + "%    " AT (0, 5).
   PRINT "Groundspeed = " + distanceToString(GROUNDSPEED, 2) + "/s     " AT (0, 6).
   SET V_PID:SETPOINT TO X_PID:UPDATE(TIME:SECONDS, aboveGround).
-  SET myThrottle TO V_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
+  SET globalThrottle TO V_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 
   IF cancelHoriz AND GROUNDSPEED < 0.25 SET cancelHoriz TO FALSE.
   IF NOT cancelHoriz AND GROUNDSPEED > 0.5 SET cancelHoriz TO TRUE.
 
-  IF NOT cancelHoriz SET mySteer TO HEADING (0, 90).
+  IF NOT cancelHoriz SET globalSteer TO HEADING (0, 90).
   ELSE {
-    IF VERTICALSPEED > 0 SET mySteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
-    ELSE SET mySteer TO HEADING (yaw_for(VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+    IF VERTICALSPEED > 0 SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+    ELSE SET globalSteer TO HEADING (yaw_for(VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
   }
 
   IF (elapsedTime > 300.0) SET done TO TRUE.
 }
 
-SET useMySteer TO FALSE.
-SET useMyThrottle TO FALSE.
+setLockedSteering(FALSE).
+setLockedThrottle(FALSE).

@@ -6,15 +6,7 @@ PARAMETER delayForEngines IS TRUE.			// whether or not to delay for engines to s
 PARAMETER gravTurnAngleEnd IS 10.			// The final angle of the end of the gravity turn
 PARAMETER gravTurnEnd IS 150000.			// The altitude of the end of the gravity turn
 PARAMETER initialStage IS TRUE.				// Whether or not to trigger the initial stage
-PARAMETER maxGs IS 2.						// maximum number of G's that the ship should go under
-
-endScript().
-
-ON MAPVIEW {
-	SET facingVector:SHOW TO useMySteer AND NOT MAPVIEW.
-	SET guidanceVector:SHOW TO useMySteer AND NOT MAPVIEW.
-	RETURN TRUE.
-}
+PARAMETER maxGs IS 3.						// maximum number of G's that the ship should go under
 
 LOCAL launchAzimuth IS desiredAzimuth(gravTurnEnd, finalInclination).
 
@@ -31,22 +23,26 @@ LOCAL mode IS 0.
 
 LOCAL yawValue IS 0.										// yaw adjustment factor for inclination tuning
 LOCAL PITCH_PID IS PIDLOOP(2.0, 0.25, 2.0).	// PID loop to control pitch
-LOCAL YAW_PID IS PIDLOOP(1, 0.1, 50).		// PID loop to control yaw
+LOCAL YAW_PID IS PIDLOOP(2.0, 0.25, 2.0, -2, 2).		// PID loop to control yaw
 LOCAL gravTurnStart TO 1000.						// The altitude of the start of the gravity turn
 LOCAL gravTurnExponent TO 0.740740741.	// The exponent used in the calculation of the gravity turn
 LOCAL endMessage IS "Blank".						// Used to determine the reason for exiting the loop
 LOCAL engineList IS LIST().							// Used to list all of the engines for staging
 LOCAL pitchValue IS 0.									// Used for calculating the desired pitch of the craft
 
+SET YAW_PID:MAXOUTPUT TO 2.
+SET YAW_PID:MINOUTPUT TO -YAW_PID:MAXOUTPUT.
+SET YAW_PID:SETPOINT TO finalInclination.
+
 LOCAL body_g IS CONSTANT:G * SHIP:BODY:MASS/(SHIP:BODY:RADIUS * SHIP:BODY:RADIUS).
 
 SET missionTimeOffset TO MISSIONTIME.		// Used to offset MISSIONTIME to account for time waiting on the pad
 
-SET mySteer TO SHIP:UP.									// Direction for cooked steering
-SET myThrottle TO 1.0.
+SET globalSteer TO SHIP:UP.									// Direction for cooked steering
+SET globalThrottle TO 1.0.
 
-SET useMyThrottle TO TRUE.
-SET useMySteer TO TRUE.
+setLockedThrottle(TRUE).
+setLockedSteering(TRUE).
 
 CLEARSCREEN.
 
@@ -69,7 +65,7 @@ WHEN PERIAPSIS > 0 AND physicsWarpPerm THEN {
 
 LOCAL modeStartYaw TO launchAzimuth.
 
-//LOG "Time,Mode,Stage,Mass (kg),Actual Pitch (deg),Prograde Pitch (deg),Pitch Value (deg),Horizontal Speed (m/s),Current Accel (m/s^2),Centripital Accel (m/s^2),Altitude (m),Local g (m/s^2),Vertical Accel Req'd (m/s^2),Required Pitch (deg),Vertical Speed (m/s)" TO "0:pitchCalcs.csv".
+IF connectionToKSC() LOG "Time,Mode,Stage,Mass (kg),Actual Pitch (deg),Prograde Pitch (deg),Pitch Value (deg),Horizontal Speed (m/s),Current Accel (m/s^2),Centripital Accel (m/s^2),Altitude (m),Local g (m/s^2),Vertical Accel Req'd (m/s^2),Required Pitch (deg),Vertical Speed (m/s)" TO "0:pitchCalcs.csv".
 
 // whenever the mode changes, initialize things for the new mode.
 ON mode {
@@ -133,19 +129,20 @@ ON mode {
 
 LOCAL centripitalAccel IS 0.
 LOCAL local_g IS 0.
-LOCAL required_vertical_accel IS 0.
+LOCAL requiredVerticalAccel IS 0.
 LOCAL accelRatios IS 0.
 LOCAL mu IS SHIP:BODY:MU.
 
 UNTIL mode > 6 {
+	updateFacingVectors().
 	SET centripitalAccel TO VXCL(SHIP:UP:VECTOR, SHIP:VELOCITY:ORBIT):SQRMAGNITUDE/(SHIP:POSITION - SHIP:BODY:POSITION):MAG.
-	SET local_g TO mu/(ALTITUDE + SHIP:BODY:RADIUS)^2.
-	SET required_vertical_accel TO local_g - centripitalAccel.
-	IF (shipInfo["Current"]["Accel"] <> 0) SET accelRatios TO required_vertical_accel / shipInfo["Current"]["Accel"].
+	SET local_g TO mu/(SHIP:POSITION - SHIP:BODY:POSITION):SQRMAGNITUDE.
+	SET requiredVerticalAccel TO local_g - centripitalAccel.
+	IF (shipInfo["Current"]["Accel"] <> 0) SET accelRatios TO requiredVerticalAccel / shipInfo["Current"]["Accel"].
 	IF accelRatios > SIN(85) SET accelRatios TO SIN(85).
 	IF accelRatios < 0 SET accelRatios TO 0.
-//	LOG MISSIONTIME + "," + mode + "," + (shipInfo["NumberOfStages"] - 1) + "," + SHIP:MASS*1000 + "," + (90 - vang(SHIP:UP:VECTOR, SHIP:FACING:FOREVECTOR)) + "," + (90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE)) + "," + pitchValue + "," + GROUNDSPEED + "," +
-//			shipInfo["Current"]["Accel"] + "," + centripitalAccel + "," + ALTITUDE + "," + local_g + "," + required_vertical_accel + "," + ARCSIN(accelRatios) + "," + VERTICALSPEED TO "0:pitchCalcs.csv".
+	IF connectionToKSC() LOG MISSIONTIME + "," + mode + "," + (shipInfo["NumberOfStages"] - 1) + "," + SHIP:MASS*1000 + "," + (90 - vang(SHIP:UP:VECTOR, SHIP:FACING:FOREVECTOR)) + "," + (90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE)) + "," + pitchValue + "," + GROUNDSPEED + "," +
+			shipInfo["Current"]["Accel"] + "," + centripitalAccel + "," + ALTITUDE + "," + local_g + "," + requiredVerticalAccel + "," + ARCSIN(accelRatios) + "," + VERTICALSPEED TO "0:pitchCalcs.csv".
 	engineInfo(0, 20, TRUE).
 	// Prelaunch - stage the LF engines
 	IF mode = 0 {
@@ -158,7 +155,7 @@ UNTIL mode > 6 {
 	IF mode = 1 {
 		SET pitchValue TO 90.
 		// if the active engines have reached full thrust, stage and switch modes
-		SET mySteer TO HEADING(0, pitchValue).
+		SET globalSteer TO HEADING(0, pitchValue).
 		IF isLFFullThrust() {
 			SET mode TO 2.
 			stageFunction().
@@ -168,7 +165,7 @@ UNTIL mode > 6 {
 	// Vertical climb
 	IF mode = 2 {
 		SET pitchValue TO 90.
-		SET mySteer TO HEADING(0, pitchValue).
+		SET globalSteer TO HEADING(0, pitchValue).
 		IF ALT:RADAR > 100 {
 			SET gravTurnStart TO ALTITUDE.
 
@@ -187,16 +184,13 @@ UNTIL mode > 6 {
 	// Roll, continue climb
 	IF mode = 3 {
 		SET pitchValue TO 90.
-		SET mySteer TO HEADING(launchAzimuth,pitchValue).
+		SET globalSteer TO HEADING(launchAzimuth,pitchValue).
 		IF ALT:RADAR > 500 {
 			PITCH_PID:RESET().
 			SET PITCH_PID:MAXOUTPUT TO maxAOA.
 			SET PITCH_PID:MINOUTPUT TO -maxAOA.
 
 			YAW_PID:RESET().
-			SET YAW_PID:MAXOUTPUT TO 20.
-			SET YAW_PID:MINOUTPUT TO -YAW_PID:MAXOUTPUT.
-			SET YAW_PID:SETPOINT TO finalInclination.
 
 			// reset the integral on the Yaw PID when the ship crosses the equator
 			WHEN (ABS(SHIP:GEOPOSITION:LAT) < 0.1) THEN {
@@ -222,7 +216,7 @@ UNTIL mode > 6 {
 		IF debug {
 			IF (mode = 6) PRINT "Pitch Setpoint " + distanceToString( PITCH_PID:SETPOINT, 2) + "/s      " AT(0, 5).
 			ELSE					 PRINT "Pitch Setpoint " + ROUND( PITCH_PID:SETPOINT, 2) + " deg      " AT(0, 5).
-			PRINT "Prograde Pitch: " + ROUND(90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE), 2) + "    " AT (0, 6).
+			PRINT "Prograde Pitch: " + ROUND(90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE), 2) + " deg    " AT (0, 6).
 			PRINT "Verical Speed: " + distanceToString(VERTICALSPEED, 2) + "/s    " AT (0, 7).
 			PRINT "Facing Pitch: " + ROUND(90 - vang(SHIP:UP:VECTOR, SHIP:FACING:FOREVECTOR), 2) + "    " AT (0, 8).
 			PRINT "Yaw PID Setpoint " + ROUND(YAW_PID:SETPOINT, 4) + "    " AT (0, 9).
@@ -238,10 +232,10 @@ UNTIL mode > 6 {
 		// note that maxGs is relative to sea level on THIS BODY, not Earth/Kerbin.
 		// desired throttle = (maxGs + body_g - accel from SRBs)/available accel from variable engines
 		IF (shipInfo["Maximum"]["Variable"]["Accel"] <> 0) {
-			IF minThrottle <> 1	SET myThrottle TO (((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]) - minThrottle)/(1-minThrottle).
-			ELSE				SET myThrottle TO  ((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]).
-		} ELSE SET myThrottle TO 1.0.
-		SET myThrottle TO MIN( MAX( myThrottle, 0.05), 1.0).
+			IF minThrottle <> 1	SET globalThrottle TO  (((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]) - minThrottle)/(1-minThrottle).
+			ELSE								SET globalThrottle TO   ((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]).
+		} ELSE SET globalThrottle TO  1.0.
+		SET globalThrottle TO  MIN( MAX( THROTTLE, 0.05), 1.0).
 
 		// Engine staging
 		// this should drop any LF main stage and allow the final orbiter to take off
@@ -271,11 +265,10 @@ UNTIL mode > 6 {
 		}
 
 		// only call the PID if the ship is through a large portion of the gravity turn and the final inclination is not zero
-		IF (pitch_vector(SHIP:VELOCITY:SURFACE) < 45) AND (finalInclination = 0) {
+		IF (pitch_for(SHIP:VELOCITY:SURFACE) < 45) AND (finalInclination <> 0) {
 			IF (SHIP:GEOPOSITION:LAT > 0.0) SET yawValue TO YAW_PID:UPDATE( TIME:SECONDS, SHIP:ORBIT:INCLINATION).
 			IF (SHIP:GEOPOSITION:LAT < 0.0) SET yawValue TO -YAW_PID:UPDATE( TIME:SECONDS, SHIP:ORBIT:INCLINATION).
-		}
-		IF (finalInclination = 0) SET yawValue TO 0.
+		} ELSE SET yawValue TO 0.
 
 		// Gravity turn
 		// Note that this gravity turn uses a PID to maintain the prograde vector at the correct pitch
@@ -286,7 +279,7 @@ UNTIL mode > 6 {
 			IF pitchValue > 90 SET pitchValue TO 90.
 
 			// Start off the gravity turn going the direction given, then follow the current heading
-			SET mySteer TO HEADING (modeStartYaw + yawValue, pitchValue).
+			SET globalSteer TO HEADING(modeStartYaw + yawValue, pitchValue).
 			// when the gravity turn is done, start burning strictly horizontal and let the vertical speed drop
 			IF ALTITUDE > gravTurnEnd {
 				SET mode TO 5.
@@ -297,7 +290,7 @@ UNTIL mode > 6 {
 		IF mode = 5 {
 			SET pitchValue TO 0.0.
 			// This needs to be updated every scan to keep the pitch at 0 as the craft moves around the planet
-			SET mySteer TO HEADING(modeStartYaw + yawValue, pitchValue).
+			SET globalSteer TO HEADING(modeStartYaw + yawValue, pitchValue).
 
 			// when vertical speed is within one second of falling below zero, start controlling pitch to maintain 0 vertical speed
 			IF VERTICALSPEED < local_g {
@@ -319,7 +312,7 @@ UNTIL mode > 6 {
 			}
 			SET PITCH_PID:KD TO MAX(4.0 * (1 - GROUNDSPEED/ABS(SQRT(BODY:MU/(ALTITUDE + BODY:RADIUS)))), 0.0).
 			SET pitchValue TO ARCSIN(accelRatios) + PITCH_PID:UPDATE( TIME:SECONDS, VERTICALSPEED).
-			SET mySteer TO HEADING (modeStartYaw + yawValue, pitchValue).
+			SET globalSteer TO HEADING(modeStartYaw + yawValue, pitchValue).
 		}
 
 		// when any of the following conditions are met, kill the engine and stop the program
@@ -328,7 +321,7 @@ UNTIL mode > 6 {
 		// apoapsis is greater than 10 minutes away AND periapsis is greater than 10 minutes away
 		//		AND altitude is greater than 100,000 meters AND vertical speed is positive
 		//		AND periapsis is above ground
-		IF (SHIP:VELOCITY:ORBIT:SQRMAGNITUDE*0.999 > SHIP:BODY:MU/(ALTITUDE + SHIP:BODY:RADIUS)) {
+		IF (SHIP:VELOCITY:ORBIT:SQRMAGNITUDE*0.999 > MU/(SHIP:POSITION - SHIP:BODY:POSITION):MAG) {
 			SET endMessage TO "Final orbital velocity met".
 			SET mode TO 7.
 		}
@@ -344,11 +337,8 @@ UNTIL mode > 6 {
 		}
 	}
 //	logPID(PITCH_PID, "0:PITCH_PID.csv", TRUE, 0).
+	IF YAW_PID:INPUT <> 0 logPID(YAW_PID, "0:YAW_PID.csv", TRUE, 0).
 }
-SET myThrottle TO 0.0.
-
-SET useMyThrottle TO FALSE.
-SET useMySteer TO FALSE.
 
 SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
 WAIT 0.1.
