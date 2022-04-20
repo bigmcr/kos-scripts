@@ -26,8 +26,8 @@ IF (SHIP:ORBIT:TRANSITION <> "Final") {
 }
 LOCAL startTimeDelta IS effectivePeriod / 1000. // given the default period, this is 10 minutes
 LOCAL timeDelta IS startTimeDelta.
-LOCAL currentNorth IS isNorthOfPlane(0).
-LOCAL nextNorth IS isNorthOfPlane(timeDelta).
+LOCAL currentNorth IS isNorthOfPlane(0, useTargetPlane).
+LOCAL nextNorth IS isNorthOfPlane(timeDelta, useTargetPlane).
 
 LOCAL startTimeDeltaLoop IS startTimeDelta.
 LOCAL loopDone IS FALSE.
@@ -57,8 +57,8 @@ FROM {LOCAL timeGuess IS 0.}
   UNTIL timeGuess > effectivePeriod OR (changeToNorth <> errorValue AND changeToSouth <> errorValue) OR (iterations > iterationsMax)
   STEP {SET timeGuess TO timeGuess + timeDelta.}
   DO {
-    SET currentNorth TO isNorthOfPlane(timeGuess).
-    SET nextNorth TO isNorthOfPlane(timeGuess + timeDelta).
+    SET currentNorth TO isNorthOfPlane(timeGuess, useTargetPlane).
+    SET nextNorth TO isNorthOfPlane(timeGuess + timeDelta, useTargetPlane).
     IF currentNorth <> nextNorth {
       IF currentNorth AND NOT nextNorth {
         SET changeToSouth TO timeGuess.
@@ -87,8 +87,8 @@ IF ANExists {
       UNTIL ((timeGuess >= changeToNorth + startTimeDeltaLoop) OR loopDone)
       STEP {SET timeGuess TO timeGuess + timeDelta.}
       DO {
-        SET currentNorth TO isNorthOfPlane(timeGuess).
-        SET nextNorth TO isNorthOfPlane(timeGuess + timeDelta).
+        SET currentNorth TO isNorthOfPlane(timeGuess, useTargetPlane).
+        SET nextNorth TO isNorthOfPlane(timeGuess + timeDelta, useTargetPlane).
         IF currentNorth <> nextNorth {
           SET loopDone TO TRUE.
           SET changeToNorth TO timeGuess.
@@ -112,8 +112,8 @@ IF DNExists {
       UNTIL (timeGuess >= changeToSouth + startTimeDeltaLoop) OR loopDone
       STEP {SET timeGuess TO timeGuess + timeDelta.}
       DO {
-        SET currentNorth TO isNorthOfPlane(timeGuess).
-        SET nextNorth TO isNorthOfPlane(timeGuess + timeDelta).
+        SET currentNorth TO isNorthOfPlane(timeGuess, useTargetPlane).
+        SET nextNorth TO isNorthOfPlane(timeGuess + timeDelta, useTargetPlane).
         IF currentNorth <> nextNorth {
           SET loopDone TO TRUE.
           SET changeToSouth TO timeGuess.
