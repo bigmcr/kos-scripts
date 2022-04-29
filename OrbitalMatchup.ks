@@ -1,41 +1,5 @@
 @LAZYGLOBAL OFF.
 
-// returns a list
-// list[0] time until closest approach (seconds)
-// list[1] distance of closest approach (meters)
-FUNCTION closestApproach {
-	PARAMETER initialGuess IS TIME:SECONDS.
-	PARAMETER initialStepSize IS 10.
-	IF (initialGuess < TIME:SECONDS) SET initialGuess TO TIME:SECONDS.
-
-	LOCAL stepSize is initialStepSize.
-
-	FUNCTION distanceAtTime {
-	  PARAMETER t.
-	  RETURN (POSITIONAT(SHIP, t) - POSITIONAT(TARGET, t)):MAG.
-	}
-
-	LOCAL iteration IS 0.
-
-//	LOG "Approach Time,Step Size,Distance At Approach,Distance At Approach + Step,Distance At Approach - Step,Iteration" TO "HillClimb.csv".
-	// Do the hill climbing
-	LOCAL approachTime is initialGuess.
-	UNTIL (stepSize = (initialStepSize / (2^10))) OR (iteration > 100) {
-//		LOG approachTime + "," + stepSize + "," + distanceAtTime(approachTime) + "," + distanceAtTime(approachTime + stepSize) + "," + distanceAtTime(approachTime - stepSize) + "," + iteration TO "HillClimb.csv".
-		IF distanceAtTime(approachTime + stepSize) < distanceAtTime(approachTime) {
-			SET approachTime TO approachTime + stepSize.
-		} ELSE IF distanceAtTime(approachTime - stepSize) < distanceAtTime(approachTime) {
-			SET approachTime TO approachTime - stepSize.
-		} ELSE {
-			SET stepSize TO (stepSize/2).
-		}
-		SET iteration TO iteration + 1.
-	}
-
-//	PRINT "Closest approach is at UT " + ROUND(approachTime, 0) + " (" + ROUND(approachTime - TIME:SECONDS, 0) + ") seconds from now, distance will be " + ROUND(distanceAtTime(approachTime), 0) + " meters".
-	RETURN LIST(approachTime, distanceAtTime(approachTime)).
-}
-
 LOCAL mode IS "Error".
 
 IF shipInfo["Maximum"]["Accel"] = 0 {SET mode TO "Done". SET loopMessage TO "Error! Max accel is zero!".}
