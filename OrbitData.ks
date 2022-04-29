@@ -39,7 +39,8 @@ IF connectionToKSC() AND logToFile {
   LOG "Orbited Body," + localOrbit:BODY:NAME TO fileName.
   LOG "Orbited Body MU," + localOrbit:BODY:MU + ",m^3/s^2" TO fileName.
   LOG "Orbited Body Radius," + localOrbit:BODY:Radius + ",m" TO fileName.
-  LOG "Period," + localOrbit:PERIOD + ",s"  TO fileName.
+  IF localOrbit:SEMIMAJORAXIS < 0 LOG "Period,Undefined" TO fileName.
+  ELSE LOG "Period," + localOrbit:PERIOD + ",s"  TO fileName.
   LOG "Inclination," + localOrbit:INCLINATION + ",deg," + (CONSTANT:DegToRad * localOrbit:INCLINATION) + ",rad" TO fileName.
   LOG "Eccentricity," + localOrbit:ECCENTRICITY TO fileName.
   LOG "Semi-Major Axis," + localOrbit:SEMIMAJORAXIS + ",m" TO fileName.
