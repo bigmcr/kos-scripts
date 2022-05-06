@@ -393,9 +393,10 @@ FUNCTION createCommandList {
 		RETURN "Manually Staged!".
 		})).
 
-	possibleCommands:ADD("local", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
+	possibleCommands:ADD("local", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
+		PARAMETER forcedUpdate IS FALSE.
 		IF connectionToKSC() {
-			copyToLocal().
+			copyToLocal(forcedUpdate).
 			SWITCH TO 1.
 			SET runLocal TO TRUE.
 			RETURN "Updated all scripts, running locally".
