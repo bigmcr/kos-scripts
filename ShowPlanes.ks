@@ -28,9 +28,11 @@ LOCAL bodyPos IS SHIP:BODY:POSITION.
 
 LOCAL targetLANVector TO V(0,0,0).
 LOCAL targetNormVector TO V(0,0,0).
+LOCAL targetPeriVector TO V(0,0,0).
 IF startedWithTarget {
-	SET targetLANVector TO radius * (SOLARPRIMEVECTOR * ANGLEAXIS(-TARGET:ORBIT:LAN, northV)):NORMALIZED.
-	SET targetNormVector TO radius * VCRS(TARGET:VELOCITY:ORBIT, TARGET:POSITION - bodyPos):NORMALIZED.
+	SET targetLANVector TO (SOLARPRIMEVECTOR * ANGLEAXIS(-TARGET:ORBIT:LAN, northV)):NORMALIZED.
+	SET targetNormVector TO VCRS(TARGET:VELOCITY:ORBIT, TARGET:POSITION - bodyPos):NORMALIZED.
+	SET targetPeriVector TO (targetLANVector * ANGLEAXIS(-TARGET:ORBIT:ARGUMENTOFPERIAPSIS, targetNormVector)):NORMALIZED.
 }
 
 LOCAL eclipticNormVector TO V(0, 0, 0).
@@ -38,6 +40,7 @@ IF showEcliptic SET eclipticNormVector TO radius * 2 * VCRS(SHIP:BODY:VELOCITY:O
 
 LOCAL shipLANVector TO (SOLARPRIMEVECTOR * ANGLEAXIS(-SHIP:ORBIT:LAN, northV)):NORMALIZED.
 LOCAL shipNormVector TO VCRS(SHIP:VELOCITY:ORBIT, SHIP:POSITION - bodyPos):NORMALIZED.
+LOCAL shipPeriVector TO (shipLANVector * ANGLEAXIS(-SHIP:ORBIT:ARGUMENTOFPERIAPSIS, shipNormVector)):NORMALIZED.
 
 IF startedWithTarget {
 	//                            start,            vec,      color, label,        scale, show, width, pointy
@@ -53,6 +56,9 @@ IF startedWithTarget {
 	vecDraws:ADD("TargetNorm", 		VECDRAW(V(0,0,0), V(0,0,0), RED, "Target Normal", 1.0, TRUE, 0.2, TRUE)).
 	SET vecDraws["TargetNorm"]:STARTUPDATER TO {RETURN bodyPos.}.
 	SET vecDraws["TargetNorm"]:VECUPDATER TO {RETURN radius * targetNormVector.}.
+	vecDraws:ADD("TargetPeri", 		VECDRAW(V(0,0,0), V(0,0,0), RED, "Target Periapsis", 1.0, TRUE, 0.2, TRUE)).
+	SET vecDraws["TargetPeri"]:STARTUPDATER TO {RETURN bodyPos.}.
+	SET vecDraws["TargetPeri"]:VECUPDATER TO {RETURN radius * targetPeriVector.}.
 	vecDraws:ADD("TargetPlane",		LIST()).
 	FOR vecNumber IN RANGE(0, arrowsInPlane) {
 		vecDraws["TargetPlane"]:ADD(	VECDRAW(V(0,0,0), V(0,0,0), RED, "", 1.0, TRUE, vecDrawWidth, FALSE)).
@@ -88,6 +94,10 @@ vecDraws:ADD("ShipNorm", 		VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Ship Normal" , 1.0
 SET vecDraws["ShipNorm"]:STARTUPDATER TO {RETURN bodyPos.}.
 SET vecDraws["ShipNorm"]:VECUPDATER TO {RETURN radius * shipNormVector.}.
 
+vecDraws:ADD("ShipPeri", 		VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Ship Periapsis" , 1.0, TRUE, 0.2, TRUE)).
+SET vecDraws["ShipPeri"]:STARTUPDATER TO {RETURN bodyPos.}.
+SET vecDraws["ShipPeri"]:VECUPDATER TO {RETURN radius * shipPeriVector.}.
+
 vecDraws:ADD("ShipPlane",		LIST()).
 FOR vecNumber IN RANGE(0, arrowsInPlane) {
 	vecDraws["ShipPlane"]:ADD(	VECDRAW(V(0,0,0), V(0,0,0), BLUE, "", 1.0, TRUE, vecDrawWidth, FALSE)).
@@ -119,12 +129,15 @@ UNTIL done OR NOT MAPVIEW
 	IF startedWithTarget {
 		SET targetLANVector  TO (SOLARPRIMEVECTOR * ANGLEAXIS(-TARGET:ORBIT:LAN, northV)):NORMALIZED.
 		SET targetNormVector TO VCRS(TARGET:VELOCITY:ORBIT, TARGET:POSITION - bodyPos):NORMALIZED.
+		SET targetPeriVector TO (targetLANVector * ANGLEAXIS(-TARGET:ORBIT:ARGUMENTOFPERIAPSIS, targetNormVector)):NORMALIZED.
 	} ELSE {
 		SET targetLANVector  TO V(0, 0, 0).
 		SET targetNormVector TO V(0, 0, 0).
+		SET targetPeriVector TO V(0, 0, 0).
 	}
 	SET shipLANVector TO (SOLARPRIMEVECTOR * ANGLEAXIS(-SHIP:ORBIT:LAN, northV)):NORMALIZED.
 	SET shipNormVector TO VCRS(SHIP:VELOCITY:ORBIT, SHIP:POSITION - bodyPos):NORMALIZED.
+	SET shipPeriVector TO (shipLANVector * ANGLEAXIS(-SHIP:ORBIT:ARGUMENTOFPERIAPSIS, shipNormVector)):NORMALIZED.
 	IF showEcliptic	SET eclipticNormVector TO VCRS(-SHIP:BODY:BODY:VELOCITY:ORBIT, SHIP:BODY:POSITION - SHIP:BODY:BODY:POSITION):NORMALIZED.
 
 	// draw several vectors - from target to body, from position to body, from position to velocity, from target to target velocity,
