@@ -95,7 +95,7 @@ UNTIL mode > 3 {
 	SET requiredVerticalVelocity TO 0.9*((x_f - v_e*(t - m_i/m_dot)*LN(m_i/(m_i - m_dot*t)) - x_i)/t - v_e + g_avg * t / 2.0).
 
 	SET RTTimeToBurn TO currentMargin/(-VERTICALSPEED*KUNIVERSE:TIMEWARP:RATE).
-	IF useVelocity logPID(T_PID_Spd, "0:T_PID_Spd logfile.csv", TRUE, 2).
+//	IF useVelocity logPID(T_PID_Spd, "0:T_PID_Spd logfile.csv", TRUE, 2).
 	IF VERTICALSPEED > 0 {
 		SET RTTimeToBurn TO 10.
 		PRINT "SB Mode: " + mode + "    Real Time to Burn: NA     " AT (0, 0).
@@ -180,7 +180,7 @@ UNTIL mode > 3 {
 		IF aboveGround > 50 SET T_PID_Spd:SETPOINT TO -10.
 		IF aboveGround > 500 SET T_PID_Spd:SETPOINT TO -25.
 		IF aboveGround > 1000 SET T_PID_Spd:SETPOINT TO -50.
-		PRINT "Verical Velocity Setpoint: " + ROUND(T_PID_Spd:SETPOINT, 2) AT (0, 6).
+		PRINT "Vertical Velocity Setpoint: " + ROUND(T_PID_Spd:SETPOINT, 2) AT (0, 6).
 		SET globalThrottle TO T_PID_Spd:UPDATE(TIME:SECONDS, VERTICALSPEED).
 		IF (GROUNDSPEED < 0.1) SET globalSteer TO SHIP:UP:VECTOR.
 		ELSE SET globalSteer TO -VELOCITY:SURFACE.
