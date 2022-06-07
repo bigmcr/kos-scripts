@@ -1642,9 +1642,9 @@ FUNCTION warpToValue
 		}
 		// if the debug flag is active, print everything to the terminal
 		IF (debug) {
-			PRINT "Delegate Rate " + ROUND(delegateRate, 5) + "       " AT (0, 20).
-			PRINT "Real Time Left " + ROUND(realTimeLeft, 2) + "       " AT (0, 21).
-			PRINT "Real Time Rate " + ROUND(KUNIVERSE:TIMEWARP:RATE, 2) + "       " AT (0, 22).
+			PRINT "Delegate Rate " + ROUND(delegateRate, 5) + "         " AT (0, 20).
+			PRINT "Real Time Left " + ROUND(realTimeLeft, 2) + "         " AT (0, 21).
+			PRINT "Real Time Rate " + ROUND(KUNIVERSE:TIMEWARP:RATE, 2) + "         " AT (0, 22).
 			PRINT "Delegate " + ROUND(newValue,2) + "       " AT (0, 23).
 		}
 		WAIT 0.
@@ -1939,6 +1939,36 @@ FUNCTION closestApproach {
 	RETURN LIST(approachTime, distanceAtTime(approachTime)).
 }
 
+// Print some basic information about each of the various orbits that this craft will experience.
+FUNCTION exploreOrbits {
+  PARAMETER orb IS SHIP:ORBIT.
+  CLEARSCREEN.
+  LOCAL printCurrentOrbit IS TRUE.
+  PRINT "There are " + ALLNODES:LENGTH + " nodes".
+	PRINT "Orbit Body:           ".
+	PRINT "Orbit Eccentricity:   ".
+	PRINT "Orbit Apoapsis:       ".
+	PRINT "Orbit Periapsis:      ".
+	PRINT "Orbit Inclination:    ".
+	PRINT "Orbit Transition:     ".
+	PRINT "Orbit Has Next Patch: ".
+	LOCAL orbitNumber IS 0.
+  UNTIL NOT printCurrentOrbit {
+    PRINT orb:BODY:NAME               		AT (22 + orbitNumber * 10, 1).
+    PRINT ROUND(orb:ECCENTRICITY, 6)  		AT (22 + orbitNumber * 10, 2).
+		PRINT distanceToString(orb:APOAPSIS)  AT (22 + orbitNumber * 10, 3).
+		PRINT distanceToString(orb:PERIAPSIS) AT (22 + orbitNumber * 10, 4).
+		PRINT ROUND(orb:INCLINATION, 4)       AT (22 + orbitNumber * 10, 5).
+		PRINT ROUND(orb:INCLINATION, 4)       AT (22 + orbitNumber * 10, 5).
+		PRINT orb:TRANSITION              AT (22 + orbitNumber * 10, 6).
+    PRINT orb:HASNEXTPATCH            AT (22 + orbitNumber * 10, 7).
+    SET printCurrentOrbit TO orb:HASNEXTPATCH.
+    IF orb:HASNEXTPATCH SET orb TO orb:NEXTPATCH.
+		SET orbitNumber TO orbitNumber + 1.
+  }
+  WAIT 1.
+}
+
 // wait for the planet to rotate until you are the specified number of degrees of longitude away from the ground track of the target
 FUNCTION waitForTarget {
 	PARAMETER offset IS 0.25.
@@ -2032,7 +2062,7 @@ FUNCTION processScalarParameter {
 }
 
 // Using the Secant method, iterate until the function returns the chosen value
-//   within tolerance, or the maximum number of iterations is reached.
+//   within tolerance, or the maximum iteration number is reached.
 FUNCTION findZeroSecant {
   PARAMETER delegate.
   PARAMETER X1.
@@ -2053,7 +2083,7 @@ FUNCTION findZeroSecant {
 }
 
 // Using the Newton method, iterate until the function returns the chosen value
-//   within tolerance, or the maximum number of iterations is reached.
+//   within tolerance, or the maximum iteration number is reached.
 FUNCTION findZeroNewton {
 	PARAMETER delegateFunction.
 	PARAMETER delegateSlope.
@@ -2061,7 +2091,7 @@ FUNCTION findZeroNewton {
   PARAMETER tolerance.
 	PARAMETER desiredValue IS 0.
   PARAMETER iteration IS 0.
-	PARAMETER maxIterations IS 100.
+	PARAMETER maxIteration IS 100.
 
   IF ((iteration >= 10) OR (NOT delegateFunction:ISTYPE("UserDelegate")) OR (NOT delegateSlope:ISTYPE("UserDelegate"))) RETURN X1.
 
@@ -2069,13 +2099,13 @@ FUNCTION findZeroNewton {
 	LOCAL X2 IS initialGuess.
 	IF slope <> 0 SET X2 TO initialGuess - delegateFunction(initialGuess)/slope.
 	IF ABS(delegateFunction(initialGuess) - desiredValue) < tolerance RETURN X2.
-	RETURN findZeroNewton(delegateFunction, delegateSlope, X2, tolerance, desiredValue, iteration + 1, maxIterations).
+	RETURN findZeroNewton(delegateFunction, delegateSlope, X2, tolerance, desiredValue, iteration + 1, maxIteration).
 }
 
 // given the mean anomaly (in degrees), returns true anomaly (in degrees)
 FUNCTION meanToTrueAnomaly {
   PARAMETER meanAnomaly.
-  PARAMETER eccentricity.
+  PARAMETER eccentricity IS SHIP:ORBIT:ECCENTRICITY.
 
   // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
   IF eccentricity = 0 RETURN meanAnomaly.
