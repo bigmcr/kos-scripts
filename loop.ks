@@ -254,7 +254,7 @@ UNTIL done {
 		IF autoSteer = "hold" {LOCAL tempDirection IS SHIP:FACING. SET globalSteer TO tempDirection.}
 		ELSE IF autoSteer = "up" SET globalSteer TO -SHIP:BODY:POSITION.
 		ELSE IF autoSteer = "down" SET globalSteer TO SHIP:BODY:POSITION.
-		ELSE IF autoSteer = "north" SET globalSteer TO SHIP:NORTH.
+		ELSE IF autoSteer = "north" SET globalSteer TO SHIP:NORTH:VECTOR.
 		ELSE IF autoSteer = "south" SET globalSteer TO -SHIP:NORTH:VECTOR.
 		ELSE IF autoSteer = "prograde" SET globalSteer TO SHIP:PROGRADE:VECTOR.
 		ELSE IF autoSteer = "retrograde" SET globalSteer TO -SHIP:PROGRADE:VECTOR.
