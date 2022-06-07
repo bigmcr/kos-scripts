@@ -5,7 +5,7 @@ GLOBAL physicsWarpPerm TO 2.					// If non-zero, allow physics warping up to the
 GLOBAL maxAOA TO 5.								// Maximum angle of attack. Used as the limits of the pitch PID while in atmosphere
 GLOBAL debug IS TRUE.							// If TRUE, multiple functions will display or log extra info
 GLOBAL missionTimeOffset TO 0.					// Offset for MISSIONTIME to account for time spent on the launchpad
-GLOBAL g_0 IS 9.80665.               			// Gravitational acceleration constant (m/s²)
+GLOBAL g_0 IS CONSTANT:G0.               			// Gravitational acceleration constant (m/s²)
 GLOBAL augerList IS SHIP:PARTSTITLEDPATTERN("Auger").
 GLOBAL smelterList IS SHIP:PARTSTITLEDPATTERN("Smelter").
 GLOBAL minThrottle IS 0.2.
@@ -15,12 +15,9 @@ GLOBAL facingVectorFace   IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION + SHIP:FA
 GLOBAL guidanceVectorFace IS VECDRAW({RETURN SHIP:CONTROLPART:POSITION + STEERINGMANAGER:TARGET:VECTOR * 10.}, {RETURN STEERINGMANAGER:TARGET:TOPVECTOR * 5.}, GREEN, "", 1, TRUE).
 LOCAL shipInfoCurrentLoggingStarted IS FALSE.
 LOCAL logPhysicsTimeStamp IS 0.
-GLOBAL timeSinceLaunch IS 0.
 GLOBAL bounds IS SHIP:BOUNDS.
 GLOBAL resourceList IS LEXICON().
 CLEARVECDRAWS().
-
-LOCK timeSinceLaunch TO MISSIONTIME - missionTimeOffset.
 
 GLOBAL shipInfo IS Lexicon().
 
@@ -172,13 +169,16 @@ FUNCTION recursivePartSort {
 // For each stage, record the following information:
 //		Parts - List - containing PARTs in this stage
 //		Engines - List - ENGINEs in this stage, or in the closest stage if this only has resources
+//		RCS - List - RCSs in this stage, or in the closest stage if this only has resources
 //		Sensors - List - SENSORs in this stage
 //		Isp - scalar - calculated for all engines in this stage
 //		Thrust - scalar - Total thrust of all engines in this stage, in Newtons
 //		mDot - scalar - Total fuel flow of all engines in this stage, in kg/s
 //		Resources - Lexicon - the masses of resources in this stage
 //		Fuels - List - list of names of fuels used by engines in this stage
+//		FuelsRCS - List - list of names of fuels used by RCS engines in this stage
 //		FuelMass - scalar - the mass of all resources in the list of fuels, in kg
+//		FuelMassRCS - scalar - the mass of all resources in the list of fuels for RCS, in kg
 //		ResourceMass - scalar - sum of the masses in the resource list, in kg
 //		DryMass - scalar - sum of the dry masses of the parts in the part list, in kg
 //		PreviousMass - scalar - mass of all previous stages, in kg (IE, for stage 5, mass of all stages from stage 0 to stage 4)
@@ -192,6 +192,7 @@ FUNCTION updateShipInfo {
 	LOCAL highestStageEngine IS 0.
 	LOCAL deltaVList IS "".
 	LOCAL engineListOld IS LIST().
+	LOCAL RCSListOld IS LIST().
 	LOCAL engineStat IS LIST().
 	LOCAL ignitedEngines IS LIST().
 
@@ -207,14 +208,23 @@ FUNCTION updateShipInfo {
 		// Add a list of all of the engines in this stage.
 		stageInfo:ADD("Engines",LIST()).
 		FOR eachPart IN stageInfo["Parts"] { IF eachPart:TYPENAME = "Engine" stageInfo["Engines"]:ADD(eachPart).}
-
 		// If there are no engines in this stage, use the engines from the previous stage
 		IF (stageInfo["Engines"]:LENGTH = 0) SET stageInfo["Engines"] TO engineListOld.
 		// If there are engines in this stage, replace the list of engines from the previous stage
 		ELSE {SET engineListOld TO stageInfo["Engines"].}
 
+		stageInfo:ADD("RCS",LIST()).
+		FOR eachPart IN stageInfo["Parts"] { IF eachPart:TYPENAME = "RCS" stageInfo["RCS"]:ADD(eachPart).}
+		// If there are no engines in this stage, use the engines from the previous stage
+		IF (stageInfo["RCS"]:LENGTH = 0) SET stageInfo["RCS"] TO RCSListOld.
+		// If there are engines in this stage, replace the list of engines from the previous stage
+		ELSE {SET RCSListOld TO stageInfo["RCS"].}
+
 		// Add the Fuels list to the lexicon, but it will be filled out once the engine list has been finalized
 		stageInfo:ADD("Fuels", LIST()).
+
+		// Add the FuelsRCS list to the lexicon, but it will be filled out once the engine list has been finalized
+		stageInfo:ADD("FuelsRCS", LIST()).
 
 		stageInfo:ADD("Sensors",LIST()).
 		FOR eachPart IN stageInfo["Parts"] { IF eachPart:TYPENAME = "sensor" stageInfo["Sensors"]:ADD(eachPart).}
@@ -229,6 +239,7 @@ FUNCTION updateShipInfo {
 
 		// add the various resource-related values to the lexicon, but they will be filled out by updateShipInfoCurrent
 		stageInfo:ADD("FuelMass", 0).
+		stageInfo:ADD("FuelMassRCS", 0).
 		stageInfo:ADD("ResourceMass", 0).
 
 		LOCAL dryMasses IS 0.
@@ -264,6 +275,7 @@ FUNCTION updateShipInfo {
 		SET shipInfo["Stage " + stageNumber]["mDot"] TO engineStat[4].
 
 		SET shipInfo["Stage " + stageNumber]["Fuels"] TO getCurrentFuels(shipInfo["Stage " + stageNumber]["Engines"]).
+		SET shipInfo["Stage " + stageNumber]["FuelsRCS"] TO getCurrentFuels(shipInfo["Stage " + stageNumber]["RCS"]).
 	}
 	updateShipInfoCurrent(FALSE).
 
@@ -301,9 +313,11 @@ FUNCTION logShipInfo {
 	FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
 		LOG "Stage " + stageNumber TO fileName.
 		LOG ",Parts has " + shipInfo["Stage " + stageNumber]["Parts"]:LENGTH + " Items in it,Part Name,Part Wet Mass,Unit,Stage" TO fileName.
-		FOR p IN shipInfo["Stage " + stageNumber]["Parts"] {LOG ",," + p:TITLE:REPLACE(",","") + "," + p:MASS*1000 + ",kg," + p:STAGE TO fileName.}
+		FOR p IN shipInfo["Stage " + stageNumber]["Parts"] {LOG ",," + p:TITLE:REPLACE(",","") + "," + (p:MASS*1000) + ",kg," + p:STAGE TO fileName.}
 		LOG ",Engines has " + shipInfo["Stage " + stageNumber]["Engines"]:LENGTH + " Items in it" TO fileName.
 		FOR p IN shipInfo["Stage " + stageNumber]["Engines"] {LOG ",," + p:TITLE:REPLACE(",","") TO fileName.}
+		LOG ",RCS has " + shipInfo["Stage " + stageNumber]["RCS"]:LENGTH + " Items in it" TO fileName.
+		FOR p IN shipInfo["Stage " + stageNumber]["RCS"] {LOG ",," + p:TITLE:REPLACE(",","") TO fileName.}
 		LOG ",Sensors has " + shipInfo["Stage " + stageNumber]["Sensors"]:LENGTH + " Items in it" TO fileName.
 		FOR p IN shipInfo["Stage " + stageNumber]["Sensors"] {LOG ",," + p:TITLE:REPLACE(",","") TO fileName.}
 		LOG ",Isp," + ROUND(shipInfo["Stage " + stageNumber]["Isp"], 4) + ",s" TO fileName.
@@ -322,7 +336,19 @@ FUNCTION logShipInfo {
 			IF shipInfo["Stage " + stageNumber]["Resources"]:KEYS:CONTAINS(f) LOG ",," + f + "," + shipInfo["Stage " + stageNumber]["Resources"][f] + "," + (shipInfo["Stage " + stageNumber]["Resources"][f] / resourceDensity) TO fileName.
 			ELSE LOG ",," + f + ",0,0" TO fileName.
 		}
-		LOG ",FuelMass," + shipInfo["Stage " + stageNumber]["FuelMass"] + ",kg" TO fileName.
+		LOG ",RCS Fuels has " + shipInfo["Stage " + stageNumber]["FuelsRCS"]:LENGTH + " items in it,,kg,L" TO fileName.
+		FOR f IN shipInfo["Stage " + stageNumber]["FuelsRCS"] {
+			SET resourceDensity TO 1.
+			FOR eachPart IN SHIP:PARTS {
+				FOR eachResource IN eachPart:RESOURCES {
+					IF eachResource:NAME = f SET resourceDensity TO eachResource:DENSITY * 1000.
+				}
+			}
+			IF shipInfo["Stage " + stageNumber]["Resources"]:KEYS:CONTAINS(f) LOG ",," + f + "," + shipInfo["Stage " + stageNumber]["Resources"][f] + "," + (shipInfo["Stage " + stageNumber]["Resources"][f] / resourceDensity) TO fileName.
+			ELSE LOG ",," + f + ",0,0" TO fileName.
+		}
+		LOG ",Fuel Mass," + shipInfo["Stage " + stageNumber]["FuelMass"] + ",kg" TO fileName.
+		LOG ",RCS Fuel Mass," + shipInfo["Stage " + stageNumber]["FuelRCSMass"] + ",kg" TO fileName.
 		LOG ",Resource Mass," + shipInfo["Stage " + stageNumber]["resourceMass"] + ",kg" TO fileName.
 		LOG ",Dry Mass," + shipInfo["Stage " + stageNumber]["DryMass"] + ",kg" TO fileName.
 		LOG ",Previous Mass," + shipInfo["Stage " + stageNumber]["PreviousMass"] + ",kg" TO fileName.
@@ -411,6 +437,7 @@ FUNCTION updateShipInfoResources {
 		LOCAL stageInfo IS shipInfo["Stage " + stageNumber].
 		stageInfo:REMOVE("Resources").
 		stageInfo:REMOVE("FuelMass").
+		stageInfo:REMOVE("FuelRCSMass").
 		stageInfo:REMOVE("ResourceMass").
 		stageInfo:REMOVE("PreviousMass").
 		stageInfo:REMOVE("CurrentMass").
@@ -423,13 +450,13 @@ FUNCTION updateShipInfoResources {
 		FOR fuelType IN stageInfo["Fuels"] {
 			// If the called out fuel is in this stage, you are good to go
 			IF (stageInfo["Resources"]:KEYS:CONTAINS(fuelType)) {
-//				LOG "Stage " + stageNumber + ",has,"+ shipInfo["Stage " + stageNumber]["Resources"][fuelType] + ",kg of " + fuelType + " found" TO "Fuels.csv".
+				LOG "Stage " + stageNumber + ",has,"+ shipInfo["Stage " + stageNumber]["Resources"][fuelType] + ",kg of " + fuelType + "" TO "0:Fuels.csv".
 				SET fuelMass TO fuelMass + stageInfo["Resources"][fuelType].
 			} ELSE {
 			// If the called out fuel isn't in this stage, search for it in a later stage
 				FOR subStageNumber IN RANGE(stageNumber, 0) {
 					IF shipInfo["Stage " + subStageNumber]["Resources"]:KEYS:CONTAINS(fuelType) {
-//						LOG "Borrowing "+ shipInfo["Stage " + stageNumber]["Resources"][fuelType] + ",kg of " + fuelType + " from Stage " + stageNumber TO "Fuels.csv".
+//						LOG "Stage " + stageNumber + ",is borrowing,"+ shipInfo["Stage " + subStageNumber]["Resources"][fuelType] + ",kg of " + fuelType + ",from Stage " + subStageNumber TO "0:Fuels.csv".
 						SET fuelMass TO fuelMass + shipInfo["Stage " + subStageNumber]["Resources"][fuelType].
 						BREAK.
 					}
@@ -438,15 +465,44 @@ FUNCTION updateShipInfoResources {
 		}
 		stageInfo:ADD("FuelMass", fuelMass).
 
+		LOCAL fuelRCSMass IS 0.
+		FOR fuelType IN stageInfo["FuelsRCS"] {
+			// If the called out fuel is in this stage, you are good to go
+			IF (stageInfo["Resources"]:KEYS:CONTAINS(fuelType)) {
+				LOG "Stage " + stageNumber + ",has,"+ shipInfo["Stage " + stageNumber]["Resources"][fuelType] + ",kg of " + fuelType + "" TO "0:Fuels.csv".
+				SET fuelRCSMass TO fuelRCSMass + stageInfo["Resources"][fuelType].
+			} ELSE {
+			// If the called out fuel isn't in this stage, search for it in a later stage
+				FOR subStageNumber IN RANGE(stageNumber, 0) {
+					IF shipInfo["Stage " + subStageNumber]["Resources"]:KEYS:CONTAINS(fuelType) {
+//						LOG "Stage " + stageNumber + ",is borrowing,"+ shipInfo["Stage " + subStageNumber]["Resources"][fuelType] + ",kg of " + fuelType + ",from Stage " + subStageNumber TO "0:Fuels.csv".
+						SET fuelRCSMass TO fuelRCSMass + shipInfo["Stage " + subStageNumber]["Resources"][fuelType].
+						BREAK.
+					}
+				}
+			}
+		}
+		stageInfo:ADD("FuelRCSMass", fuelRCSMass).
+
 		LOCAL resourceMass IS 0.
 		FOR keys IN stageInfo["Resources"]:KEYS {SET resourceMass TO resourceMass + stageInfo["Resources"][keys].}
 		stageInfo:ADD("ResourceMass", resourceMass).
 
+//		LOG "Title,Mass,Dry Mass,Wet Mass,Resource Count,Resource Mass" TO "0:partMass.csv".
+//		FOR p IN SHIP:PARTS {
+//		  LOCAL resourceMass IS 0.
+//		  FOR eachResource IN p:RESOURCES SET resourceMass TO resourceMass + (eachResource:DENSITY * eachResource:AMOUNT)*1000.
+//		  LOG p:TITLE:REPLACE(",","") + "," + p:MASS*1000 + "," + p:DRYMASS*1000 + "," + p:WETMASS*1000 + "," + p:RESOURCES:LENGTH + "," + resourceMass TO "0:partMass.csv".
+//		}
 		stageInfo:ADD("PreviousMass", previousMass).
-		FOR p IN stageInfo["Parts"] {SET previousMass TO previousMass + p:MASS * 1000.}
+		FOR p IN stageInfo["Parts"] {
+			//LOG "Adding," + p:MASS * 1000 + ",kg,to total for " + P:TITLE:REPLACE(",","") TO "0:testing.csv".
+			SET previousMass TO previousMass + p:MASS * 1000.
+		}
 		stageInfo:ADD("CurrentMass", previousMass).
 
-		LOCAL deltaV TO stageInfo["Isp"] * g_0 * LN(stageInfo["CurrentMass"]/(stageInfo["CurrentMass"] - stageInfo["FuelMass"])).
+		LOCAL deltaV TO 0.
+		IF stageInfo["CurrentMass"] - stageInfo["FuelMass"] > 0 SET deltaV TO stageInfo["Isp"] * g_0 * LN(stageInfo["CurrentMass"]/(stageInfo["CurrentMass"] - stageInfo["FuelMass"])).
 		stageInfo:ADD("DeltaV", deltaV).
 		SET shipInfo["Stage " + stageNumber] TO stageInfo.
 	}
@@ -545,35 +601,6 @@ FUNCTION updateShipInfoCurrent {
 	LOCAL thrustPCTEnginesTop IS 0.
 	LOCAL thrustPCTEnginesBottom IS 0.
 	SET minThrottle TO 0.
-	// IF isStockRockets() OR THROTTLE <> 0 OR THROTTLE <> 1 {
-		// SET thrustPCTThrust TO THROTTLE.
-		// SET thrustPCTEngines TO THROTTLE.
-		// SET thrustPCTEnginesTop TO THROTTLE.
-		// SET thrustPCTEnginesBottom TO THROTTLE.
-		// SET minThrottle TO 0.
-	// } ELSE {
-		// IF shipInfo["Maximum"]["Variable"]["Thrust"] <> 0 SET thrustPCTThrust TO shipInfo["Current"]["Variable"]["Thrust"] / shipInfo["Maximum"]["Variable"]["Thrust"].
-		// SET thrustPCTThrust TO MIN(thrustPCTThrust, 0.999).
-		// SET thrustPCTThrust TO MAX(thrustPCTThrust, 0).
-
-		// LOCAL message IS MISSIONTIME + "," + THROTTLE:TOSTRING.
-
-		// FOR eachEngine IN shipInfo["CurrentStage"]["Engines"] {
-			// IF eachEngine:IGNITION AND NOT eachEngine:THROTTLELOCK AND eachEngine:GETMODULE("ModuleEnginesRF"):GETFIELD("current throttle") <> 100 {
-				// SET thrustPCTEnginesTop TO eachEngine:GETMODULE("ModuleEnginesRF"):GETFIELD("current throttle") * eachEngine:GETMODULE("ModuleEnginesRF"):GETFIELD("thrust").
-				// SET thrustPCTEnginesBottom TO eachEngine:GETMODULE("ModuleEnginesRF"):GETFIELD("thrust").
-				// SET message TO message + "," + eachEngine:TITLE + "," + eachEngine:GETMODULE("ModuleEnginesRF"):GETFIELD("current throttle") + "," + eachEngine:GETMODULE("ModuleEnginesRF"):GETFIELD("thrust").
-			// } ELSE {SET message TO message + "," + eachEngine:TITLE + ",Is Not Throttleable,or is not ignited".}
-		// }
-		// LOG message TO "0:Engines.csv".
-		// IF thrustPCTEnginesBottom <> 0 SET thrustPCTEngines TO thrustPCTEnginesTop / (thrustPCTEnginesBottom * 100).
-		// ELSE SET thrustPCTEngines TO 0.
-		// SET thrustPCTEngines TO MIN(thrustPCTEngines, 0.999).
-		// SET thrustPCTEngines TO MAX(thrustPCTEngines, 0).
-
-		// SET minThrottle TO (THROTTLE-thrustPCTEngines)/(1-thrustPCTEngines).
-	// }
-
 	IF indepententLogging {
 		IF NOT shipInfoCurrentLoggingStarted {
 			IF connectionToKSC() LOG "Time,Mass,Altitude,Air Pressure,Orbital Velocity,Surface Velocity,Throttle,Current Constant Accel,Current Constant mDot,Current Constant Thrust,Current Constant TWR,Current Variable Accel,Current Variable mDot,Current Variable Thrust,Current Variable TWR,Current Accel,Current BurnTime,Current mDot,Current Thrust,Current TWR,Maximum Constant Accel,Maximum Constant mDot,Maximum Constant Thrust,Maximum Constant TWR,Maximum Variable Accel,Maximum Variable mDot,Maximum Variable Thrust,Maximum Variable TWR,Maximum Accel,Maximum BurnTime,Maximum mDot,Maximum Thrust,Maximum TWR,Thrust Percent Thrust,Thrust Percent Engines,Min Throttle" TO fileName.
@@ -585,52 +612,14 @@ FUNCTION updateShipInfoCurrent {
 	}
 }
 
+// given an engine list, return the list of fuels that those engines use
+// works for both a list of ENGINEs as well as a list of RCS, or any combination.
 FUNCTION getCurrentFuels {
 	PARAMETER engineList.
 	LOCAL listOfFuels IS LIST().
 	FOR eachEngine IN engineList {
-		IF isStockRockets() {
-			IF NOT listOfFuels:CONTAINS("LiquidFuel") AND (eachEngine:TITLE:CONTAINS("Liquid Fuel") OR eachEngine:TITLE:CONTAINS("Nuclear")) {
-				listOfFuels:ADD("LiquidFuel").
-			}
-			IF NOT listOfFuels:CONTAINS("Oxidizer") AND eachEngine:TITLE:CONTAINS("Liquid Fuel") {
-				listOfFuels:ADD("Oxidizer").
-			}
-			IF NOT listOfFuels:CONTAINS("SolidFuel") AND eachEngine:TITLE:CONTAINS("Solid") {
-				listOfFuels:ADD("SolidFuel").
-			}
-		} ELSE {
-			IF eachEngine:NAME = "LR87LH2Vac" {
-				IF NOT listOfFuels:CONTAINS("LqdHydrogen") listOfFuels:ADD("LqdHydrogen").
-				IF NOT listOfFuels:CONTAINS("LqdOxygen") listOfFuels:ADD("LqdOxygen").
-			}
-			IF eachEngine:NAME = "engineLargeSkipper.125m" {
-				IF NOT listOfFuels:CONTAINS("Kerosene") listOfFuels:ADD("Kerosene").
-				IF NOT listOfFuels:CONTAINS("LqdOxygen") listOfFuels:ADD("LqdOxygen").
-			}
-			IF eachEngine:TITLE = "RL10 Series Vacuum Engine" {
-				IF eachEngine:VACUUMISP > 400 {
-					IF NOT listOfFuels:CONTAINS("LqdHydrogen") listOfFuels:ADD("LqdHydrogen").
-				} ELSE {
-					IF NOT listOfFuels:CONTAINS("LqdMethane") listOfFuels:ADD("LqdMethane").
-				}
-				IF NOT listOfFuels:CONTAINS("LqdOxygen") listOfFuels:ADD("LqdOxygen").
-			}
-			IF eachEngine:NAME = "Size2LFB" {
-				IF NOT listOfFuels:CONTAINS("Kerosene") listOfFuels:ADD("Kerosene").
-				IF NOT listOfFuels:CONTAINS("LqdOxygen") listOfFuels:ADD("LqdOxygen").
-			}
-			IF eachEngine:NAME = "RO-E1" {
-				IF NOT listOfFuels:CONTAINS("Kerosene") listOfFuels:ADD("Kerosene").
-				IF NOT listOfFuels:CONTAINS("LqdOxygen") listOfFuels:ADD("LqdOxygen").
-			}
-			IF eachEngine:NAME = "liquidEngineMiniRescale" {
-				IF NOT listOfFuels:CONTAINS("MMH") listOfFuels:ADD("MMH").
-				IF NOT listOfFuels:CONTAINS("NTO") listOfFuels:ADD("NTO").
-			}
-			IF NOT listOfFuels:CONTAINS("SolidFuel") AND eachEngine:TITLE:CONTAINS("Solid") {
-				listOfFuels:ADD("SolidFuel").
-			}
+		FOR eachFuel IN eachEngine:CONSUMEDRESOURCES:KEYS {
+			IF NOT listOfFuels:CONTAINS(eachFuel:REPLACE(" ","")) listOfFuels:ADD(eachFuel:REPLACE(" ","")).
 		}
 	}
 	RETURN listOfFuels.
@@ -696,6 +685,173 @@ FUNCTION heightPrediction {
 		}
 	}
 	RETURN LEXICON("min",minHeight,"max",averageHeight,"avg",averageHeight).
+}
+
+// Generic hill climbing function
+// Tries to minimize the value of the passed delegate.
+// Passed the following
+//			delegate, expecting a single scalar input and returns a single scalar
+//			initialGuess - initial guess of the final value
+//			initialStepSize - how much to start moving the initial guess by
+//			iterationMax - maximum iteration number. Defaults to 1000.
+//			smallestStepRatio - Ratio of smallest step size to initial step size
+//        (negative power of 2). Defaults to 15, so the smallest step size
+//        would be initialStepSize / (2^15).
+//			logFile - log file name. If blank, does not log. Defaults to blank.
+//			cyclicalPeriod - period of cyclical repition in the input of the delegate.
+//        -1 is a special case that indicates input is not cyclical.
+//        Defaults to -1.
+//			cyclicalPeriodCutoff - value below which cyclicalPeriod should be added to the current guess.
+// Returns the following:
+//			Lexicon with the following members:
+//				"iteration" - scalar - number of the final iteration
+//				"initialValue" - scalar - value of the delegate given the initial guess
+//				"initialGuess" - scalar - value of the initial guess
+//				"finalValue" - scalar - value of the delegate given the final guess. This is minimized.
+//				"finalGuess" - scalar - value of the final guess
+//				"deltaValue" - scalar - how much the delegate changed
+// A few notes about the delegate:
+//    It is assumed that the delegate recieves a single scalar input and returns a single scalar.
+//    This function is a minimization function; if you want it to maximimze instead, make the delegate return a negative.
+FUNCTION hillClimb {
+  PARAMETER delegate.
+  PARAMETER initialGuess.
+  PARAMETER initialStepSize.
+	PARAMETER logFile IS "".
+  PARAMETER iterationMax IS 100.
+  PARAMETER smallestStepRatio IS 15.
+  PARAMETER cyclicalPeriod IS -1.
+  PARAMETER cyclicalPeriodCutoff IS 0.
+	PARAMETER deleteOldLogFile IS TRUE.
+
+  LOCAL stepSize IS initialStepSize.
+  LOCAL smallestStep IS initialStepSize / (2^smallestStepRatio).
+  LOCAL iteration IS 0.
+	LOCAL currentDelegate IS 0.
+	LOCAL currentPlusDelegate IS 0.
+	LOCAL currentMinusDelegate IS 0.
+	IF deleteOldLogFile AND logFile <> "" AND EXISTS(logFile) DELETEPATH(logFile).
+  IF logFile <> "" LOG "Iteration,Power of 2,Current Guess,Step Size,Delegate at Current Guess,Delegate at Current Guess + Step,Delegate at Current Guess - Step" TO logFile.
+  LOCAL currentGuess IS initialGuess.
+  UNTIL (stepSize <= smallestStep) OR (iteration > iterationMax) {
+		SET currentDelegate TO delegate(currentGuess).
+		SET currentPlusDelegate TO delegate(currentGuess + stepSize).
+		SET currentMinusDelegate TO delegate(currentGuess - stepSize).
+    IF logFile <> "" LOG iteration + "," + (LN(stepSize/initialStepSize)/LN(2)) + "," + currentGuess + "," + stepSize + "," + currentDelegate + "," + currentPlusDelegate + "," + currentMinusDelegate TO logFile.
+    IF currentPlusDelegate < currentDelegate {
+      SET currentGuess TO currentGuess + stepSize.
+    } ELSE IF currentMinusDelegate < currentDelegate {
+      SET currentGuess TO currentGuess - stepSize.
+    } ELSE {
+      SET stepSize TO stepSize / 2.
+    }
+    SET iteration TO iteration + 1.
+		IF cyclicalPeriod <> -1 {IF currentGuess < cyclicalPeriodCutoff SET currentGuess TO currentGuess + cyclicalPeriod.}
+  }
+	LOCAL initialValue IS delegate(initialGuess).
+	LOCAL finalValue IS delegate(currentGuess).
+	LOCAL returnMe IS LEXICON().
+	returnMe:ADD("iteration", iteration - 1).
+	returnMe:ADD("initialValue", initialValue).
+	returnMe:ADD("initialGuess", initialGuess).
+	returnMe:ADD("finalValue", finalValue).
+	returnMe:ADD("finalGuess", currentGuess).
+	returnMe:ADD("deltaValue", finalValue - initialValue).
+	RETURN returnMe.
+}
+
+// Generic hill climbing function
+// Tries to minimize the value of the passed delegate.
+// Passed the following
+//			delegate, expecting a single scalar input and returns a single scalar
+//			initialGuess - initial guess of the final value
+//			initialStepSize - how much to start moving the initial guess by
+//			iterationMax - maximum iteration number. Defaults to 1000.
+//			smallestStepRatio - Ratio of smallest step size to initial step size
+//        (negative power of 2). Defaults to 15, so the smallest step size
+//        would be initialStepSize / (2^15).
+//			logFile - log file name. If blank, does not log. Defaults to blank.
+//			cyclicalPeriod - period of cyclical repition in the input of the delegate.
+//        -1 is a special case that indicates input is not cyclical.
+//        Defaults to -1.
+//			cyclicalPeriodCutoff - value below which cyclicalPeriod should be added to the current guess.
+// Returns the following:
+//			Lexicon with the following members:
+//				"iteration" - scalar - number of the final iteration
+//				"initialValue" - scalar - value of the delegate given the initial guess
+//				"initialGuess" - scalar - value of the initial guess
+//				"finalValue" - scalar - value of the delegate given the final guess. This is minimized.
+//				"finalGuess" - scalar - value of the final guess
+//				"deltaValue" - scalar - how much the delegate changed
+// A few notes about the delegate:
+//    It is assumed that the delegate recieves a single scalar input and returns a single scalar.
+//    This function is a minimization function; if you want it to maximimze instead, make the delegate return a negative.
+FUNCTION hillClimb2D {
+	PARAMETER hillClimb1Parameters.
+	PARAMETER hillClimb2Parameters.
+	LOCAL delegate IS hillClimb1Parameters["delegate"].
+  LOCAL initialGuess IS hillClimb1Parameters["initialGuess"].
+  LOCAL initialStepSize IS hillClimb1Parameters["initialStepSize"].
+	LOCAL logFile IS CHOOSE hillClimb1Parameters["logFile"] IF hillClimb1Parameters:KEYS:CONTAINS("logFile") ELSE "".
+  LOCAL iterationMax IS CHOOSE hillClimb1Parameters["iterationMax"] IF hillClimb1Parameters:KEYS:CONTAINS("iterationMax") ELSE 100.
+  LOCAL smallestStepRatio IS CHOOSE hillClimb1Parameters["smallestStepRatio"] IF hillClimb1Parameters:KEYS:CONTAINS("smallestStepRatio") ELSE 15.
+  LOCAL cyclicalPeriod IS CHOOSE hillClimb1Parameters["cyclicalPeriod"] IF hillClimb1Parameters:KEYS:CONTAINS("cyclicalPeriod") ELSE -1.
+  LOCAL cyclicalPeriodCutoff IS CHOOSE hillClimb1Parameters["cyclicalPeriodCutoff"] IF hillClimb1Parameters:KEYS:CONTAINS("cyclicalPeriodCutoff") ELSE 0.
+	LOCAL delegate2 IS hillClimb2Parameters["delegate"].
+  LOCAL initialGuess2 IS hillClimb2Parameters["initialGuess"].
+  LOCAL initialStepSize2 IS hillClimb2Parameters["initialStepSize"].
+	LOCAL logFile2 IS CHOOSE hillClimb2Parameters["logFile"] IF hillClimb2Parameters:KEYS:CONTAINS("logFile") ELSE "".
+  LOCAL iterationMax2 IS CHOOSE hillClimb2Parameters["iterationMax"] IF hillClimb2Parameters:KEYS:CONTAINS("iterationMax") ELSE 100.
+  LOCAL smallestStepRatio2 IS CHOOSE hillClimb2Parameters["smallestStepRatio"] IF hillClimb2Parameters:KEYS:CONTAINS("smallestStepRatio") ELSE 15.
+  LOCAL cyclicalPeriod2 IS CHOOSE hillClimb2Parameters["cyclicalPeriod"] IF hillClimb2Parameters:KEYS:CONTAINS("cyclicalPeriod") ELSE -1.
+  LOCAL cyclicalPeriodCutoff2 IS CHOOSE hillClimb2Parameters["cyclicalPeriodCutoff"] IF hillClimb2Parameters:KEYS:CONTAINS("cyclicalPeriodCutoff") ELSE 0.
+
+	PARAMETER deleteOldLogFile IS TRUE.
+
+  LOCAL stepSize IS initialStepSize.
+  LOCAL smallestStep IS initialStepSize / (2^smallestStepRatio).
+  LOCAL iteration IS 0.
+	LOCAL currentDelegate IS 0.
+	LOCAL currentPlusDelegate IS 0.
+	LOCAL currentMinusDelegate IS 0.
+	IF deleteOldLogFile AND logFile <> "" AND EXISTS(logFile) DELETEPATH(logFile).
+	IF deleteOldLogFile AND logFile2 <> "" AND EXISTS(logFile2) DELETEPATH(logFile2).
+  IF logFile <> "" LOG "Iteration,Power of 2,Current Guess,Step Size,Delegate at Current Guess,Delegate at Current Guess + Step,Delegate at Current Guess - Step" TO logFile.
+  LOCAL currentGuess IS initialGuess.
+  UNTIL (stepSize <= smallestStep) OR (iteration > iterationMax) {
+		hillClimb(delegate2,							// Delegate.
+							initialGuess2,          // Initial Guess
+							initialStepSize2,     	// Initial Step Size
+							logFile2,      					// LogFile path
+							iterationMax2,          // Maximum iteration number
+							smallestStepRatio2,     // Ratio of smallest step size to initial step size (negative power of 2)
+							cyclicalPeriod2,        // Cyclical Period
+							cyclicalPeriodCutoff2,	// Cyclical Period Cutoff
+							FALSE).									// delete old log file
+		SET currentDelegate TO delegate(currentGuess).
+		SET currentPlusDelegate TO delegate(currentGuess + stepSize).
+		SET currentMinusDelegate TO delegate(currentGuess - stepSize).
+    IF logFile <> "" LOG iteration + "," + (LN(stepSize/initialStepSize)/LN(2)) + "," + currentGuess + "," + stepSize + "," + currentDelegate + "," + currentPlusDelegate + "," + currentMinusDelegate TO logFile.
+    IF currentPlusDelegate < currentDelegate {
+      SET currentGuess TO currentGuess + stepSize.
+    } ELSE IF currentMinusDelegate < currentDelegate {
+      SET currentGuess TO currentGuess - stepSize.
+    } ELSE {
+      SET stepSize TO stepSize / 2.
+    }
+    SET iteration TO iteration + 1.
+		IF cyclicalPeriod <> -1 {IF currentGuess < cyclicalPeriodCutoff SET currentGuess TO currentGuess + cyclicalPeriod.}
+  }
+	LOCAL initialValue IS delegate(initialGuess).
+	LOCAL finalValue IS delegate(currentGuess).
+	LOCAL returnMe IS LEXICON().
+	returnMe:ADD("iteration", iteration - 1).
+	returnMe:ADD("initialValue", initialValue).
+	returnMe:ADD("initialGuess", initialGuess).
+	returnMe:ADD("finalValue", finalValue).
+	returnMe:ADD("finalGuess", currentGuess).
+	returnMe:ADD("deltaValue", finalValue - initialValue).
+	RETURN returnMe.
 }
 
 // Return the vector pointing in the direction of downslope
@@ -893,12 +1049,15 @@ FUNCTION engineStats {
 	LOCAL pressure IS 0.												// Ambient atmospheric pressure (atmospheres) Default to 0.
 	IF SHIP:BODY:ATM:EXISTS SET pressure TO SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE).
 
-	FOR eng IN engineList {
-		SET mDot_cur TO mDot_cur + eng:THRUST         * 1000 / (g_0 * eng:ISPAT(pressure)).
-		SET mDot_max TO mDot_max + eng:POSSIBLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)).
-		SET F_cur TO F_cur + eng:THRUST         * 1000.
-		SET F_max TO F_max + eng:POSSIBLETHRUST * 1000.
-	}
+	IF NOT engineList:EMPTY {
+		FOR eng IN engineList {
+			SET mDot_cur TO mDot_cur + eng:THRUST         * 1000 / (g_0 * eng:ISPAT(pressure)).
+			SET mDot_max TO mDot_max + eng:POSSIBLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)).
+			SET F_cur TO F_cur + eng:THRUST         * 1000.
+			SET F_max TO F_max + eng:POSSIBLETHRUST * 1000.
+		}
+	} ELSE SET mDot_max TO 0.
+
 
 	IF mDot_max = 0 RETURN LIST(0, F_cur, mDot_cur, F_max, mDot_max).
 
@@ -932,13 +1091,15 @@ FUNCTION engineStatsRCS {
 
 	IF isStockRockets() {
 		FOR eng IN engineList {
-			// The throttle equivalent is the magnitude of the CONTROL:TRANSLATION vector.
-			SET effectiveThrottle TO SHIP:CONTROL:TRANSLATION:MAG.
+			IF eng:ENABLED {
+				// The throttle equivalent is the magnitude of the CONTROL:TRANSLATION vector.
+				SET effectiveThrottle TO SHIP:CONTROL:TRANSLATION:MAG.
 
-			SET mDot_cur TO mDot_cur + eng:THRUST         * 1000 / (g_0 * eng:ISPAT(pressure)) * (eng:THRUSTLIMIT / 100.0) * effectiveThrottle.
-			SET mDot_max TO mDot_max + eng:POSSIBLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)) * (eng:THRUSTLIMIT / 100.0).
-			SET F_cur TO F_cur + eng:THRUST         * 1000 * (eng:THRUSTLIMIT / 100.0) * effectiveThrottle.
-			SET F_max TO F_max + eng:POSSIBLETHRUST * 1000 * (eng:THRUSTLIMIT / 100.0).
+				SET mDot_cur TO mDot_cur + eng:AVAILABLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)) * (eng:THRUSTLIMIT / 100.0) * effectiveThrottle.
+				SET mDot_max TO mDot_max + eng:AVAILABLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)) * (eng:THRUSTLIMIT / 100.0).
+				SET F_cur TO F_cur + eng:AVAILABLETHRUST * 1000 * (eng:THRUSTLIMIT / 100.0) * effectiveThrottle.
+				SET F_max TO F_max + eng:AVAILABLETHRUST * 1000 * (eng:THRUSTLIMIT / 100.0).
+			}
 		}
 	} ELSE {
 		FOR eng IN engineList {
@@ -1514,6 +1675,196 @@ FUNCTION printOrbit
 	PRINT "Argument of Periapsis " + ROUND(orb:ARGUMENTOFPERIAPSIS, 4) + "     " AT(Xcoord, Ycoord + 8).
 }
 
+FUNCTION logOrbit
+{
+	PARAMETER orbs.
+	PARAMETER fileName.
+	// if passed only a single orbit, add it it a list.
+	IF orbs:TYPENAME <> "LIST" SET orbs TO LIST(orbs).
+	IF orbs:TYPENAME <> "LIST" {PRINT "Not passed a valid orbit!". RETURN 0.}
+	LOCAL message IS "".
+
+	SET message TO "Name,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:NAME + ",".}
+	SET message TO message + "".
+	LOG message TO fileName.
+
+	SET message TO "Apoapsis,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:APOAPSIS + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Periapsis,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:PERIAPSIS + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Orbited Body,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:BODY:NAME + ",".}
+	SET message TO message + "".
+	LOG message TO fileName.
+
+	SET message TO "Orbited Body MU,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:BODY:MU + ",".}
+	SET message TO message + "m^3/s^2".
+	LOG message TO fileName.
+
+	SET message TO "Orbited Body Radius,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:BODY:Radius + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Orbited Body SOI Radius,".
+	FOR eachOrbit IN orbs {
+		IF eachOrbit:BODY:HASBODY SET message TO message + eachOrbit:BODY:SOIRADIUS + ",".
+		ELSE SET message TO message + "infinite,".
+	}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Period,".
+	FOR eachOrbit IN orbs {
+		IF eachOrbit:SEMIMAJORAXIS < 0 SET message TO message + "Undefined,".
+		ELSE SET message TO message + eachOrbit:PERIOD + ",".
+	}
+	SET message TO message + "s".
+	LOG message TO fileName.
+
+	SET message TO "Inclination,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:INCLINATION + ",".}
+	SET message TO message + "deg".
+	LOG message TO fileName.
+
+	SET message TO "Inclination,".
+	FOR eachOrbit IN orbs {SET message TO message + (CONSTANT:DegToRad * eachOrbit:INCLINATION) + ",".}
+	SET message TO message + "rad".
+	LOG message TO fileName.
+
+	SET message TO "Eccentricity,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:ECCENTRICITY + ",".}
+	SET message TO message + "".
+	LOG message TO fileName.
+
+	SET message TO "Semi-Major Axis,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:SEMIMAJORAXIS + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Semi-Minor Axis,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:SEMIMINORAXIS + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Longitude of Ascending Node,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:LAN + ",".}
+	SET message TO message + "deg".
+	LOG message TO fileName.
+
+	SET message TO "Longitude of Ascending Node,".
+	FOR eachOrbit IN orbs {SET message TO message + (CONSTANT:DegToRad * eachOrbit:LAN) + ",".}
+	SET message TO message + "rad".
+	LOG message TO fileName.
+
+	SET message TO "Argument of Periapsis,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:ARGUMENTOFPERIAPSIS + ",".}
+	SET message TO message + "deg".
+	LOG message TO fileName.
+
+	SET message TO "Argument of Periapsis,".
+	FOR eachOrbit IN orbs {SET message TO message + (CONSTANT:DegToRad * eachOrbit:ARGUMENTOFPERIAPSIS) + ",".}
+	SET message TO message + "rad".
+	LOG message TO fileName.
+
+	SET message TO "True Anomaly,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:TRUEANOMALY + ",".}
+	SET message TO message + "deg".
+	LOG message TO fileName.
+
+	SET message TO "True Anomaly,".
+	FOR eachOrbit IN orbs {SET message TO message + (CONSTANT:DegToRad * eachOrbit:TRUEANOMALY) + ",".}
+	SET message TO message + "rad".
+	LOG message TO fileName.
+
+	SET message TO "Mean Anomaly at Epoch,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:MEANANOMALYATEPOCH + ",".}
+	SET message TO message + "deg".
+	LOG message TO fileName.
+
+	SET message TO "Mean Anomaly at Epoch,".
+	FOR eachOrbit IN orbs {SET message TO message + (CONSTANT:DegToRad * eachOrbit:MEANANOMALYATEPOCH) + ",".}
+	SET message TO message + "rad".
+	LOG message TO fileName.
+
+	SET message TO "Epoch,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:EPOCH + ",".}
+	SET message TO message + "s".
+	LOG message TO fileName.
+
+	SET message TO "Current UT,".
+	FOR eachOrbit IN orbs {SET message TO message + TIME:SECONDS + ",".}
+	SET message TO message + "s".
+	LOG message TO fileName.
+
+	SET message TO "Transition,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:TRANSITION + ",".}
+	SET message TO message + "".
+	LOG message TO fileName.
+
+	SET message TO "Position (r),".
+	FOR eachOrbit IN orbs {SET message TO message + (eachOrbit:POSITION - eachOrbit:BODY:POSITION):MAG + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Velocity (v),".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:VELOCITY:ORBIT:MAG + ",".}
+	SET message TO message + "m/s".
+	LOG message TO fileName.
+
+	SET message TO "Has Next Patch,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:HASNEXTPATCH + ",".}
+	SET message TO message + "".
+	LOG message TO fileName.
+
+	SET message TO "Next Patch ETA,".
+	FOR eachOrbit IN orbs {
+		IF eachOrbit:HASNEXTPATCH {
+		  SET message TO message + eachOrbit:NEXTPATCHETA + ",".
+		} ELSE SET message TO message + "N/A,".
+	}
+	SET message TO message + "s".
+	LOG message TO fileName.
+
+	SET message TO "Position X,".
+	FOR eachOrbit IN orbs {SET message TO message + (eachOrbit:POSITION - eachOrbit:BODY:POSITION):X + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Position Y,".
+	FOR eachOrbit IN orbs {SET message TO message + (eachOrbit:POSITION - eachOrbit:BODY:POSITION):Y + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Position Z,".
+	FOR eachOrbit IN orbs {SET message TO message + (eachOrbit:POSITION - eachOrbit:BODY:POSITION):Z + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Velocity X,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:VELOCITY:ORBIT:X + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Velocity Y,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:VELOCITY:ORBIT:Y + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+
+	SET message TO "Velocity Z,".
+	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:VELOCITY:ORBIT:Z + ",".}
+	SET message TO message + "m".
+	LOG message TO fileName.
+}
+
 // get desired launch azimuth given desired circular orbit altitude and inclination
 FUNCTION desiredAzimuth
 {
@@ -1833,7 +2184,7 @@ FUNCTION timeToAltitude
   }
 
   // Step 4: calculate time difference via mean motion
-  LOCAL meanMotion IS Constant:PI * 2 / SHIP:ORBIT:PERIOD. // in deg/s
+  LOCAL meanMotion IS Constant:PI * 2 / SHIP:ORBIT:PERIOD. // in rad/s
 
   RETURN (desiredMeanAnomaly - currentMeanAnomaly) / meanMotion.
 }
@@ -2117,34 +2468,41 @@ FUNCTION meanToTrueAnomaly {
   LOCAL functionDelegate IS {PARAMETER E. RETURN E - eccentricity*SIN(CONSTANT:RadToDeg * E) - meanAnomaly.}.
 
   LOCAL eccentricAnomaly IS findZeroSecant(functionDelegate, meanAnomaly, meanAnomaly + CONSTANT:PI/32, 0.0000001).
-  LOCAL trueAnomaly IS ARCTAN2(COS(CONSTANT:RadToDeg * eccentricAnomaly) - eccentricity, SQRT(1-eccentricity*eccentricity)*SIN(CONSTANT:RadToDeg * eccentricAnomaly)).
+  LOCAL trueAnomaly IS ARCTAN2(SQRT(1-eccentricity*eccentricity)*SIN(CONSTANT:RadToDeg * eccentricAnomaly), COS(CONSTANT:RadToDeg * eccentricAnomaly) - eccentricity).
   UNTIL trueAnomaly >= 0 {
     SET trueAnomaly TO trueAnomaly + 360.0.
   }
 
-  RETURN trueAnomaly.
+  RETURN normalizeAngle(trueAnomaly).
 }
 
 // given the true anomaly (in degrees), returns mean anomaly (in degrees)
 FUNCTION trueToMeanAnomaly {
   PARAMETER trueAnomaly.
-  PARAMETER eccentricity.
+  PARAMETER eccentricity IS SHIP:ORBIT:ECCENTRICITY.
 
   // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
   IF eccentricity = 0 RETURN trueAnomaly.
 
-  // Convert to radians for calculations.
-  SET trueAnomaly TO CONSTANT:DegToRad * trueAnomaly.
+	// note that eccentric anomaly is in radians
+	LOCAL eccentricAnomaly IS CONSTANT:DegToRad * 2 * ARCTAN(TAN(trueAnomaly / 2) / SQRT((1 + eccentricity) / (1 - eccentricity))).
+//	PRINT "eccentric anomaly: " + eccentricAnomaly.
 
-  LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCCOS((eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly))).
-  LOCAL meanAnomaly IS eccentricAnomaly * CONSTANT:DegToRad - eccentricity * SIN(eccentricAnomaly).
-  RETURN CONSTANT:RadToDeg * meanAnomaly.
+//  This method also calculates eccentric anomaly equally well, but it is much more processor intensive than the other one.
+//	LOCAL cosE IS (eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly)).
+//	LOCAL sinE IS SQRT(1 - eccentricity^2) * SIN(trueAnomaly)/(1 + eccentricity * COS(trueAnomaly)).
+//  LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCTAN2(sinE, cosE).
+  LOCAL meanAnomaly IS CONSTANT:RadToDeg * (eccentricAnomaly - eccentricity * SIN(eccentricAnomaly * CONSTANT:RadToDeg)).
+	IF meanAnomaly < 0 SET meanAnomaly TO meanAnomaly + 360.
+  RETURN normalizeAngle(meanAnomaly).
 }
 
 // Given an angle in degrees, returns the normalized angle in degrees
 FUNCTION normalizeAngle {
 	PARAMETER angle.
-	RETURN ARCTAN2(SIN(angle), COS(angle)).
+	LOCAL tempAngle IS ARCTAN2(SIN(angle), COS(angle)).
+	IF tempAngle < 0 SET tempAngle TO tempAngle + 360.
+	RETURN tempAngle.
 }
 
 LOCAL maxHyperbolicVariable IS 709.78.
@@ -2250,4 +2608,56 @@ FUNCTION SuicideBurnInfo {
 	returnMe:ADD(     "deltaV", totalDVNeeded).
 	returnMe:ADD( "deltaVGrav",   gravityDrag).
 	RETURN returnMe.
+}
+
+// Given the desired velocity at infinity and ETA, calculate the various parameters
+// to transition the existing elliptical orbit (of whatever type) to a hyperbolic
+// escape orbit from the body.
+// Passed the following:
+//   v_inf - scalar - velocity ship should have "at infinity" in m/s
+//   burnETA - scalar - time in seconds until the burn.
+// Returns the following:
+//   Lexicon of the following data points:
+//     "a" - scalar - semimajor axis of the hyperbola. Negative.
+//     "b" - scalar - semiminor axis of the hyperbola. Negative.
+//     "e" - scalar - eccentricity of the hyperbola. Greater than 1.0.
+//     "l" - scalar - semimajor axis of the hyperbola. Negative.
+//     "theta_turn" - scalar - turning angle from the burn to SOI edge.
+//     "v_delta" - scalar - delta V (m/s) required for the burn to transition from elliptical orbit to hyperbolic orbit.
+//     "flightPathAngle" - scalar - flight path angle (degrees) of both orbits at the burn.
+//     "trueAnomaly" - scalar - true anomaly (degrees) of the burn on the hyperbolic orbit.
+//     "flightPathAngleSOI" - scalar - flight path angle (degrees) of hyperbolic orbit at the SOI edge.
+//     "trueAnomalySOI" - scalar - true anomaly (degrees) of hyperbolic orbit at the SOI edge.
+FUNCTION getHyperbolicBurnInfo {
+  PARAMETER v_inf.
+  PARAMETER burnETA.
+  LOCAL r_body IS SHIP:BODY:RADIUS.
+  LOCAL r_SOI IS SHIP:BODY:SOIRADIUS.
+  LOCAL mu IS SHIP:BODY:MU.
+  LOCAL pos_burn IS POSITIONAT(SHIP, TIME:SECONDS + burnETA) - SHIP:BODY:POSITION.
+  LOCAL r_burn IS pos_burn:MAG.
+  LOCAL v_ellipse IS VELOCITYAT(SHIP, TIME:SECONDS + burnETA):ORBIT.
+  LOCAL phi_burn IS (90 - VANG(pos_burn, v_ellipse)).
+  LOCAL v_esc IS SQRT(2*mu/r_burn).
+  LOCAL v_hyperbola IS SQRT(v_inf^2+v_esc^2).
+  LOCAL a IS -mu/v_inf^2.
+  LOCAL e IS SQRT((r_burn * v_hyperbola^2 / mu - 1)^2 * COS(phi_burn)^2 + SIN(phi_burn)^2).
+  LOCAL b IS -a*SQRT(e^2-1).
+  LOCAL l IS b^2/a.
+  LOCAL v_delta IS v_hyperbola - v_ellipse:MAG.
+  LOCAL theta_SOI IS ARCCOS((a*(1-e^2)-r_SOI)/(e*r_SOI)).
+  LOCAL phi_SOI IS ARCTAN((e*SIN(theta_SOI))/(1+e*COS(theta_SOI))).
+  LOCAL theta_burn IS ARCCOS(MAX(-1, MIN(1, (a*(1-e^2) - r_burn)/(r_burn*e)))).
+  IF phi_burn < 0 SET theta_burn TO -theta_burn.
+  LOCAL theta_turn IS ARCTAN2(e+COS(theta_SOI), -SIN(theta_SOI)) - ARCTAN2(e+COS(theta_burn), -SIN(theta_burn)).
+  RETURN LEXICON("a", a,
+                 "b", b,
+                 "e", e,
+								 "l", l,
+                 "theta_turn", theta_turn,
+                 "v_delta", v_delta,
+                 "flightPathAngle", phi_burn,
+                 "trueAnomaly", theta_burn,
+                 "flightPathAngleSOI", phi_SOI,
+                 "trueAnomalySOI", theta_SOI).
 }
