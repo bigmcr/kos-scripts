@@ -6,21 +6,17 @@ LOCAL errorCode IS "None".
 updateShipInfoCurrent(FALSE).
 
 LOCAL RCSEngines IS LIST().
+LIST RCS IN RCSEngines.
 
-FOR eachPart IN SHIP:PARTS {
-	FOR eachModule IN eachPart:MODULES {
-		IF eachPart:GETMODULE(eachModule):HASFIELD("rcs isp") {
-			RCSEngines:ADD(eachPart).
-		}
-	}
-}
+// Returns a list of the following:
+// [0]			effective Isp (scalar, s)
+// [1]			thrust (scalar, Newtons)
+// [2]			mDot (scalar, kg/s)
+// [3]			maximum thrust (scalar, Newtons)
+// [4]			maximum mDot (scalar, kg/s)
 LOCAL engineStats IS engineStatsRCS(RCSEngines).
-LOCAL RCSIsp IS RCSEngines[0]:GETMODULE("ModuleRCSFX"):GETFIELD("rcs isp").
-LOCAL RCSThrust IS 0.
-FOR eachEngine IN RCSEngines {
-	IF  eachEngine:TITLE:CONTAINS("RCS Quad") 	SET RCSThrust TO eachEngine:TITLE:SUBSTRING(14, 3):TONUMBER(0) * RCSEngines:LENGTH.
-	ELSE 										SET RCSThrust TO eachEngine:TITLE:SUBSTRING(18, 3):TONUMBER(0) * RCSEngines:LENGTH.
-}
+LOCAL RCSIsp IS engineStats[0].
+LOCAL RCSThrust IS engineStats[3].
 
 CLEARSCREEN. PRINT "Total Thrust: " + ROUND(RCSThrust, 0) + " kN, Engine Count: " + RCSEngines:LENGTH.
 
@@ -41,7 +37,6 @@ IF errorCode = "None" {
 	LOCK ND TO NEXTNODE.
 
 	LOCAL e IS CONSTANT():E.            								// Base of natural log
-	LOCAL g_0 IS 9.80665.               								// Gravitational acceleration constant (m/s²)
 	LOCAL m_i IS SHIP:MASS * 1000.										// Ship's mass (kg)
 
 	LOCAL dV_req TO ND:DELTAV:MAG.
@@ -51,19 +46,14 @@ IF errorCode = "None" {
 	LOCAL m_f IS m_i - burnTime*m_dot.
 	LOCAL a_i IS RCSThrust / m_i.										// initial acceleration at the start of the burn (m/s^2)
 	LOCAL a_f IS RCSThrust / m_f.										// final acceleration at the end of the burn (m/s^2)
-	LOCAL m_dry TO SHIP:DRYMASS * 1000.									// mass of the ship with all fuel used (kg)
+	LOCAL m_dry TO SHIP:MASS * 1000 - shipInfo["CurrentStage"]["FuelRCSMass"].									// mass of the ship with all RCS used (kg)
 	LOCAL m_wet TO SHIP:MASS * 1000.									// mass of the ship without all fuel used (kg)
 
-	// move all Ablator mass from wetmass to drymass.
-	// assumes that ablator cannot be used as RCS fuel.
-	FOR eachPart IN SHIP:PARTS {
-		FOR eachResource IN eachPart:RESOURCES {
-			IF eachResource:NAME:CONTAINS("Ablator") {
-				SET m_dry TO m_dry + (eachResource:AMOUNT * eachResource:DENSITY) * 1000.
-//				SET m_wet TO m_wet - (eachResource:AMOUNT * eachResource:DENSITY) * 1000.
-			}
-		}
-	}
+	PRINT "v_e: " + v_e.
+	PRINT "m_dot: " + m_dot.
+	PRINT "m_dry: " + m_dry.
+	PRINT "m_wet: " + m_wet.
+	WAIT 1.
 
 	LOCAL dV_avail TO v_e*LN(m_wet/m_dry).
 	LOCAL dv_prev TO 0.
@@ -108,7 +98,7 @@ IF errorCode = "None" {
 		PRINT "Node in: " + timeToString(ND:ETA) + ", DeltaV: " + distanceToString(ND:DELTAV:MAG, 3) + "/s".
 		PRINT "Stage  m_dry  m_wet   v_e  dV_avail  m_dot  dv_Prev  dv_Req  t_burn".
 		PRINT "          kg     kg   m/s       m/s   kg/s      m/s     m/s       s".
-		PRINT STAGE:NUMBER:TOSTRING:PADLEFT(5) + ROUND(m_dry, 0):TOSTRING:PADLEFT(7) + ROUND(m_wet, 0):TOSTRING:PADLEFT(7) + ROUND(v_e, 0):TOSTRING:PADLEFT(6) + ROUND(dV_avail, 0):TOSTRING:PADLEFT(10) + ROUND(m_dot, 1):TOSTRING:PADLEFT(7) + ROUND(dv_Prev, 0):TOSTRING:PADLEFT(9) + ROUND(dV_req_stage, 0):TOSTRING:PADLEFT(8) + ROUND(t_burn_req, 2):TOSTRING:PADLEFT(8).
+		PRINT STAGE:NUMBER:TOSTRING:PADLEFT(5) + ROUND(m_dry, 0):TOSTRING:PADLEFT(7) + ROUND(m_wet, 0):TOSTRING:PADLEFT(7) + ROUND(v_e, 0):TOSTRING:PADLEFT(6) + ROUND(dV_avail, 0):TOSTRING:PADLEFT(10) + ROUND(m_dot, 2):TOSTRING:PADLEFT(7) + ROUND(dv_Prev, 0):TOSTRING:PADLEFT(9) + ROUND(dV_req_stage, 0):TOSTRING:PADLEFT(8) + ROUND(t_burn_req, 2):TOSTRING:PADLEFT(8).
 		PRINT "Burn Delay, " + timeToString(t_ign, 2).
 		PRINT "Total Burntime, " + timeToString(t_total, 2).
 		PRINT "initial accel " + ROUND(a_i, 2 ) + " m/s   final accel " + ROUND(a_f, 2) + " m/s".
