@@ -25,27 +25,27 @@ SET pitchPID:SETPOINT TO 0.
 WHEN GROUNDSPEED < initialSpeed * 0.30 THEN {
 	SET mode TO 1.
 	SET pitchPID:SETPOINT TO -50.
-	
+
 	// Once total surface velocity is less than 5% of the initial horizontal speed, wait for the suicide burn
 	WHEN GROUNDSPEED < initialSpeed * 0.05 THEN {
 		SET mode TO 3.
-		
+
 		// Once the countdown to the suicide burn is 0, start the burn
 //		WHEN timeToSuicideBurn < 0.1 THEN {
 			SET mode TO 3.
-			
+
 			// once the suicide burn is mostly over (less than 10 m/s of vertical velocity), switch to the constant speed descent
 			WHEN VELOCITY:SURFACE:MAG < 10 THEN {
 				SET mode TO 4.
 				SET T_PID:SETPOINT TO -10.
 				GEAR ON.
-				
+
 				IF aboveGround < 100 SET T_PID:SETPOINT TO -2.
-				
+
 				// when the ship is 10 meters above the ground, drop to the surface.
 				WHEN aboveGround < 10 THEN {
 					SET mode TO 5.
-					
+
 					// when the surface velocity is gone, exit the program
 					WHEN VELOCITY:SURFACE:MAG < 0.1 THEN {
 						SET mode TO 6.
@@ -121,7 +121,7 @@ UNTIL mode > 5 {
 		LOG message TO "altitude.csv".
 		SET oldTime TO ROUND(TIME:SECONDS, 1).
 	}
-	
+
 	// Mode 0 - Maintain Vertical Velocity at 0 m/s until horizontal speed is 30% of initial
 	IF mode = 0 {
 		PRINT "VSpeed SP = 0" AT (40, 1).
@@ -129,10 +129,10 @@ UNTIL mode > 5 {
 		PRINT "             " AT (40, 3).
 		PRINT "HSpd <= " + ROUND(initialSpeed * 0.30) + "  " AT (40, 4).
 		LOCAL pitchValue IS pitchPID:UPDATE( TIME:SECONDS, VERTICALSPEED).
-		
+
 		// make the heading the same direction as surface retrograde
 		SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), pitchValue).
-		IF debug {LOGPID(pitchPID, "GravTurnLandPitchPID.csv", TRUE, 0).}
+		IF debug {LOGPID(pitchPID, "GravTurnLandPitchPID.csv", TRUE).}
 	}
 
 	// Mode 1 - Maintain Vertical Velocity at -50 m/s until horizontal speed is 5% of initial
@@ -144,7 +144,7 @@ UNTIL mode > 5 {
 		LOCAL pitchValue IS pitchPID:UPDATE( TIME:SECONDS, VERTICALSPEED).
 		// make the heading the same direction as surface retrograde
 		SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), pitchValue).
-		IF debug {LOGPID(pitchPID, "GravTurnLandPitchPID.csv", TRUE, 0).}
+		IF debug {LOGPID(pitchPID, "GravTurnLandPitchPID.csv", TRUE).}
 	}
 
 	// Mode 2 - Wait for suicide burn
@@ -175,7 +175,7 @@ UNTIL mode > 5 {
 		PRINT "             " AT (40, 3).
 		PRINT "AGL < 10     " AT (40, 4).
 		SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		IF debug {LOGPID(T_PID, "GravTurnLandThrottlePID.csv", TRUE, 1).}
+		IF debug {LOGPID(T_PID, "GravTurnLandThrottlePID.csv", TRUE).}
 		SET globalSteer TO -VELOCITY:SURFACE.
 	}
 
@@ -213,4 +213,3 @@ SET SHIP:CONTROL:MAINTHROTTLE TO 0.
 WAIT 0.5.
 IF (VELOCITY:SURFACE:MAG < 1) SET loopMessage TO "Sucessfully landed on " + SHIP:BODY:NAME.
 ELSE SET loopMessage TO "Something went wrong - still moving relative to surface of " + SHIP:BODY:NAME.
-

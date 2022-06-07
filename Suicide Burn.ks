@@ -95,7 +95,7 @@ UNTIL mode > 3 {
 	SET requiredVerticalVelocity TO 0.9*((x_f - v_e*(t - m_i/m_dot)*LN(m_i/(m_i - m_dot*t)) - x_i)/t - v_e + g_avg * t / 2.0).
 
 	SET RTTimeToBurn TO currentMargin/(-VERTICALSPEED*KUNIVERSE:TIMEWARP:RATE).
-//	IF useVelocity logPID(T_PID_Spd, "0:T_PID_Spd logfile.csv", TRUE, 2).
+//	IF useVelocity logPID(T_PID_Spd, "0:T_PID_Spd logfile.csv", TRUE).
 	IF VERTICALSPEED > 0 {
 		SET RTTimeToBurn TO 10.
 		PRINT "SB Mode: " + mode + "    Real Time to Burn: NA     " AT (0, 0).

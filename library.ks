@@ -1531,25 +1531,24 @@ FUNCTION desiredAzimuth
 }
 
 // global list of initialized PID logs.
-GLOBAL initPIDLog IS LIST().
+GLOBAL initPIDLog IS LEXICON().
 
 FUNCTION logPID
 {
 	PARAMETER PID.
 	PARAMETER filename IS "0:logfile.txt".
 	PARAMETER detailed IS TRUE.
-	PARAMETER number IS 0.
 	LOCAL recordsToArchive IS filename:SUBSTRING(0, 1) = "0".
 	IF NOT recordsToArchive OR (recordsToArchive AND connectionToKSC()) {
-		IF (initPIDLog:EMPTY OR NOT initPIDLog:CONTAINS(number))
+		IF (initPIDLog:KEYS:EMPTY OR NOT initPIDLog:KEYS:CONTAINS(filename))
 		{
 			IF EXISTS(filename) DELETEPATH(filename).
 			IF detailed	{LOG "Time Since Launch,Last Sample Time,Input,Setpoint,Error,Output,P Term, I Term, D Term,Kp,Ki,Kd,Max Output,Min Output,Change Rate,Error Sum" TO filename. }
 			ELSE {LOG "Time Since Launch,Input,Setpoint,Error,Output" TO filename.}
-			initPIDLog:ADD(number).
+			initPIDLog:ADD(filename, TIME:SECONDS).
 		}
-		IF detailed {LOG timeSinceLaunch() + "," + PID:LastSampleTime + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output + "," + PID:PTerm + "," + PID:ITerm + "," + PID:DTerm + "," + PID:Kp + "," + PID:KI + "," + PID:Kd + "," + PID:MAXOUTPUT + "," + PID:MINOUTPUT + "," + PID:CHANGERATE + "," + PID:ERRORSUM TO filename.}
-		ELSE {LOG timeSinceLaunch() + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output TO filename.}
+		IF detailed {LOG (TIME:SECONDS - initPIDLog[filename]) + "," + PID:LastSampleTime + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output + "," + PID:PTerm + "," + PID:ITerm + "," + PID:DTerm + "," + PID:Kp + "," + PID:KI + "," + PID:Kd + "," + PID:MAXOUTPUT + "," + PID:MINOUTPUT + "," + PID:CHANGERATE + "," + PID:ERRORSUM TO filename.}
+		ELSE {LOG (TIME:SECONDS - initPIDLog[filename]) + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output TO filename.}
 	}
 }
 

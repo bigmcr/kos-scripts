@@ -336,8 +336,8 @@ UNTIL mode > 6 {
 			SET mode to 7.
 		}
 	}
-//	logPID(PITCH_PID, "0:PITCH_PID.csv", TRUE, 0).
-	IF YAW_PID:INPUT <> 0 logPID(YAW_PID, "0:YAW_PID.csv", TRUE, 0).
+//	logPID(PITCH_PID, "0:PITCH_PID.csv", TRUE).
+	IF YAW_PID:INPUT <> 0 logPID(YAW_PID, "0:YAW_PID.csv", TRUE).
 }
 
 SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
