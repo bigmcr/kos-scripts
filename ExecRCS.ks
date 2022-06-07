@@ -49,12 +49,6 @@ IF errorCode = "None" {
 	LOCAL m_dry TO SHIP:MASS * 1000 - shipInfo["CurrentStage"]["FuelRCSMass"].									// mass of the ship with all RCS used (kg)
 	LOCAL m_wet TO SHIP:MASS * 1000.									// mass of the ship without all fuel used (kg)
 
-	PRINT "v_e: " + v_e.
-	PRINT "m_dot: " + m_dot.
-	PRINT "m_dry: " + m_dry.
-	PRINT "m_wet: " + m_wet.
-	WAIT 1.
-
 	LOCAL dV_avail TO v_e*LN(m_wet/m_dry).
 	LOCAL dv_prev TO 0.
 	LOCAL dV_req_stage TO MIN(MAX(dV_req-dV_prev,0),dV_avail).
