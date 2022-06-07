@@ -1,6 +1,6 @@
 @LAZYGLOBAL OFF.
-LOCAL oldTime IS MISSIONTIME.
-LOCAL timeDelta IS MISSIONTIME - oldTime.
+LOCAL oldTime IS TIME:SECONDS.
+LOCAL timeDelta IS TIME:SECONDS - oldTime.
 LOCAL pointing IS LEXICON().
 pointing:ADD("pitch",0).
 pointing:ADD("roll",0).
@@ -105,13 +105,16 @@ FUNCTION updateScreen {
 		PRINT "Argument of Periapsis " + ROUND(localOrbit:ARGUMENTOFPERIAPSIS, 4) + " deg     " AT (0, 26).
 		PRINT "True Anomaly  " + ROUND(localOrbit:TRUEANOMALY, 4) + " deg     " AT (0, 27).
 		PRINT "Mean Anomaly at Epoch " + ROUND(localOrbit:MEANANOMALYATEPOCH, 4) + " deg     " AT (0, 28).
-		PRINT "Epoch " + localOrbit:EPOCH + "     " AT (0, 29).
-		PRINT "Transition " + localOrbit:TRANSITION + "     " AT (0, 30).
-		PRINT "Position (r) " + distanceToString(SHIP:BODY:POSITION:MAG, 4) + "     " AT (0, 31).
-		PRINT "Velocity " + distanceToString(localOrbit:VELOCITY:ORBIT:MAG, 4) + "/s     " AT (0, 32).
-		PRINT "Has Next Patch " + localOrbit:HASNEXTPATCH + "     " AT (0, 33).
+    PRINT "Mean Anomaly " + ROUND(trueToMeanAnomaly(localOrbit:TRUEANOMALY, localOrbit:ECCENTRICITY), 4) + " deg     " AT (0, 29).
+		PRINT "Epoch " + localOrbit:EPOCH + "     " AT (0, 30).
+		PRINT "Transition " + localOrbit:TRANSITION + "     " AT (0, 31).
+    IF VERTICALSPEED < 0 PRINT "Flight path angle -" + ROUND(ABS(90 - VANG(-BODY:POSITION, SHIP:VELOCITY:ORBIT)), 4) + " deg     " AT (0, 32).
+    ELSE PRINT "Flight path angle " + ROUND(ABS(90 - VANG(-BODY:POSITION, SHIP:VELOCITY:ORBIT)), 4) + " deg     " AT (0, 32).
+		PRINT "Position (r) " + distanceToString(SHIP:BODY:POSITION:MAG, 4) + "     " AT (0, 33).
+		PRINT "Velocity " + distanceToString(localOrbit:VELOCITY:ORBIT:MAG, 4) + "/s     " AT (0, 34).
+		PRINT "Has Next Patch " + localOrbit:HASNEXTPATCH + "     " AT (0, 35).
 		IF localOrbit:HASNEXTPATCH {
-		  PRINT "Next Patch ETA " + timeToString(localOrbit:NEXTPATCHETA) + "     " AT (0, 34).
+		  PRINT "Next Patch ETA " + timeToString(localOrbit:NEXTPATCHETA) + "     " AT (0, 36).
 		}
 	} ELSE IF loopMode = "Processor" OR loopMode = "kOS" {
     LOCAL names IS "".
@@ -138,9 +141,35 @@ FUNCTION updateScreen {
     PRINT "Volume File Count         " + fileCounts AT (0, 17).
     PRINT "Volume Power Requirement  " + powerReqs + " E/s" AT (0, 18).
     PRINT "Core Boot File            " + bootFiles AT (0, 19).
+  } ELSE IF loopMode = "Ship" {
+    PRINT "Part Count         " + SHIP:PARTS:LENGTH:TOSTRING:PADLEFT(10) AT (0, 13).
+    PRINT "DeltaV             " + (ROUND(SHIP:DELTAV:CURRENT, 2) + "m/s"):PADLEFT(10) AT (0, 14).
+    PRINT "DeltaV Custom      " + (ROUND(shipInfo["CurrentStage"]["DeltaV"], 2) + "m/s"):PADLEFT(10) AT (0, 15).
+    PRINT "Stage Number       " + SHIP:STAGENUM:TOSTRING:PADLEFT(10) + "" AT (0, 16).
+    PRINT "Current Stage      " + shipInfo["NumberOfStages"]:TOSTRING:PADLEFT(10) AT (0, 17).
+    PRINT "Type               " + SHIP:TYPE:PADLEFT(10) + "" AT (0, 18).
+    PRINT "Crew Capacity      " + SHIP:CREWCAPACITY:TOSTRING:PADLEFT(10) AT (0, 19).
+    PRINT "Current Crew Count " + SHIP:CREW:LENGTH:TOSTRING:PADLEFT(10) + "" AT (0, 20).
+    PRINT "Resource Count     " + SHIP:RESOURCES:LENGTH:TOSTRING:PADLEFT(10) AT (0, 21).
+  } ELSE IF loopMode = "RCS" {
+    PRINT "Thruster       Enabled    Yaw  Pitch   Roll   Fore   Stbd    Top    ISP  " AT (0, 13).
+    LOCAL engineCounter IS 0.
+    FOR eachRCS IN shipInfo["CurrentStage"]["RCS"] {
+      PRINT eachRCS:TITLE:SUBSTRING(0, eachRCS:TITLE:FIND(" ")):PADRIGHT(15) +
+            eachRCS:ENABLED:TOSTRING:PADLEFT(7) +
+            eachRCS:YAWENABLED:TOSTRING:PADLEFT(7) +
+            eachRCS:PITCHENABLED:TOSTRING:PADLEFT(7) +
+            eachRCS:ROLLENABLED:TOSTRING:PADLEFT(7) +
+            eachRCS:FOREENABLED:TOSTRING:PADLEFT(7) +
+            eachRCS:STARBOARDENABLED:TOSTRING:PADLEFT(7) +
+            eachRCS:TOPENABLED:TOSTRING:PADLEFT(7) +
+            ROUND(eachRCS:ISP, 0):TOSTRING:PADLEFT(7) +
+            " " AT (0, 14 + engineCounter).
+      SET engineCounter TO engineCounter + 1.
+    }
   }
 
-	SET timeDelta TO MISSIONTIME - oldTime.
+	SET timeDelta TO TIME:SECONDS - oldTime.
 	IF timeDelta > 0 {
 		SET pointing["pitch"] TO pitch_for(SHIP).
 		SET pointing["roll"] TO roll_for(SHIP).
@@ -151,7 +180,7 @@ FUNCTION updateScreen {
 			SET resourceList[resource:NAME]["Quantity"] TO resource:AMOUNT.
 			SET resourceList[resource:NAME]["Mass"] TO resource:AMOUNT * resource:DENSITY * 1000.
 		}
-		SET oldTime TO MISSIONTIME.
+		SET oldTime TO TIME:SECONDS.
 	}
   updateFacingVectors().
 	RETURN TRUE.

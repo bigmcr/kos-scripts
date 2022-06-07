@@ -5,7 +5,7 @@ FUNCTION createCommandList {
 	// Lexicon value - LEXICON containing the following information
 	// 								 key PossibleArgs, value integer - maximum possible number of arguments
 	// 								 key RequiredArgs, value integer - minimum possible number of arguments
-	//                 key Delegate, value function delegate
+	//                 key Delegate, value function delegate that takes the appropriate number of arguments
 	LOCAL possibleCommands IS LEXICON().
 	LOCAL coreHighlight TO HIGHLIGHT(core:part, MAGENTA).
 	SET coreHighlight:ENABLED TO FALSE.
@@ -42,6 +42,41 @@ FUNCTION createCommandList {
 		IF (changeTo = "Toggle") OR (changeTo = "T") {SET RCS TO NOT RCS. RETURN "RCS toggled to " + RCS.}
 		IF changeTo = "" RETURN "RCS is currently " + RCS.
 		RETURN "RCS - invalid argument".
+		})).
+	// This toggles the permissions for each of the relevant RCS thrusters on the craft.
+	// Helpful when you don't want RCS wasted on roll/yaw/pitch
+	possibleCommands:ADD("RCSThrusters", LEXICON("PossibleArgs", 2, "RequiredArgs", 1, "Delegate", {
+		PARAMETER changeTo IS "Enable".
+		PARAMETER arg2 IS "Enable".
+		IF changeTo = "on" SET changeTo TO "Enable". IF changeTo = "off" SET changeTo TO "Disable".
+		IF arg2 = "on"     SET arg2 TO "Enable".     IF arg2 = "off"     SET arg2 TO "Disable".
+		IF changeTo = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:ENABLED TO TRUE.} RETURN "RCS thrusters Enabled".}
+		IF changeTo = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:ENABLED TO FALSE.} RETURN "RCS thrusters Disabled".}
+		IF changeTo = "Yaw" {
+			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:YAWENABLED TO TRUE.} RETURN "RCS thrusters yaw enabled".}
+			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:YAWENABLED TO FALSE.} RETURN "RCS thrusters yaw disabled".}
+		}
+		IF changeTo = "Fore" {
+			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:PITCHENABLED TO TRUE.} RETURN "RCS thrusters pitch enabled".}
+			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:PITCHENABLED TO FALSE.} RETURN "RCS thrusters pitch disabled".}
+		}
+		IF changeTo = "Fore" {
+			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:ROLLENABLED TO TRUE.} RETURN "RCS thrusters roll enabled".}
+			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:ROLLENABLED TO FALSE.} RETURN "RCS thrusters roll disabled".}
+		}
+		IF changeTo = "Fore" {
+			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:FOREENABLED TO TRUE.} RETURN "RCS thrusters fore enabled".}
+			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:FOREENABLED TO FALSE.} RETURN "RCS thrusters fore disabled".}
+		}
+		IF changeTo = "Fore" {
+			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:STARBOARDENABLED TO TRUE.} RETURN "RCS thrusters starboard enabled".}
+			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:STARBOARDENABLED TO FALSE.} RETURN "RCS thrusters starboard disabled".}
+		}
+		IF changeTo = "Fore" {
+			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:TOPENABLED TO TRUE.} RETURN "RCS thrusters top enabled".}
+			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:TOPENABLED TO FALSE.} RETURN "RCS thrusters top disabled".}
+		}
+		RETURN "RCSThrusters - invalid argument".
 		})).
 	possibleCommands:ADD("SAS", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
