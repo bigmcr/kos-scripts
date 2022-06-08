@@ -6,7 +6,7 @@ LOCAL lastStockWorld IS FALSE.
 LOCAL lastStockRockets IS FALSE.
 LOCAL fileListAndContents IS LEXICON().
 LOCAL fileList IS LIST().
-SWITCH TO 0.
+IF connectionToKSC() SWITCH TO 0.
 LIST FILES IN fileList.
 FOR f IN fileList {
 	IF f:NAME:ENDSWITH(".ks") {
@@ -85,32 +85,19 @@ FUNCTION debugString {
 	IF connectionToKSC() LOG SHIP:NAME + "," + message TO "0:Logfile.txt".
 }
 
-FUNCTION compileScript {
-	PARAMETER scriptName.
-	PARAMETER destination IS "0:KSM Files/".
-	IF connectionToKSC {
-		IF scriptName:ENDSWITH(".ks") SET scriptName TO scriptName:SUBSTRING(0, scriptName:LENGTH - 3).
-		IF EXISTS("0:KSM Files/" + scriptName + ".ksm") DELETEPATH("0:KSM Files/" + scriptName + ".ksm").
-		IF EXISTS("0:" + scriptName + ".ksm") DELETEPATH("0:" + scriptName + ".ksm").
-		COMPILE "0:" + scriptName TO destination + scriptName + ".ksm".
-	}
-}
-
 // copy the passed script to the given destination
 // compiles the script and copies over the ks or KSM version, whichever is smaller.
 FUNCTION copyScript {
 	PARAMETER scriptName.
 	PARAMETER destination IS "0:Staging/".
-	PARAMETER deleteTempFiles IS FALSE.
 
 	IF NOT connectionToKSC() RETURN FALSE.
 
-	// sanitize the input script name
-	IF scriptName:ENDSWITH(".ks") SET scriptName TO scriptName:SUBSTRING(0, scriptName:LENGTH - 3).
-	IF scriptName:ENDSWITH(".ksm") SET scriptName TO scriptName:SUBSTRING(0, scriptName:LENGTH - 4).
+	// strip out the ".ks" at the end of the script name
+	SET scriptName TO scriptName:SUBSTRING(0, scriptName:LENGTH - 3).
 
 	// go to the archive and compile the passed file.
-	compileScript(scriptName, "0:TempFolder/").
+	COMPILE "0:" + scriptName TO "0:TempFolder/" + scriptName + ".ksm".
 	LOCAL ksFile IS OPEN("0:" + scriptName + ".ks").
 	LOCAL ksmFile IS OPEN("0:TempFolder/" + scriptName + ".ksm").
 	IF ksmFile:SIZE < ksFile:SIZE {
@@ -119,17 +106,16 @@ FUNCTION copyScript {
 	ELSE {
 		COPYPATH(ksFile:NAME, destination + ksFile:NAME).
 	}
-	IF deleteTempFiles DELETEPATH("0:TempFolder").
 	RETURN TRUE.
 }
 
 FUNCTION copyToLocal {
+	PARAMETER forcedUpdate IS FALSE.
 	IF NOT connectionToKSC() RETURN FALSE.
-	CLEARSCREEN.
 
 	// if the maneuver node script already exists on the volume, only copy over updated files
 	// I.E. files that don't match the original.
-	IF EXISTS("1:exec") {
+	IF (EXISTS("1:exec") AND (NOT forcedUpdate)) {
 		CLEARSCREEN.
 		SWITCH TO 0.
 		LOCAL fileListRoot IS LIST().
@@ -150,22 +136,27 @@ FUNCTION copyToLocal {
 		PRINT "Finished reviewing files".
 		WAIT 1.
 	} ELSE {
-		// if the maneuver node script doesn't already exist, copy everything over.
-		DELETEPATH("0:Staging").
+		CLEARSCREEN.
+		// if the maneuver node script doesn't already exist, or if forcedUpdate is TRUE, copy everything over.
 		CD("0:").
+		PRINT "Now compiling files to 0:Staging/".
 		LIST FILES IN fileList.
+		LOCAL ksFilesCount IS 0.
 		FOR f IN fileList {
-			IF f:NAME:ENDSWITH(".ks") copyScript(f:NAME, "0:Staging/", TRUE).
+			IF f:NAME:ENDSWITH(".ks") {
+				PRINT "Compiling and copying file " + (ksFilesCount + 1) + " - " + f:NAME + "             " AT (0, 1).
+				SET ksFilesCount TO ksFilesCount + 1.
+				copyScript(f:NAME, "0:Staging/").
+			}
 		}
+		DELETEPATH("0:TempFolder").
+		PRINT "C".
+		PRINT "Files compiled and copied.                       ".
 		CD("0:Staging").
 		LIST FILES IN fileList.
 		PRINT "Now checking if there is enough room for all files on the local volume.".
 		LOCAL usedSpace IS 0.
-		FOR f IN fileList {
-			IF f:NAME:ENDSWITH(".ksm") OR f:NAME:ENDSWITH(".ks") {
-				SET usedSpace TO usedSpace + (f:SIZE).
-			}
-		}
+		FOR f IN fileList {SET usedSpace TO usedSpace + (f:SIZE).}
 
 		PRINT "Total of " + usedSpace + " bytes in files".
 		IF usedSpace < CORE:VOLUME:CAPACITY {
@@ -173,41 +164,34 @@ FUNCTION copyToLocal {
 			PRINT "There is enough room for all files on the local volume.".
 			PRINT "Now deleting all files on the local volume.".
 			SET fileList TO CORE:VOLUME:FILES.
-			FOR f IN fileList:KEYS {
-				IF DELETEPATH(f).
-			}
+			FOR f IN fileList:KEYS {IF DELETEPATH(f).}
 
 			COMPILE "0:boot/boot.ks" TO "1:boot.ksm".
 			SET CORE:BOOTFILENAME    TO "/boot.ksm".
 			PRINT "Boot file name set to " + CORE:BOOTFILENAME.
 
-			PRINT "Now compiling all scripts.".
+			PRINT "Now copying all scripts.".
 			CD("0:Staging").
 			LIST FILES IN fileList.
-			FOR f IN fileList {
-				IF f:EXTENSION = "ksm" OR f:EXTENSION = "ks" {
-					COPYPATH(f:NAME, "1:" + f:NAME).
-				}
-			}
+			FOR f IN fileList {COPYPATH(f:NAME, "1:" + f:NAME).}
+
 			CD("0:").
 			LIST FILES IN fileList.
-			FOR f IN fileList {
-				IF f:EXTENSION = "settings" {
-					COPYPATH(f:NAME, "1:" + f:NAME).
-				}
-			}
-			WAIT 1.
+			FOR f IN fileList {IF f:EXTENSION = "settings" COPYPATH(f:NAME, "1:" + f:NAME).}
+			DELETEPATH("0:Staging").
 			SWITCH TO 1.
+			WAIT 0.5.
 			RETURN TRUE.
 		} ELSE {
 			PRINT "There is not enough space on the local volume".
-			PRINT "Not copying files to the local volume".
+			PRINT "Local volume not modified".
 			RETURN FALSE.
 		}
-		DELETEPATH("0:Staging").
 	}
 }
 
+// Wait 1/4 of a second for the universe to fully load.
+// If this isn't there, things like HOMECONNECTION:ISCONNECTED aren't right.
 WAIT 0.25.
 
 IF KUNIVERSE:TIMEWARP:RATE < 100 core:part:getmodule("kOSProcessor"):doevent("Open Terminal").
@@ -229,7 +213,7 @@ ELSE {
 	// if loop.ksm does not exist on the local drive, check to see if we can copy it from the archive
 	IF (connectionToKSC()) {
 		PRINT "Copying scripts to local hard drive".
-		IF copyToLocal() {
+		IF copyToLocal(TRUE) {
 			PRINT "Sucessfully copied files to local drive".
 			SET loopFound TO TRUE.
 		} ELSE PRINT "Failed to copy files to local drive".
@@ -243,7 +227,7 @@ ELSE {
 
 IF loopFound {
 	PRINT "Running local Loop.ksm".
-	WAIT 1.
+	WAIT 0.5.
 	SWITCH TO 1.
 	RUNPATH("1:loop").
 }
