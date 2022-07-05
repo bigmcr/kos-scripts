@@ -8,14 +8,14 @@ setLockedSteering(TRUE).
 setLockedThrottle(TRUE).
 SET globalThrottle TO throt.
 CLEARSCREEN.
-LOCAL startTime IS MISSIONTIME.
+LOCAL startTime IS TIME:SECONDS.
 IF burnTime > 30 AND physicsWarpPerm {
 	SET KUNIVERSE:timewarp:mode TO "PHYSICS".
 	SET KUNIVERSE:timewarp:warp TO physicsWarpPerm.
 }
-UNTIL MISSIONTIME - startTime >= burnTime {
+UNTIL TIME:SECONDS - startTime >= burnTime {
 	PRINT "Time remaining in burn:" AT (0,0).
-	PRINT timeToString(burnTime - (MISSIONTIME - startTime), 2):PADLEFT(23) + "     " AT (0, 1).
+	PRINT timeToString(burnTime - (TIME:SECONDS - startTime), 2):PADLEFT(23) + "     " AT (0, 1).
 	WAIT 0.
 }
 
