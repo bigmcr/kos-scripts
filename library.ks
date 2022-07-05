@@ -1217,6 +1217,25 @@ FUNCTION createNode
 	ADD X.            // adds maneuver to flight plan
 }
 
+// Print Lines
+// This function prints the given number of lines starting at the given row.
+// It assumes that following lines should be printed on following rows.
+// Passed the following
+//			list of strings to print (LIST)
+//			row of the first string (scalar)
+// Returns the following:
+//			nothing
+// Modified from example code given by nuggreat on Discord on July 1, 2022
+FUNCTION print_lines {
+    PARAMETER linesToPrint.
+		PARAMETER startingRow IS 0.
+    LOCAL i IS startingRow.
+    LOCAL terminalWidth IS TERMINAL:WIDTH.
+		FOR index IN RANGE(linesToPrint:LENGTH) {
+			PRINT linesToPrint[index]:PADRIGHT(terminalWidth) AT (0, startingRow + index).
+		}
+}
+
 // Round Vector
 // This function rounds the components of vectors to a specified number of digits
 // This is the equivalent of the built in ROUND function, but it works on vectors

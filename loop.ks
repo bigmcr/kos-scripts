@@ -91,7 +91,6 @@ FUNCTION setLockedSteering {
 		SAS OFF.
 		LOCK STEERING TO globalSteer.
 	} ELSE {
-//		LOCK STEERING TO SHIP:FACING.
 		UNLOCK STEERING.
 	}
 }
@@ -101,7 +100,6 @@ FUNCTION setLockedThrottle {
 	IF enable {
 		LOCK THROTTLE TO globalThrottle.
 	} ELSE {
-//		LOCK THROTTLE TO 0.
 		UNLOCK THROTTLE.
 	}
 }
@@ -171,32 +169,17 @@ UNTIL done {
 //						PRINT "Argument " + argList[arg] + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME.
 						debugString("Argument " + (arg) + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME).
 					}
-					IF runLocal {
-//						PRINT "Running " + argList[0] + " with " + (argList:LENGTH - 1) + " arguments".
-						debugString("Running " + argList[0] + " locally with " + (argList:LENGTH - 1) + " arguments").
-						IF (argList:LENGTH = 1) RUNPATH(argList[0] + ".ksm").
-						IF (argList:LENGTH = 2) RUNPATH(argList[0] + ".ksm", argList[1]).
-						IF (argList:LENGTH = 3) RUNPATH(argList[0] + ".ksm", argList[1], argList[2]).
-						IF (argList:LENGTH = 4) RUNPATH(argList[0] + ".ksm", argList[1], argList[2], argList[3]).
-						IF (argList:LENGTH = 5) RUNPATH(argList[0] + ".ksm", argList[1], argList[2], argList[3], argList[4]).
-						IF (argList:LENGTH = 6) RUNPATH(argList[0] + ".ksm", argList[1], argList[2], argList[3], argList[4], argList[5]).
-						IF (argList:LENGTH = 7) RUNPATH(argList[0] + ".ksm", argList[1], argList[2], argList[3], argList[4], argList[5], argList[6]).
-					} ELSE {
-						debugString("Compiling " + argList[0]).
-						compileScript(argList[0]).
-						debugString("Running compiled " + argList[0] + " off the archive with " + (argList:LENGTH - 1) + " arguments").
-						FOR arg IN RANGE(0, argList:LENGTH) {
-							debugString("Argument " + (arg) + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME).
-						}
-						IF (argList:LENGTH = 1) RUNPATH("KSM Files/" + argList[0] + ".ksm").
-						IF (argList:LENGTH = 2) RUNPATH("KSM Files/" + argList[0] + ".ksm", argList[1]).
-						IF (argList:LENGTH = 3) RUNPATH("KSM Files/" + argList[0] + ".ksm", argList[1], argList[2]).
-						IF (argList:LENGTH = 4) RUNPATH("KSM Files/" + argList[0] + ".ksm", argList[1], argList[2], argList[3]).
-						IF (argList:LENGTH = 5) RUNPATH("KSM Files/" + argList[0] + ".ksm", argList[1], argList[2], argList[3], argList[4]).
-						IF (argList:LENGTH = 6) RUNPATH("KSM Files/" + argList[0] + ".ksm", argList[1], argList[2], argList[3], argList[4], argList[5]).
-						IF (argList:LENGTH = 7) RUNPATH("KSM Files/" + argList[0] + ".ksm", argList[1], argList[2], argList[3], argList[4], argList[5], argList[6]).
-					}
-					endScript().
+//					PRINT "Running " + argList[0] + " with " + (argList:LENGTH - 1) + " arguments".
+					debugString("Running " + argList[0] + " locally with " + (argList:LENGTH - 1) + " arguments").
+					IF (argList:LENGTH = 1) RUNPATH(argList[0]).
+					IF (argList:LENGTH = 2) RUNPATH(argList[0], argList[1]).
+					IF (argList:LENGTH = 3) RUNPATH(argList[0], argList[1], argList[2]).
+					IF (argList:LENGTH = 4) RUNPATH(argList[0], argList[1], argList[2], argList[3]).
+					IF (argList:LENGTH = 5) RUNPATH(argList[0], argList[1], argList[2], argList[3], argList[4]).
+					IF (argList:LENGTH = 6) RUNPATH(argList[0], argList[1], argList[2], argList[3], argList[4], argList[5]).
+					IF (argList:LENGTH = 7) RUNPATH(argList[0], argList[1], argList[2], argList[3], argList[4], argList[5], argList[6]).
+					IF NOT dontKillAfterScript endScript().
+					SET dontKillAfterScript TO FALSE.
 					SET commandValid TO TRUE.
 				}
 				// look up the first section to see if it is a valid command in the list.
@@ -264,8 +247,8 @@ UNTIL done {
 		ELSE IF autoSteer = "antinormal" SET globalSteer TO VCRS(SHIP:VELOCITY:ORBIT, SHIP:BODY:POSITION).
 		ELSE IF autoSteer = "surfaceprograde" SET globalSteer TO VELOCITY:SURFACE.
 		ELSE IF autoSteer = "surfaceretrograde" SET globalSteer TO CHOOSE SHIP:UP:VECTOR IF (GROUNDSPEED < 0.25) ELSE -VELOCITY:SURFACE.
-		ELSE IF autoSteer = "landliftnormal" SET globalSteer TO LOOKDIRUP(SHIP:FACING:VECTOR, -SHIP:UP:VECTOR).
-		ELSE IF autoSteer = "landliftreverse" SET globalSteer TO LOOKDIRUP(SHIP:FACING:VECTOR, SHIP:UP:VECTOR).
+		ELSE IF autoSteer = "landliftnormal" SET globalSteer TO LOOKDIRUP(SHIP:FACING:VECTOR, SHIP:UP:VECTOR).
+		ELSE IF autoSteer = "landliftreverse" SET globalSteer TO LOOKDIRUP(SHIP:FACING:VECTOR, -SHIP:UP:VECTOR).
 		ELSE IF autoSteer:CONTAINS("maneuver") {
 			IF NOT HASNODE {
 				SET loopMessage TO "Has no NEXTNODE!".
@@ -310,7 +293,7 @@ UNTIL done {
 		}
 	}
 	updateScreen(inputString, previousCommands).
-	WAIT 0.
+	WAIT 0.1.
 }
 
 CLEARSCREEN.
