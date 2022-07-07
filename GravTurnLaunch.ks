@@ -230,12 +230,12 @@ UNTIL mode > 6 {
 
 		// attempt at calculating the throttle to ensure maxGs acceleration at most
 		// note that maxGs is relative to sea level on THIS BODY, not Earth/Kerbin.
-		// desired throttle = (maxGs + body_g - accel from SRBs)/available accel from variable engines
+		// desired throttle = (maxGs * body_g - accel from SRBs)/available accel from variable engines
 		IF (shipInfo["Maximum"]["Variable"]["Accel"] <> 0) {
 			IF minThrottle <> 1	SET globalThrottle TO  (((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]) - minThrottle)/(1-minThrottle).
 			ELSE								SET globalThrottle TO   ((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]).
 		} ELSE SET globalThrottle TO  1.0.
-		SET globalThrottle TO  MIN( MAX( THROTTLE, 0.05), 1.0).
+		SET globalThrottle TO  MIN( MAX( globalThrottle, 0.05), 1.0).
 
 		// Engine staging
 		// this should drop any LF main stage and allow the final orbiter to take off
@@ -311,7 +311,7 @@ UNTIL mode > 6 {
 				SET PITCH_PID:SETPOINT TO 0.
 			}
 			SET PITCH_PID:KD TO MAX(4.0 * (1 - GROUNDSPEED/ABS(SQRT(BODY:MU/(ALTITUDE + BODY:RADIUS)))), 0.0).
-			SET pitchValue TO ARCSIN(accelRatios) + PITCH_PID:UPDATE( TIME:SECONDS, VERTICALSPEED).
+			SET pitchValue TO MIN(80, ARCSIN(accelRatios) + PITCH_PID:UPDATE( TIME:SECONDS, VERTICALSPEED)).
 			SET globalSteer TO HEADING(modeStartYaw + yawValue, pitchValue).
 		}
 
@@ -340,8 +340,6 @@ UNTIL mode > 6 {
 	IF YAW_PID:INPUT <> 0 logPID(YAW_PID, "0:YAW_PID.csv", TRUE).
 }
 
-SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
-WAIT 0.1.
-SET SHIP:CONTROL:MAINTHROTTLE TO 0.
+SET dontKillAfterScript TO NOT isStockRockets().
 SET loopMessage TO endMessage.
 activateOmniAntennae().

@@ -133,6 +133,8 @@ FUNCTION endScript {
 	SET KUNIVERSE:TIMEWARP:WARP TO 0.
 }
 
+GLOBAL dontKillAfterScript IS FALSE.
+
 setLockedSteering(FALSE).
 setLockedThrottle(FALSE).
 
