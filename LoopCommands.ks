@@ -56,11 +56,11 @@ FUNCTION createCommandList {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:YAWENABLED TO TRUE.} RETURN "RCS thrusters yaw enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:YAWENABLED TO FALSE.} RETURN "RCS thrusters yaw disabled".}
 		}
-		IF changeTo = "Fore" {
+		IF changeTo = "Pitch" {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:PITCHENABLED TO TRUE.} RETURN "RCS thrusters pitch enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:PITCHENABLED TO FALSE.} RETURN "RCS thrusters pitch disabled".}
 		}
-		IF changeTo = "Fore" {
+		IF changeTo = "Roll" {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:ROLLENABLED TO TRUE.} RETURN "RCS thrusters roll enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:ROLLENABLED TO FALSE.} RETURN "RCS thrusters roll disabled".}
 		}
@@ -68,11 +68,11 @@ FUNCTION createCommandList {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:FOREENABLED TO TRUE.} RETURN "RCS thrusters fore enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:FOREENABLED TO FALSE.} RETURN "RCS thrusters fore disabled".}
 		}
-		IF changeTo = "Fore" {
+		IF changeTo = "Stbd" {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:STARBOARDENABLED TO TRUE.} RETURN "RCS thrusters starboard enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:STARBOARDENABLED TO FALSE.} RETURN "RCS thrusters starboard disabled".}
 		}
-		IF changeTo = "Fore" {
+		IF changeTo = "Top" {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:TOPENABLED TO TRUE.} RETURN "RCS thrusters top enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:TOPENABLED TO FALSE.} RETURN "RCS thrusters top disabled".}
 		}
@@ -347,10 +347,12 @@ FUNCTION createCommandList {
 	possibleCommands:ADD("normal", 			LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "normal". RETURN "Steering locked to normal".})).
 	possibleCommands:ADD("antinormal",	LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "antinormal". RETURN "Steering locked to antinormal".})).
 	possibleCommands:ADD("srfPro", 			LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "surfaceprograde". RETURN "Steering locked to surface prograde".})).
+	possibleCommands:ADD("srfPrograde", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {RETURN possibleCommands["srfPro"]["Delegate"]().})).
 	possibleCommands:ADD("srfRetro", 		LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "surfaceretrograde". RETURN "Steering locked to surface retrograde".})).
+	possibleCommands:ADD("srfRetrograde",	LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {RETURN possibleCommands["srfRetro"]["Delegate"]().})).
 	possibleCommands:ADD("landLift",		LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
-		PARAMETER invertRoll IS TRUE.
-		IF invertRoll SET autoSteer TO "landliftnormal".
+		PARAMETER invertRoll IS FALSE.
+		IF NOT invertRoll SET autoSteer TO "landliftnormal".
 		ELSE SET autoSteer TO "landliftreverse".
 		RETURN "Roll control only enabled.".
 		})).
@@ -501,6 +503,26 @@ FUNCTION createCommandList {
 	}
 
 	possibleCommands:ADD("body", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {RETURN possibleCommands["down"]["Delegate"]().})).
+
+	possibleCommands:ADD("setLockedSteering", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
+		PARAMETER setValue.
+		setLockedSteering(setValue).
+		IF setValue RETURN "Steering Locked!".
+		RETURN "Steering Unlocked!".
+	})).
+
+	possibleCommands:ADD("setLockedThrottle", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
+		PARAMETER setValue.
+		setLockedThrottle(setValue).
+		IF setValue RETURN "Throttle Locked!".
+		RETURN "Throttle Unlocked!".
+	})).
+
+	possibleCommands:ADD("setGlobalThrottle", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
+		PARAMETER setValue.
+		SET globalThrottle TO MAX(0, MIN(1, setValue)).
+		RETURN "Global Throttle set to " + globalThrottle.
+	})).
 
 	// Kill command - stops all control of the vehicle
 	// intended to allow the operator to stop after entering one of the above commands
