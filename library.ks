@@ -19,6 +19,9 @@ GLOBAL bounds IS SHIP:BOUNDS.
 GLOBAL resourceList IS LEXICON().
 CLEARVECDRAWS().
 
+GLOBAL densityLookUp IS LEXICON().
+FOR eachResource IN SHIP:RESOURCES {densityLookUp:ADD(eachResource:NAME, eachResource:DENSITY * 1000).}
+
 GLOBAL shipInfo IS Lexicon().
 
 LOCAL partListTree IS LEXICON().
@@ -270,12 +273,12 @@ FUNCTION updateShipInfo {
 	// for each of the stages, determine the parts, engines and sensors
 	FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
 		SET engineStat TO engineStats(shipInfo["Stage " + stageNumber]["Engines"]).
-		SET shipInfo["Stage " + stageNumber]["Isp"] TO engineStat[0].
-		SET shipInfo["Stage " + stageNumber]["Thrust"] TO engineStat[3].
-		SET shipInfo["Stage " + stageNumber]["mDot"] TO engineStat[4].
+		SET shipInfo["Stage " + stageNumber]["Isp"] TO engineStat["Isp"].
+		SET shipInfo["Stage " + stageNumber]["Thrust"] TO engineStat["thrustMax"].
+		SET shipInfo["Stage " + stageNumber]["mDot"] TO engineStat["mDotMax"].
 
-		SET shipInfo["Stage " + stageNumber]["Fuels"] TO getCurrentFuels(shipInfo["Stage " + stageNumber]["Engines"]).
-		SET shipInfo["Stage " + stageNumber]["FuelsRCS"] TO getCurrentFuels(shipInfo["Stage " + stageNumber]["RCS"]).
+		SET shipInfo["Stage " + stageNumber]["Fuels"] TO getCurrentFuels(shipInfo["Stage " + stageNumber]["Engines"], stageNumber).
+		SET shipInfo["Stage " + stageNumber]["FuelsRCS"] TO getCurrentFuels(shipInfo["Stage " + stageNumber]["RCS"], stageNumber).
 	}
 	updateShipInfoCurrent(FALSE).
 
@@ -294,8 +297,8 @@ FUNCTION updateShipInfo {
 	resourceList:CLEAR.
 	FOR eachResource IN SHIP:RESOURCES {
 		resourceList:ADD(eachResource:NAME, LEXICON(    "Quantity", eachResource:AMOUNT,
-																								        "Mass", eachResource:AMOUNT * eachResource:DENSITY * 1000,
-																								     "Density", eachResource:DENSITY,
+																								        "Mass", eachResource:AMOUNT * densityLookUp[eachResource:NAME] * 1000,
+																								     "Density", densityLookUp[eachResource:NAME],
 																								"Quantity Use", 0,
 																								    "Mass Use", 0)).
 	}
@@ -304,11 +307,11 @@ FUNCTION updateShipInfo {
 // Log Ship Info
 // Function that logs all information in shipInfo into the specified file.
 FUNCTION logShipInfo {
+	PARAMETER includeResources IS FALSE.
 	PARAMETER fileName TO "0:" + SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv".
 	LOG "Ship Information for " + SHIP:NAME TO fileName.
 	LOCAL deltaVLogList IS "".
 	LOCAL deltaVDisplayList IS "".
-	LOCAL resourceDensity IS 1.
 	// for each of the stages
 	FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
 		LOG "Stage " + stageNumber TO fileName.
@@ -325,27 +328,13 @@ FUNCTION logShipInfo {
 		LOG ",mDot," + ROUND(shipInfo["Stage " + stageNumber]["mDot"], 4) + ",kg/s" TO fileName.
 		LOG ",Resources has " + shipInfo["Stage " + stageNumber]["Resources"]:KEYS:LENGTH + " items in it" TO fileName.
 		FOR eachResource IN shipInfo["Stage " + stageNumber]["Resources"]:KEYS {LOG ",," + eachResource + "," + shipInfo["Stage " + stageNumber]["Resources"][eachResource] + ",kg" TO fileName.}
-		LOG ",Fuels has " + shipInfo["Stage " + stageNumber]["Fuels"]:LENGTH + " items in it,,kg,L" TO fileName.
-		FOR f IN shipInfo["Stage " + stageNumber]["Fuels"] {
-			SET resourceDensity TO 1.
-			FOR eachPart IN SHIP:PARTS {
-				FOR eachResource IN eachPart:RESOURCES {
-					IF eachResource:NAME = f SET resourceDensity TO eachResource:DENSITY * 1000.
-				}
-			}
-			IF shipInfo["Stage " + stageNumber]["Resources"]:KEYS:CONTAINS(f) LOG ",," + f + "," + shipInfo["Stage " + stageNumber]["Resources"][f] + "," + (shipInfo["Stage " + stageNumber]["Resources"][f] / resourceDensity) TO fileName.
-			ELSE LOG ",," + f + ",0,0" TO fileName.
+		LOG ",Fuels has " + shipInfo["Stage " + stageNumber]["Fuels"]:LENGTH + " items in it,,kg,Mass Ratio" TO fileName.
+		FOR f IN shipInfo["Stage " + stageNumber]["Fuels"]:KEYS {
+			LOG ",," + f + "," + shipInfo["Stage " + stageNumber]["Fuels"][f]["Mass"] + "," + shipInfo["Stage " + stageNumber]["Fuels"][f]["Ratio"] TO fileName.
 		}
-		LOG ",RCS Fuels has " + shipInfo["Stage " + stageNumber]["FuelsRCS"]:LENGTH + " items in it,,kg,L" TO fileName.
-		FOR f IN shipInfo["Stage " + stageNumber]["FuelsRCS"] {
-			SET resourceDensity TO 1.
-			FOR eachPart IN SHIP:PARTS {
-				FOR eachResource IN eachPart:RESOURCES {
-					IF eachResource:NAME = f SET resourceDensity TO eachResource:DENSITY * 1000.
-				}
-			}
-			IF shipInfo["Stage " + stageNumber]["Resources"]:KEYS:CONTAINS(f) LOG ",," + f + "," + shipInfo["Stage " + stageNumber]["Resources"][f] + "," + (shipInfo["Stage " + stageNumber]["Resources"][f] / resourceDensity) TO fileName.
-			ELSE LOG ",," + f + ",0,0" TO fileName.
+		LOG ",RCS Fuels has " + shipInfo["Stage " + stageNumber]["FuelsRCS"]:LENGTH + " items in it,,kg,Mass Ratio" TO fileName.
+		FOR f IN shipInfo["Stage " + stageNumber]["FuelsRCS"]:KEYS {
+			LOG ",," + f + "," + shipInfo["Stage " + stageNumber]["FuelsRCS"][f]["Mass"] + "," + shipInfo["Stage " + stageNumber]["FuelsRCS"][f]["Ratio"] TO fileName.
 		}
 		LOG ",Fuel Mass," + shipInfo["Stage " + stageNumber]["FuelMass"] + ",kg" TO fileName.
 		LOG ",RCS Fuel Mass," + shipInfo["Stage " + stageNumber]["FuelRCSMass"] + ",kg" TO fileName.
@@ -396,14 +385,22 @@ FUNCTION logShipInfo {
 	LOG "Stage,Engine Count,Engine Type,Fuel Mass (kg),Isp (s),delta V (m/s)" TO fileName.
 	LOG deltaVLogList TO fileName.
 
-	LOCAL density IS 0.
-	LOCAL indexRes IS 0.
-	LOG "Name,Amount (L),Capacity (L),Mass (kg),Density (kg/L)" TO fileName.
-	LOG ",Liters,Liters,kg,kg/L" TO fileName.
-	FOR eachResource IN SHIP:RESOURCES {
-		FOR eachIndex IN RANGE(eachResource:PARTS[0]:RESOURCES:LENGTH) {IF eachResource:PARTS[0]:RESOURCES[eachIndex]:NAME = eachResource:NAME SET indexRes TO eachIndex.}
-		SET density TO eachResource:PARTS[0]:RESOURCES[indexRes]:DENSITY * 1000.
-		LOG eachResource:NAME + "," + eachResource:AMOUNT + "," + eachResource:CAPACITY + "," + eachResource:AMOUNT * density + "," + density TO fileName.
+	IF includeResources {
+		LOG "Stage,Part Name,Part UID,Resource Name,Resource Amount (L),Resource Capacity (L),Resource Mass (kg),Resource Density (kg/L)" TO fileName.
+		FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
+			FOR eachPart IN shipInfo["Stage " + stageNumber]["Parts"] {
+				FOR eachResource IN eachPart:RESOURCES {
+					LOG stageNumber + "," +
+							eachPart:TITLE:REPLACE(",","") + "," +
+							eachPart:UID + "," +
+							eachResource:NAME + "," +
+							eachResource:AMOUNT + "," +
+							eachResource:CAPACITY + "," +
+							(eachResource:AMOUNT*densityLookUp[eachResource:NAME]) + "," +
+							densityLookUp[eachResource:NAME] TO fileName.
+				}
+			}
+		}
 	}
 
 	CLEARSCREEN.
@@ -447,40 +444,14 @@ FUNCTION updateShipInfoResources {
 		IF stageInfo["Resources"]:LENGTH = 0 {stageInfo["Resources"]:ADD("Placeholder",0).}
 
 		LOCAL fuelMass IS 0.
-		FOR fuelType IN stageInfo["Fuels"] {
-			// If the called out fuel is in this stage, you are good to go
-			IF (stageInfo["Resources"]:KEYS:CONTAINS(fuelType)) {
-				LOG "Stage " + stageNumber + ",has,"+ shipInfo["Stage " + stageNumber]["Resources"][fuelType] + ",kg of " + fuelType + "" TO "0:Fuels.csv".
-				SET fuelMass TO fuelMass + stageInfo["Resources"][fuelType].
-			} ELSE {
-			// If the called out fuel isn't in this stage, search for it in a later stage
-				FOR subStageNumber IN RANGE(stageNumber, 0) {
-					IF shipInfo["Stage " + subStageNumber]["Resources"]:KEYS:CONTAINS(fuelType) {
-//						LOG "Stage " + stageNumber + ",is borrowing,"+ shipInfo["Stage " + subStageNumber]["Resources"][fuelType] + ",kg of " + fuelType + ",from Stage " + subStageNumber TO "0:Fuels.csv".
-						SET fuelMass TO fuelMass + shipInfo["Stage " + subStageNumber]["Resources"][fuelType].
-						BREAK.
-					}
-				}
-			}
+		FOR fuelType IN stageInfo["Fuels"]:KEYS {
+			SET fuelMass TO fuelMass + stageInfo["Fuels"][fuelType]["Mass"].
 		}
 		stageInfo:ADD("FuelMass", fuelMass).
 
 		LOCAL fuelRCSMass IS 0.
-		FOR fuelType IN stageInfo["FuelsRCS"] {
-			// If the called out fuel is in this stage, you are good to go
-			IF (stageInfo["Resources"]:KEYS:CONTAINS(fuelType)) {
-				LOG "Stage " + stageNumber + ",has,"+ shipInfo["Stage " + stageNumber]["Resources"][fuelType] + ",kg of " + fuelType + "" TO "0:Fuels.csv".
-				SET fuelRCSMass TO fuelRCSMass + stageInfo["Resources"][fuelType].
-			} ELSE {
-			// If the called out fuel isn't in this stage, search for it in a later stage
-				FOR subStageNumber IN RANGE(stageNumber, 0) {
-					IF shipInfo["Stage " + subStageNumber]["Resources"]:KEYS:CONTAINS(fuelType) {
-//						LOG "Stage " + stageNumber + ",is borrowing,"+ shipInfo["Stage " + subStageNumber]["Resources"][fuelType] + ",kg of " + fuelType + ",from Stage " + subStageNumber TO "0:Fuels.csv".
-						SET fuelRCSMass TO fuelRCSMass + shipInfo["Stage " + subStageNumber]["Resources"][fuelType].
-						BREAK.
-					}
-				}
-			}
+		FOR fuelType IN stageInfo["FuelsRCS"]:KEYS {
+			SET fuelMass TO fuelMass + stageInfo["FuelsRCS"][fuelType]["Mass"].
 		}
 		stageInfo:ADD("FuelRCSMass", fuelRCSMass).
 
@@ -488,12 +459,6 @@ FUNCTION updateShipInfoResources {
 		FOR keys IN stageInfo["Resources"]:KEYS {SET resourceMass TO resourceMass + stageInfo["Resources"][keys].}
 		stageInfo:ADD("ResourceMass", resourceMass).
 
-//		LOG "Title,Mass,Dry Mass,Wet Mass,Resource Count,Resource Mass" TO "0:partMass.csv".
-//		FOR p IN SHIP:PARTS {
-//		  LOCAL resourceMass IS 0.
-//		  FOR eachResource IN p:RESOURCES SET resourceMass TO resourceMass + (eachResource:DENSITY * eachResource:AMOUNT)*1000.
-//		  LOG p:TITLE:REPLACE(",","") + "," + p:MASS*1000 + "," + p:DRYMASS*1000 + "," + p:WETMASS*1000 + "," + p:RESOURCES:LENGTH + "," + resourceMass TO "0:partMass.csv".
-//		}
 		stageInfo:ADD("PreviousMass", previousMass).
 		FOR p IN stageInfo["Parts"] {
 			//LOG "Adding," + p:MASS * 1000 + ",kg,to total for " + P:TITLE:REPLACE(",","") TO "0:testing.csv".
@@ -511,7 +476,7 @@ FUNCTION updateShipInfoResources {
 
 		LOCAL message IS TIME:SECONDS:TOSTRING() + "," + KUNIVERSE:TIMEWARP:RATE.
 		FOR eachResource IN SHIP:RESOURCES {
-			IF loggedResources:CONTAINS(eachResource:NAME) SET message TO message + "," + eachResource:AMOUNT + "," + eachResource:AMOUNT * eachResource:DENSITY*1000.
+			IF loggedResources:CONTAINS(eachResource:NAME) SET message TO message + "," + eachResource:AMOUNT + "," + eachResource:AMOUNT * densityLookUp[eachResource:NAME].
 		}
 		LOG message TO fileName.
 	}
@@ -554,22 +519,22 @@ FUNCTION updateShipInfoCurrent {
 //			mDot (scalar, kg/s)
 //			maximum thrust (scalar, Newtons)
 //			maximum mDot (scalar, kg/s)
-	current:ADD("Variable", LEXICON("Thrust", engineStatsVariable[1],
-									"mDot", engineStatsVariable[2],
-									"Accel", engineStatsVariable[1]/ ( MASS * 1000),
-									"TWR", (engineStatsVariable[1]/ ( MASS * 1000))/ localAccel)).
-	current:ADD("Constant", LEXICON("Thrust", engineStatsConstant[1],
-									"mDot", engineStatsConstant[2],
-									"Accel", engineStatsConstant[1]/ ( MASS * 1000),
-									"TWR", (engineStatsConstant[1]/ ( MASS * 1000))/ localAccel)).
-	maximum:ADD("Variable", LEXICON("Thrust", engineStatsVariable[3],
-									"mDot", engineStatsVariable[4],
-									"Accel", engineStatsVariable[3]/ ( MASS * 1000),
-									"TWR", (engineStatsVariable[3]/ ( MASS * 1000))/ localAccel)).
-	maximum:ADD("Constant", LEXICON("Thrust", engineStatsConstant[3],
-									"mDot", engineStatsConstant[4],
-									"Accel", engineStatsConstant[3]/ ( MASS * 1000),
-									"TWR", (engineStatsConstant[3]/ ( MASS * 1000))/ localAccel)).
+	current:ADD("Variable", LEXICON("Thrust", engineStatsVariable["Thrust"],
+									"mDot", engineStatsVariable["mDot"],
+									"Accel", engineStatsVariable["Thrust"]/ ( MASS * 1000),
+									"TWR", (engineStatsVariable["Thrust"]/ ( MASS * 1000))/ localAccel)).
+	current:ADD("Constant", LEXICON("Thrust", engineStatsConstant["Thrust"],
+									"mDot", engineStatsConstant["mDot"],
+									"Accel", engineStatsConstant["Thrust"]/ ( MASS * 1000),
+									"TWR", (engineStatsConstant["Thrust"]/ ( MASS * 1000))/ localAccel)).
+	maximum:ADD("Variable", LEXICON("Thrust", engineStatsVariable["thrustMax"],
+									"mDot", engineStatsVariable["mDotMax"],
+									"Accel", engineStatsVariable["thrustMax"]/ ( MASS * 1000),
+									"TWR", (engineStatsVariable["thrustMax"]/ ( MASS * 1000))/ localAccel)).
+	maximum:ADD("Constant", LEXICON("Thrust", engineStatsConstant["thrustMax"],
+									"mDot", engineStatsConstant["mDotMax"],
+									"Accel", engineStatsConstant["thrustMax"]/ ( MASS * 1000),
+									"TWR", (engineStatsConstant["thrustMax"]/ ( MASS * 1000))/ localAccel)).
 
 	current:ADD("Thrust", current["Variable"]["Thrust"] + current["Constant"]["Thrust"]).
 	maximum:ADD("Thrust", maximum["Variable"]["Thrust"] + maximum["Constant"]["Thrust"]).
@@ -616,13 +581,59 @@ FUNCTION updateShipInfoCurrent {
 // works for both a list of ENGINEs as well as a list of RCS, or any combination.
 FUNCTION getCurrentFuels {
 	PARAMETER engineList.
-	LOCAL listOfFuels IS LIST().
+	PARAMETER stageNumber.
+	IF engineList:LENGTH = 0 RETURN LEXICON().
+	LOCAL lexOfFuels IS LEXICON().
+	LOCAL fuelName IS "".
 	FOR eachEngine IN engineList {
 		FOR eachFuel IN eachEngine:CONSUMEDRESOURCES:KEYS {
-			IF NOT listOfFuels:CONTAINS(eachFuel:REPLACE(" ","")) listOfFuels:ADD(eachFuel:REPLACE(" ","")).
+			SET fuelName TO eachFuel.
+			IF fuelName = "LH2" SET fuelName TO "LqdHydrogen".
+			IF fuelName = "LOX" SET fuelName TO "LqdOxygen".
+			IF NOT lexOfFuels:KEYS:CONTAINS(fuelName) {
+				lexOfFuels:ADD(fuelName,
+// Note that the RATIO suffix is the volumetric flow ratio, so it needs to be converted to mass flow ratio by multiplying by the density
+																	LEXICON("Ratio", eachEngine:CONSUMEDRESOURCES[eachFuel]:RATIO * densityLookUp[fuelName],
+															 		"Mass", 0)).
+			}
+		}
+		LOCAL totalRatio IS 0.
+		FOR eachFuel IN eachEngine:CONSUMEDRESOURCES:KEYS {
+			LOCAL fuelName IS eachFuel.
+			IF fuelName = "LH2" SET fuelName TO "LqdHydrogen".
+			IF fuelName = "LOX" SET fuelName TO "LqdOxygen".
+			SET totalRatio TO totalRatio + lexOfFuels[fuelName]["Ratio"].
+		}
+		FOR eachFuel IN eachEngine:CONSUMEDRESOURCES:KEYS {
+			LOCAL fuelName IS eachFuel.
+			IF fuelName = "LH2" SET fuelName TO "LqdHydrogen".
+			IF fuelName = "LOX" SET fuelName TO "LqdOxygen".
+			SET lexOfFuels[fuelName]["Ratio"] TO lexOfFuels[fuelName]["Ratio"] / totalRatio.
 		}
 	}
-	RETURN listOfFuels.
+	IF lexOfFuels:LENGTH = 1 {
+		SET lexOfFuels[lexOfFuels:KEYS[0]]["Mass"] TO shipInfo["CurrentStage"]["Resources"][lexOfFuels:KEYS[0]].
+	} ELSE IF lexOfFuels:LENGTH = 2 {
+		LOCAL fuel1Name IS lexOfFuels:KEYS[0].
+		LOCAL fuel2Name IS lexOfFuels:KEYS[1].
+		LOCAL fuel1Ratio IS lexOfFuels[fuel1Name]["Ratio"].
+		LOCAL fuel2Ratio IS lexOfFuels[fuel2Name]["Ratio"].
+		LOCAL fuel1Mass IS shipInfo["Stage " + stageNumber]["Resources"][fuel1Name].
+		LOCAL fuel2Mass IS shipInfo["Stage " + stageNumber]["Resources"][fuel2Name].
+		// if Fuel 2 is the limiting fuel
+		IF fuel2Mass < fuel1Mass * fuel2Ratio / fuel1Ratio {
+			SET lexOfFuels[fuel1Name]["Mass"] TO fuel2Mass * fuel1Ratio / fuel2Ratio.
+			SET lexOfFuels[fuel2Name]["Mass"] TO fuel2Mass.
+		} ELSE { // Fuel 1 is the limiting fuel
+			SET lexOfFuels[fuel1Name]["Mass"] TO fuel1Mass.
+			SET lexOfFuels[fuel2Name]["Mass"] TO fuel1Mass * fuel2Ratio / fuel1Ratio.
+		}
+	} ELSE {
+		CLEARSCREEN.
+		PRINT "There are " + lexOfFuels:LENGTH + " fuels!".
+		PRINT 1/0.
+	}
+	RETURN lexOfFuels.
 }
 
 FUNCTION gravityTurn {
@@ -1032,36 +1043,46 @@ FUNCTION findMinSlope {
 // It assumes that all engines are fired in current atmospheric conditions.
 // Passed the following
 //			list of engines (list containing type "engine", unitless)
-// Returns a list of the following:
-//			effective Isp (scalar, s)
-//			thrust (scalar, Newtons)
-//			mDot (scalar, kg/s)
-//			maximum thrust (scalar, Newtons)
-//			maximum mDot (scalar, kg/s)
+// Returns a lexicon of the following:
+//			"Isp" (scalar, s)
+//			"thrust" (scalar, Newtons)
+//			"mDot" (scalar, kg/s)
+//			"thrustMax" (scalar, Newtons)
+//			"mDotMax" (scalar, kg/s)
 FUNCTION engineStats {
 	PARAMETER engineList.
-	IF (engineList:LENGTH = 0) RETURN LIST(0, 0, 0, 0, 0).
+	IF (engineList:LENGTH = 0) RETURN LEXICON("Isp", 0,
+																				 "Thrust", 0,
+																				 "mDot", 0,
+																				 "thrustMax", 0,
+																				 "mDotMax", 0).
 
 	LOCAL mDot_cur IS 0.												// Rate of change of mass for the primary engine, given current throttle (kg/s)
 	LOCAL mDot_max IS 0.												// Rate of change of mass for the primary engine, with throttle at 100% (kg/s)
 	LOCAL F_cur IS 0.														// Current thrust (N)
 	LOCAL F_max IS 0.														// Full thrust (N)
-	LOCAL pressure IS 0.												// Ambient atmospheric pressure (atmospheres) Default to 0.
-	IF SHIP:BODY:ATM:EXISTS SET pressure TO SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE).
 
 	IF NOT engineList:EMPTY {
 		FOR eng IN engineList {
-			SET mDot_cur TO mDot_cur + eng:THRUST         * 1000 / (g_0 * eng:ISPAT(pressure)).
-			SET mDot_max TO mDot_max + eng:POSSIBLETHRUST * 1000 / (g_0 * eng:ISPAT(pressure)).
+			SET mDot_cur TO mDot_cur + eng:MASSFLOW    * 1000.
+			SET mDot_max TO mDot_max + eng:MAXMASSFLOW * 1000.
 			SET F_cur TO F_cur + eng:THRUST         * 1000.
 			SET F_max TO F_max + eng:POSSIBLETHRUST * 1000.
 		}
 	} ELSE SET mDot_max TO 0.
 
 
-	IF mDot_max = 0 RETURN LIST(0, F_cur, mDot_cur, F_max, mDot_max).
+	IF mDot_max = 0 RETURN LEXICON("Isp", 0,
+																 "Thrust", F_cur,
+																 "mDot", mDot_cur,
+																 "thrustMax", F_max,
+																 "mDotMax", mDot_max).
 
-	RETURN LIST(F_max / (g_0 * mDot_max), F_cur, mDot_cur, F_max, mDot_max).
+	RETURN LEXICON("Isp", F_max / (g_0 * mDot_max),
+								 "Thrust", F_cur,
+								 "mDot", mDot_cur,
+								 "thrustMax", F_max,
+								 "mDotMax", mDot_max).
 }
 
 // Calculate Engine Stats for RCS engines
@@ -1471,8 +1492,8 @@ FUNCTION engineInfo {
 	}
 	FOR engType IN engineData:KEYS {
 		SET engineStat TO engineStats(engineData[engType]["EngineList"]).
-		SET engineStat[1] TO engineStat[1] / 1000.0.
-		SET engineStat[3] TO engineStat[3] / 1000.0.
+		SET engineStat["Thrust"] TO engineStat["Thrust"] / 1000.0.
+		SET engineStat["thrustMax"] TO engineStat["thrustMax"] / 1000.0.
 		IF (DETAILED) {
 //			effective Isp (scalar, s)
 //			thrust (scalar, Newtons)
@@ -1480,32 +1501,32 @@ FUNCTION engineInfo {
 //			maximum thrust (scalar, Newtons)
 //			maximum mDot (scalar, kg/s)
 			SET thrustDecimals TO 2.
-			IF engineStat[1] / engineData[engType]["number"] > 100 SET thrustDecimals TO 1.
-			IF engineStat[1] / engineData[engType]["number"] > 1000 SET thrustDecimals TO 0.
+			IF engineStat["Thrust"] / engineData[engType]["number"] > 100 SET thrustDecimals TO 1.
+			IF engineStat["Thrust"] / engineData[engType]["number"] > 1000 SET thrustDecimals TO 0.
 			SET throttleAdjust TO THROTTLE.
 			IF NOT engineData[engType]["EngineList"][0]:ALLOWSHUTDOWN SET throttleAdjust TO 1.
 			SET message TO "".
 			SET message TO message + engType:TOSTRING:PADLEFT(maxLength) + "  ".
 			SET message TO message + engineData[engType]["number"]:TOSTRING:PADLEFT(5) + "  ".
-			SET message TO message + ROUND(throttleAdjust * engineStat[1] / engineData[engType]["number"], thrustDecimals):TOSTRING:PADLEFT(6) + "  ".
-			SET message TO message + ROUND(engineStat[3] / engineData[engType]["number"], thrustDecimals):TOSTRING:PADLEFT(7) + "  ".
-			IF engineStat[0] <> 0 SET message TO message + ROUND(engineStat[0], 0):TOSTRING:PADLEFT(3) + "  ".
+			SET message TO message + ROUND(throttleAdjust * engineStat["Thrust"] / engineData[engType]["number"], thrustDecimals):TOSTRING:PADLEFT(6) + "  ".
+			SET message TO message + ROUND(engineStat["thrustMax"] / engineData[engType]["number"], thrustDecimals):TOSTRING:PADLEFT(7) + "  ".
+			IF engineStat["Isp"] <> 0 SET message TO message + ROUND(engineStat["Isp"], 0):TOSTRING:PADLEFT(3) + "  ".
 			ELSE SET message TO message + "  0  ".
-			IF engineStat[0] <> 0 SET message TO message + ROUND(throttleAdjust * engineStat[2], 2):TOSTRING:PADLEFT(8) + "  ".
+			IF engineStat["Isp"] <> 0 SET message TO message + ROUND(throttleAdjust * engineStat["mDot"], 2):TOSTRING:PADLEFT(8) + "  ".
 			ELSE SET message TO message + "       0  ".
 			SET message TO message + engineData[engType]["EngineList"][0]:ALLOWSHUTDOWN:TOSTRING:PADLEFT(5) + "         ".
 			PRINT message AT (X + 2 , Y + 2 + COUNT).
 		} ELSE {
-			PRINT engType:TOSTRING:PADLEFT(maxLength) + " " + ROUND(engineStat[1] / engineStat[3] * 100) + "%" AT (X + 1 , Y + 1 + COUNT).
+			PRINT engType:TOSTRING:PADLEFT(maxLength) + " " + ROUND(engineStat["Thrust"] / engineStat["thrustMax"] * 100) + "%" AT (X + 1 , Y + 1 + COUNT).
 		}
 		SET count TO count + 1.
 	}
 
 	IF (DETAILED) {
-		PRINT " ":PADRIGHT(maxLength) + "    COUNT  THRUST  T AVAIL  ISP  FUEL USE  KILL         " AT (X, Y).
-		PRINT " ":PADRIGHT(maxLength) + "              kN       kN    s      kg/s               " AT (X + 1, Y + 1).
-		PRINT "                                                                                 " AT (X + 2, Y + 2 + COUNT).
-		PRINT "                                                                                 " AT (X + 2, Y + 3 + COUNT).
+		PRINT "":PADRIGHT(maxLength) + "    COUNT  THRUST  T AVAIL  ISP  FUEL USE   KILL        " AT (X, Y).
+		PRINT "":PADRIGHT(maxLength) + "               kN       kN    s      kg/s               " AT (X, Y + 1).
+		PRINT "                                                                                 " AT (X, Y + 2 + COUNT).
+		PRINT "                                                                                 " AT (X, Y + 3 + COUNT).
 	} ELSE {
 		PRINT "         % MAX THRUST   " AT (X, Y).
 		PRINT "                        " AT (X + 1 , Y + 1 + COUNT).
@@ -1532,17 +1553,17 @@ FUNCTION resourcesInParts {
 	// for each part in the specified stage
 	FOR eachPart IN partList {
 		// for each resource in the part
-		FOR specificResource IN eachPart:RESOURCES {
+		FOR eachResource IN eachPart:RESOURCES {
 			// if there is more than 0 of the resource
-			IF (specificResource:AMOUNT <> 0) {
+			IF (eachResource:AMOUNT <> 0) {
 				// if the resource is already in the list
-				IF (resourceList:KEYS:CONTAINS(specificResource:NAME) ) {
+				IF (resourceList:KEYS:CONTAINS(eachResource:NAME) ) {
 					// add the amount to the existing entry in the list
-					SET resourceList[specificResource:NAME] TO resourceList[specificResource:NAME] + specificResource:AMOUNT*specificResource:DENSITY*1000.
+					SET resourceList[eachResource:NAME] TO resourceList[eachResource:NAME] + eachResource:AMOUNT*densityLookUp[eachResource:NAME].
 				}
 				// if the resource is not already in the resource list, add the resource to the list
 				ELSE {
-					resourceList:ADD(specificResource:NAME, specificResource:AMOUNT*specificResource:DENSITY*1000).
+					resourceList:ADD(eachResource:NAME, eachResource:AMOUNT*densityLookUp[eachResource:NAME]).
 				}
 			}
 		}

@@ -462,13 +462,18 @@ FUNCTION createCommandList {
 		RETURN "shipInfo has been updated".
 		})).
 
-	possibleCommands:ADD("stageInfo", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
+	possibleCommands:ADD("stageInfo", LEXICON("PossibleArgs", 2, "RequiredArgs", 0, "Delegate", {
 		// Recalculate the staging information for the ship, and log it to a file
 		// pause briefly to allow operator to see info on the screen.
-		updateShipInfo().
-		logShipInfo().
-		WAIT 5.
-		RETURN SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv has been created.".
+		PARAMETER includeResources IS FALSE.
+		PARAMETER logFileName IS "0:" + SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv".
+		IF includeResources:TYPENAME = "Boolean" AND logFileName:TYPENAME = "STRING" {
+			updateShipInfo().
+			logShipInfo(includeResources, logFileName).
+			WAIT 5.
+			RETURN SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv has been created.".
+		}
+		RETURN "stageInfo - incorrect arguments".
 		})).
 
 	possibleCommands:ADD("logActions", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {logAllActions(). RETURN "Action file created!".})).

@@ -186,9 +186,9 @@ FUNCTION updateScreen {
 		SET pointing["yaw"] TO yaw_for(SHIP).
 		FOR resource IN SHIP:RESOURCES {
 			SET resourceList[resource:NAME]["Quantity Use"] TO (resource:AMOUNT - resourceList[resource:NAME]["Quantity"]) / timeDelta.
-			SET resourceList[resource:NAME]["Mass Use"] TO (resource:AMOUNT * resource:DENSITY * 1000 - resourceList[resource:NAME]["Mass"]) / timeDelta.
+			SET resourceList[resource:NAME]["Mass Use"] TO (resource:AMOUNT * densityLookUp[resource:NAME] - resourceList[resource:NAME]["Mass"]) / timeDelta.
 			SET resourceList[resource:NAME]["Quantity"] TO resource:AMOUNT.
-			SET resourceList[resource:NAME]["Mass"] TO resource:AMOUNT * resource:DENSITY * 1000.
+			SET resourceList[resource:NAME]["Mass"] TO resource:AMOUNT * densityLookUp[resource:NAME].
 		}
 		SET oldTime TO TIME:SECONDS.
 	}
