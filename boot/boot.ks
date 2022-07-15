@@ -1,5 +1,6 @@
 @LAZYGLOBAL OFF.
 
+SET CONFIG:IPU TO 2000.
 LOCAL stockWorldDetermined IS FALSE.
 LOCAL stockRocketsDetermined IS FALSE.
 LOCAL lastStockWorld IS FALSE.
@@ -40,6 +41,7 @@ FUNCTION isStockWorld {
 			RETURN FALSE.
 		}
 	}
+	RETURN FALSE.
 }
 
 // Is Stock Rockets
@@ -68,6 +70,7 @@ FUNCTION isStockRockets {
 			RETURN FALSE.
 		}
 	}
+	RETURN FALSE.
 }
 
 // Connection to KSC
