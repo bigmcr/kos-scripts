@@ -50,26 +50,31 @@ FUNCTION functionCaller {
 FUNCTION stageFunction {
 	PARAMETER waitTime IS 0.5.
 	PARAMETER forceLongWait IS SHIP:PARTS:LENGTH > 200.
-	LOCAL stageInAtm IS ((SHIP:BODY:ATM:EXISTS) AND
-											 (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) / SHIP:BODY:ATM:SEALEVELPRESSURE > 0.05) AND
-											 (SHIP:VELOCITY:SURFACE:MAG > 10.0)).
-	IF stageInAtm PRINT "Staging in atmosphere!".
-	IF forceLongWait SET waitTime TO 5.0.
+	PARAMETER manualStage IS FALSE.
+	IF not manualStage {
+		LOCAL stageInAtm IS ((SHIP:BODY:ATM:EXISTS) AND
+												 (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) / SHIP:BODY:ATM:SEALEVELPRESSURE > 0.05) AND
+												 (SHIP:VELOCITY:SURFACE:MAG > 10.0)).
+		IF stageInAtm PRINT "Staging in atmosphere!".
+		IF forceLongWait SET waitTime TO 5.0.
 
-	LOCAL stageStartTime IS TIME:SECONDS.
-	LOCAL facingVect IS SHIP:FACING.
+		LOCAL stageStartTime IS TIME:SECONDS.
+		LOCAL facingVect IS SHIP:FACING.
 
-	IF stageInAtm {
-		SET globalSteer TO SHIP:VELOCITY:SURFACE.
-		// this pause is to allow time for the rocket to face pure prograde (within 2.5 degrees)
-		UNTIL VANG(SHIP:FACING:VECTOR, SHIP:VELOCITY:SURFACE) < 2.5 WAIT 0.
+		IF stageInAtm {
+			SET globalSteer TO SHIP:VELOCITY:SURFACE.
+			// this pause is to allow time for the rocket to face pure prograde (within 2.5 degrees)
+			UNTIL VANG(SHIP:FACING:VECTOR, SHIP:VELOCITY:SURFACE) < 2.5 WAIT 0.
+		}
 	}
 	STAGE.
-	SET stageStartTime TO TIME:SECONDS.
-	SET facingVect TO SHIP:FACING:VECTOR.
+	IF not manualStage {
+		SET stageStartTime TO TIME:SECONDS.
+		SET facingVect TO SHIP:FACING:VECTOR.
 
-	// this pause is to allow time for the spent stage to go past the rocket
-	UNTIL TIME:SECONDS > stageStartTime + waitTime WAIT 0.
+		// this pause is to allow time for the spent stage to go past the rocket
+		UNTIL TIME:SECONDS > stageStartTime + waitTime WAIT 0.
+	}
 	updateShipInfo().
 }
 

@@ -426,7 +426,7 @@ FUNCTION createCommandList {
 	possibleCommands:ADD("trans", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {PARAMETER delayTime IS 10. RETURN possibleCommands["transition"]["Delegate"](delayTime).})).
 
 	possibleCommands:ADD("stage", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
-		stageFunction().
+		stageFunction(0.5, false, true).
 		RETURN "Manually Staged!".
 		})).
 
