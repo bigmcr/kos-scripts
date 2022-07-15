@@ -286,6 +286,7 @@ IF errorCode = "None" {
 	LOCAL DV0 TO ND:DELTAV.
 	SET globalThrottle TO 0.
 	setLockedThrottle(TRUE).
+	LOCAL resetWarp IS FALSE.
 	UNTIL done
 	{
 		SET globalSteer TO ND:DELTAV.
@@ -311,12 +312,12 @@ IF errorCode = "None" {
 
 		// If we are nearing the end of the burn (less than 1 second), stop physics warp to allow for more precision
 		IF ND:DELTAV:MAG <= a_f AND physicsWarpPerm {
-			SET KUNIVERSE:TIMEWARP:WARP TO 0.
+			IF NOT resetWarp {SET KUNIVERSE:TIMEWARP:WARP TO 0. SET resetWarp TO TRUE.}
 			IF (isStockRockets()) {
 				SET globalThrottle TO MAX(ND:DELTAV:MAG / a_f, 0.1).
-			}
-		} ELSE {
-			SET globalThrottle TO  1.
+			} ELSE SET globalThrottle TO 1.
+		} ELSE { // we are not close to the end of the burn, so go at full blast.
+			SET globalThrottle TO 1.
 		}
 		WAIT 0.
 	}
@@ -329,7 +330,7 @@ IF errorCode = "None" {
 		logMe:ADD("actual burn time," + (MISSIONTIME - startTime) + ",s").
 		logMe:ADD("stages used," + (STAGE:NUMBER - startStage + 1)).
 		logMe:ADD("dV left in burn," + ND:DELTAV:MAG + ",m/s").
-		logMe:ADD("dV left in ship," + ND:DELTAV:MAG + ",m/s").
+		logMe:ADD("dV left in ship," + shipInfo["CurrentStage"]["DeltaV"] + ",m/s").
 		logMe:ADD("final mass," + SHIP:MASS * 1000 + ",kg").
 		FOR message IN logMe {
 			LOG message TO "0:Maneuver.csv".
