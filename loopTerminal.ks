@@ -167,17 +167,21 @@ FUNCTION updateScreen {
       linesToPrint:ADD("Engine       Thrust  ISP  M Dot    Ign    Gimbal   Min Throttle Stab").
       linesToPrint:ADD("Name         Newton    s   kg/s              Deg              %").
       FOR eachEngine IN shipInfo["CurrentStage"]["Engines"] {
-        linesToPrint:ADD(eachEngine:TITLE:SUBSTRING(0, eachEngine:TITLE:FIND(" ")):PADRIGHT(13) +
-              ROUND(eachEngine:MAXTHRUST * 1000):TOSTRING:PADLEFT(6) +
-              ROUND(eachEngine:ISP):TOSTRING:PADLEFT(5) +
-              ROUND(eachEngine:MAXMASSFLOW * 1000):TOSTRING:PADLEFT(7) +
-              eachEngine:IGNITIONS:TOSTRING:PADLEFT(7) +
-              (CHOOSE ("0":PADLEFT(10)) IF NOT eachEngine:HASGIMBAL ELSE eachEngine:GIMBAL:RANGE:TOSTRING:PADLEFT(10)) +
-              (eachEngine:MINTHROTTLE*100):TOSTRING:PADLEFT(15) +
-              ROUND(eachEngine:FUELSTABILITY * 100):TOSTRING:PADLEFT(5)).
+        linesToPrint:ADD(
+          (CHOOSE eachEngine:TITLE:PADRIGHT(13) IF eachEngine:TITLE:FIND(" ") = -1 ELSE eachEngine:TITLE:SUBSTRING(0, eachEngine:TITLE:FIND(" ")):PADRIGHT(13)) +
+          ROUND(eachEngine:MAXTHRUST * 1000):TOSTRING:PADLEFT(6) +
+          ROUND(eachEngine:ISP):TOSTRING:PADLEFT(5) +
+          ROUND(eachEngine:MAXMASSFLOW * 1000):TOSTRING:PADLEFT(7) +
+          eachEngine:IGNITIONS:TOSTRING:PADLEFT(7) +
+          (CHOOSE ("0":PADLEFT(10)) IF NOT eachEngine:HASGIMBAL ELSE eachEngine:GIMBAL:RANGE:TOSTRING:PADLEFT(10)) +
+          (eachEngine:MINTHROTTLE*100):TOSTRING:PADLEFT(15) +
+          ROUND(eachEngine:FUELSTABILITY * 100):TOSTRING:PADLEFT(5)).
       }
+    } ELSE IF loopMode = "Universe" {
+      linesToPrint:ADD("Stock Rockets: " + isStockRockets()).
+      linesToPrint:ADD("Stock World: " + isStockWorld()).
     }
-  print_lines(linesToPrint, 13).
+  printLines(linesToPrint, 13).
 
 	SET timeDelta TO TIME:SECONDS - oldTime.
 	IF timeDelta > 0 {

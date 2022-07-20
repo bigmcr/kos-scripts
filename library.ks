@@ -1247,7 +1247,7 @@ FUNCTION createNode
 // Returns the following:
 //			nothing
 // Modified from example code given by nuggreat on Discord on July 1, 2022
-FUNCTION print_lines {
+FUNCTION printLines {
     PARAMETER linesToPrint.
 		PARAMETER startingRow IS 0.
     LOCAL i IS startingRow.
