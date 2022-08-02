@@ -24,7 +24,6 @@ IF (shipInfo["CurrentStage"]["ENGINES"]:LENGTH <> 0) IF VANG(shipInfo["CurrentSt
 // only run the script if there is a node to execute
 IF errorCode = "None" {
 	updateShipInfoCurrent(FALSE).
-	updateShipInfoResources().									// update the shipInfo structure with current status of the ship
 	LOCAL oldRCS IS RCS.												// record the current status of RCS
 	LOCAL oldSAS IS SAS.												// record the current status of SAS
 
