@@ -735,20 +735,22 @@ FUNCTION hillClimb {
   PARAMETER cyclicalPeriodCutoff IS 0.
 	PARAMETER deleteOldLogFile IS TRUE.
 
+	LOCAL logData IS (logFile <> "").
+	IF logFile:STARTSWITH("0:") AND NOT connectionToKSC() SET logData TO FALSE.
   LOCAL stepSize IS initialStepSize.
   LOCAL smallestStep IS initialStepSize / (2^smallestStepRatio).
   LOCAL iteration IS 0.
 	LOCAL currentDelegate IS 0.
 	LOCAL currentPlusDelegate IS 0.
 	LOCAL currentMinusDelegate IS 0.
-	IF deleteOldLogFile AND logFile <> "" AND EXISTS(logFile) DELETEPATH(logFile).
-  IF logFile <> "" LOG "Iteration,Power of 2,Current Guess,Step Size,Delegate at Current Guess,Delegate at Current Guess + Step,Delegate at Current Guess - Step" TO logFile.
+	IF deleteOldLogFile AND logData AND EXISTS(logFile) DELETEPATH(logFile).
+  IF logData LOG "Iteration,Power of 2,Current Guess,Step Size,Delegate at Current Guess,Delegate at Current Guess + Step,Delegate at Current Guess - Step" TO logFile.
   LOCAL currentGuess IS initialGuess.
   UNTIL (stepSize <= smallestStep) OR (iteration > iterationMax) {
 		SET currentDelegate TO delegate(currentGuess).
 		SET currentPlusDelegate TO delegate(currentGuess + stepSize).
 		SET currentMinusDelegate TO delegate(currentGuess - stepSize).
-    IF logFile <> "" LOG iteration + "," + (LN(stepSize/initialStepSize)/LN(2)) + "," + currentGuess + "," + stepSize + "," + currentDelegate + "," + currentPlusDelegate + "," + currentMinusDelegate TO logFile.
+    IF logData LOG iteration + "," + (LN(stepSize/initialStepSize)/LN(2)) + "," + currentGuess + "," + stepSize + "," + currentDelegate + "," + currentPlusDelegate + "," + currentMinusDelegate TO logFile.
     IF currentPlusDelegate < currentDelegate {
       SET currentGuess TO currentGuess + stepSize.
     } ELSE IF currentMinusDelegate < currentDelegate {
