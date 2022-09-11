@@ -131,15 +131,17 @@ FUNCTION advanceMode {
 SET globalThrottle TO 1.
 
 LOCAL logFileName IS "0:precision.csv".
-IF EXISTS(logFileName) DELETEPATH(logFileName).
-LOG "Initial Velocity X (Horizontal),v_x_i," + hSpeed + ",m/s" TO logFileName.
-LOG "Initial Velocity Y (Vertical),v_y_i," + VERTICALSPEED + ",m/s" TO logFileName.
-LOG "Initial Position X (Horizontal),x_x_i," + hPosition + ",m/s" TO logFileName.
-LOG "Initial Position Y (Vertical),x_y_i," + ALTITUDE + ",m/s" TO logFileName.
-LOG "Initial Mass,m_0," + shipInfo["CurrentStage"]["CurrentMass"] + ",kg" TO logFileName.
-LOG "Mass Rate of Change,m_dot," + shipInfo["Maximum"]["mDot"] + ",kg/s" TO logFileName.
-LOG "Exhaust Velocity,v_e," + (shipInfo["CurrentStage"]["Isp"] * g_0) + ",m/s" TO logFileName.
-IF connectionToKSC() LOG "Time,Mass,Horizontal Distance,Horizontal Distance Prediction,Horizontal Speed,Horizontal Speed Prediction,Horizontal Acceleration,Vertical Speed,Vertical Acceleration,Height Above Ground,Pitch,Distance to Flat Spot,Required Vertical Accel,Required Total Accel,Velocity PID Output,Accel PID Output,Throttle,Mode" TO logFileName.
+IF connectionToKSC() {
+	IF EXISTS(logFileName) DELETEPATH(logFileName).
+	LOG "Initial Velocity X (Horizontal),v_x_i," + hSpeed + ",m/s" TO logFileName.
+	LOG "Initial Velocity Y (Vertical),v_y_i," + VERTICALSPEED + ",m/s" TO logFileName.
+	LOG "Initial Position X (Horizontal),x_x_i," + hPosition + ",m/s" TO logFileName.
+	LOG "Initial Position Y (Vertical),x_y_i," + ALTITUDE + ",m/s" TO logFileName.
+	LOG "Initial Mass,m_0," + shipInfo["CurrentStage"]["CurrentMass"] + ",kg" TO logFileName.
+	LOG "Mass Rate of Change,m_dot," + shipInfo["Maximum"]["mDot"] + ",kg/s" TO logFileName.
+	LOG "Exhaust Velocity,v_e," + (shipInfo["CurrentStage"]["Isp"] * g_0) + ",m/s" TO logFileName.
+	LOG "Time,Mass,Horizontal Distance,Horizontal Distance Prediction,Horizontal Speed,Horizontal Speed Prediction,Horizontal Acceleration,Vertical Speed,Vertical Acceleration,Height Above Ground,Pitch,Distance to Flat Spot,Required Vertical Accel,Required Total Accel,Velocity PID Output,Accel PID Output,Throttle,Mode" TO logFileName.
+}
 
 UNTIL mode > 4 {
 	updateShipInfoCurrent(FALSE).
@@ -174,7 +176,7 @@ UNTIL mode > 4 {
 		SET flatSpotDistancePrev TO flatSpotDistance.
 		SET flatSpotDistance TO VXCL(SHIP:UP:VECTOR, flatSpot:POSITION):MAG.
 
-		IF hAccel < 0 SET loggingStarted TO TRUE.
+		IF hAccel < 0 AND connectionToKSC() SET loggingStarted TO TRUE.
 
 		PRINT "Horizontal Speed " + distanceToString(hSpeed, 2) + "/s     " AT (0, 3).
 		PRINT "Horizontal Acceleration " + distanceToString(hAccel, 2) + "/s^2    " AT (0, 4).
