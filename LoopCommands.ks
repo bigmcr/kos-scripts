@@ -48,6 +48,7 @@ FUNCTION createCommandList {
 	possibleCommands:ADD("RCSThrusters", LEXICON("PossibleArgs", 2, "RequiredArgs", 1, "Delegate", {
 		PARAMETER changeTo IS "Enable".
 		PARAMETER arg2 IS "Enable".
+		LOCAL soloValue IS "".
 		IF changeTo = "on" SET changeTo TO "Enable". IF changeTo = "off" SET changeTo TO "Disable".
 		IF arg2 = "on"     SET arg2 TO "Enable".     IF arg2 = "off"     SET arg2 TO "Disable".
 		IF changeTo = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:ENABLED TO TRUE.} RETURN "RCS thrusters Enabled".}
@@ -55,26 +56,43 @@ FUNCTION createCommandList {
 		IF changeTo = "Yaw" {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:YAWENABLED TO TRUE.} RETURN "RCS thrusters yaw enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:YAWENABLED TO FALSE.} RETURN "RCS thrusters yaw disabled".}
+			IF arg2 = "Only" SET soloValue TO changeTo.
 		}
 		IF changeTo = "Pitch" {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:PITCHENABLED TO TRUE.} RETURN "RCS thrusters pitch enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:PITCHENABLED TO FALSE.} RETURN "RCS thrusters pitch disabled".}
+			IF arg2 = "Only" SET soloValue TO changeTo.
 		}
 		IF changeTo = "Roll" {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:ROLLENABLED TO TRUE.} RETURN "RCS thrusters roll enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:ROLLENABLED TO FALSE.} RETURN "RCS thrusters roll disabled".}
+			IF arg2 = "Only" SET soloValue TO changeTo.
 		}
 		IF changeTo = "Fore" {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:FOREENABLED TO TRUE.} RETURN "RCS thrusters fore enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:FOREENABLED TO FALSE.} RETURN "RCS thrusters fore disabled".}
+			IF arg2 = "Only" SET soloValue TO changeTo.
 		}
 		IF changeTo = "Stbd" {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:STARBOARDENABLED TO TRUE.} RETURN "RCS thrusters starboard enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:STARBOARDENABLED TO FALSE.} RETURN "RCS thrusters starboard disabled".}
+			IF arg2 = "Only" SET soloValue TO changeTo.
 		}
 		IF changeTo = "Top" {
 			IF arg2 = "Enable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:TOPENABLED TO TRUE.} RETURN "RCS thrusters top enabled".}
 			IF arg2 = "Disable" {FOR p IN shipInfo["CurrentStage"]["RCS"] {SET p:TOPENABLED TO FALSE.} RETURN "RCS thrusters top disabled".}
+			IF arg2 = "Only" SET soloValue TO changeTo.
+		}
+		IF soloValue <> "" {
+			FOR p IN shipInfo["CurrentStage"]["RCS"] {
+				SET p:YAWENABLED TO soloValue = "Yaw".
+				SET p:PITCHENABLED TO soloValue = "Pitch".
+				SET p:ROLLENABLED TO soloValue = "Roll".
+				SET p:FOREENABLED TO soloValue = "Fore".
+				SET p:STARBOARDENABLED TO soloValue = "Stbd".
+				SET p:TOPENABLED TO soloValue = "Top".
+			}
+			RETURN "RCS thrusters " + soloValue + " solo enabled".
 		}
 		RETURN "RCSThrusters - invalid argument".
 		})).
