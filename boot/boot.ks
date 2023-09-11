@@ -25,20 +25,14 @@ FOR f IN fileList {
 FUNCTION isStockWorld {
 	IF stockWorldDetermined RETURN lastStockWorld.
 
-	LOCAL fileList IS LIST().
-	IF connectionToKSC() SET fileList TO ARCHIVE:FILES.
-	ELSE SET fileList TO CORE:VOLUME:FILES.
+	LOCAL bodyList IS LIST().
+	LIST BODIES IN bodyList.
 	SET lastStockWorld TO FALSE.
-	FOR fileName IN fileList:KEYS {
-		IF (fileName = "StockWorld.settings") {
+	FOR oneBody IN bodyList {
+		IF (oneBody:NAME = "Kerbin") OR (oneBody:NAME = "Minmus") {
 			SET stockWorldDetermined TO TRUE.
 			SET lastStockWorld TO TRUE.
 			RETURN TRUE.
-		}
-		IF (fileName = "RSSWorld.settings") {
-			SET stockWorldDetermined TO TRUE.
-			SET lastStockWorld TO FALSE.
-			RETURN FALSE.
 		}
 	}
 	RETURN FALSE.
@@ -186,9 +180,44 @@ FUNCTION copyToLocal {
 			WAIT 0.5.
 			RETURN TRUE.
 		} ELSE {
-			PRINT "There is not enough space on the local volume".
-			PRINT "Local volume not modified".
-			RETURN FALSE.
+			PRINT "Now checking to see if there is enough space for critical files".
+			CD("0:Boot"). LIST FILES IN fileList.
+			LOCAL usedSpaceCritical IS fileList[0]:SIZE.//PATH("0:boot/boot"):SIZE.	// this covers the boot file.
+			CD("0:Staging").
+			LIST FILES IN fileList.
+			LOCAL criticalFiles IS LIST("library", "loop", "loopCommands", "loopTerminal").
+			FOR f IN fileList {
+				IF criticalFiles:CONTAINS(f:name)	SET usedSpaceCritical TO usedSpaceCritical + f:SIZE.
+			}
+			PRINT "Total of " + usedSpaceCritical + " bytes in critical files".
+			IF usedSpaceCritical < CORE:VOLUME:CAPACITY {
+				SWITCH TO 1.
+				PRINT "There is enough room for solely critical files on the local volume.".
+				PRINT "Now deleting all files on the local volume.".
+				SET fileList TO CORE:VOLUME:FILES.
+				FOR f IN fileList:KEYS {IF DELETEPATH(f).}
+
+				COMPILE "0:boot/boot.ks" TO "1:boot.ksm".
+				SET CORE:BOOTFILENAME    TO "/boot.ksm".
+				PRINT "Boot file name set to " + CORE:BOOTFILENAME.
+
+				PRINT "Now copying all critical scripts.".
+				CD("0:Staging").
+				FOR f IN criticalFiles {COPYPATH(f, "1:" + f + ".ksm").}
+
+				CD("0:").
+				LIST FILES IN fileList.
+				FOR f IN fileList {IF f:EXTENSION = "settings" COPYPATH(f:NAME, "1:" + f:NAME).}
+				DELETEPATH("0:Staging").
+				SWITCH TO 1.
+				WAIT 0.5.
+				RETURN TRUE.
+			} ELSE {
+				PRINT "There is not enough space on the local volume".
+				PRINT "Local volume not modified".
+				DELETEPATH("0:Staging").
+				RETURN FALSE.
+			}
 		}
 	}
 }
@@ -197,7 +226,7 @@ FUNCTION copyToLocal {
 // If this isn't there, things like HOMECONNECTION:ISCONNECTED aren't right.
 WAIT 0.25.
 
-IF KUNIVERSE:TIMEWARP:RATE < 100 core:part:getmodule("kOSProcessor"):doevent("Open Terminal").
+IF KUNIVERSE:TIMEWARP:RATE < 100 CORE:DOEVENT("Open Terminal").
 SET TERMINAL:BRIGHTNESS TO 1.
 SET TERMINAL:WIDTH TO 80.
 SET TERMINAL:HEIGHT TO 50.

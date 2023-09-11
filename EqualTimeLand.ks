@@ -256,7 +256,7 @@ UNTIL mode > 4 {
 		PRINT "               " AT (40, 3).
 		PRINT "Land Dist: " + ROUND(VXCL(SHIP:UP:VECTOR, flatSpot:POSITION):MAG) + "    " AT (40, 4).
 		SET T_PID:SETPOINT TO -aboveGround/180.
-		SET THROTTLE TO 1.//T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
+		SET globalThrottle TO 1.//T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 		SET globalSteer TO -VELOCITY:SURFACE.
 		IF (GROUNDSPEED < 0.05 * v_i) advanceMode().
 	}

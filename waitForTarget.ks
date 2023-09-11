@@ -29,7 +29,7 @@ FUNCTION helperFunction
 //	LOG "Time,Old Time,New Distance,Old Distance,distanceToTargetOrbitalPlane Rate,Real Time Left" TO "0:Warping.csv".
 //	LOG "s,s,km,km,km/s,s" TO "0:Warping.csv".
 
-	// continue waiting until there is five seconds or less of real time remaining, or the distanceToTargetOrbitalPlane is less than the target Distance
+	// continue waiting until there are five seconds or less of real time remaining AND at least 10 seconds has passed
 	UNTIL ((realTimeLeft < 5) AND (KUNIVERSE:TIMEWARP:RATE = 1)) AND newTime > startTime + 10 {
 		LIST RESOURCES IN RESLIST.
 		FOR RES IN RESLIST {
@@ -63,12 +63,12 @@ FUNCTION helperFunction
 			}
 
 			// warp slower, if not at min rate
-			IF (realTimeLeft < 3) AND (KUNIVERSE:TIMEWARP:RATE <> 1) {
+			IF (realTimeLeft < 2) AND (KUNIVERSE:TIMEWARP:RATE <> 1) {
 				SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP - 1.
 			}
 
 			// warp faster, if not at max rate - this assumes that the next rate is 10x faster than the current rate
-			IF (realTimeLeft > 20) AND
+			IF (realTimeLeft > 30) AND
 				(KUNIVERSE:TIMEWARP:WARP <> KUNIVERSE:TimeWarp:RAILSRATELIST:LENGTH - 1) AND
 				(KUNIVERSE:TIMEWARP:RATE <> maxWarpRate) AND
 				(currentPower > 0.2 * startPower) {

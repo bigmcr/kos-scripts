@@ -24,14 +24,14 @@ FUNCTION findMinSlope {
 	PARAMETER radius.
 	PARAMETER delta.
 	LOCAL dataOriginal IS LIST().
-	LOCAL north IS SHIP:NORTH:VECTOR.
-	LOCAL east IS vcrs(centerPosition - SHIP:BODY:POSITION, north):NORMALIZED.
+	LOCAL northVector IS SHIP:NORTH:VECTOR.
+	LOCAL east IS vcrs(centerPosition - SHIP:BODY:POSITION, northVector):NORMALIZED.
 
 	LOCAL index IS 0.
 	FOR northOffset IN RANGE(-radius, radius + 1, delta) {
 		dataOriginal:ADD(LIST()).
 		FOR eastOffset IN RANGE(-radius, radius + 1, delta) {
-			dataOriginal[index]:ADD(SHIP:BODY:GEOPOSITIONOF(centerPosition + northOffset*north + eastOffset*east):TERRAINHEIGHT).
+			dataOriginal[index]:ADD(SHIP:BODY:GEOPOSITIONOF(centerPosition + northOffset*northVector + eastOffset*east):TERRAINHEIGHT).
 		}
 		SET index TO index + 1.
 	}
@@ -73,7 +73,7 @@ FUNCTION findMinSlope {
 //	logArray2Dim(dataShiftedEast, "dataShiftedEast.csv").
 //	PRINT "Minimum slope spot found at " + metersNorth + " meters north and " + metersEast + " meters east of the target".
 //	PRINT "Min slope is " + ROUND(currentMin, 6) + " meters per meter".
-	RETURN SHIP:BODY:GEOPOSITIONOF(centerPosition + north * metersNorth + east * metersEast).
+	RETURN SHIP:BODY:GEOPOSITIONOF(centerPosition + northVector * metersNorth + east * metersEast).
 }
 
 FUNCTION calculateFakeTerrain {

@@ -15,38 +15,6 @@ FUNCTION firstCommonBody {
   RETURN BODY("Sun").
 }
 
-FUNCTION absoluteVelocity {
-  PARAMETER thing.
-  PARAMETER timeStamp IS TIME:SECONDS.
-
-  LOCAL removals IS 0.
-  LOCAL finalVelocity IS V(0, 0, 0).
-  UNTIL NOT thing:HASBODY {
-    SET finalVelocity TO finalVelocity + VELOCITYAT(thing, timeStamp):ORBIT.
-    SET thing TO thing:BODY.
-  }
-  RETURN finalVelocity.
-}
-
-FUNCTION absolutePosition {
-  PARAMETER thing.
-  PARAMETER timeStamp IS TIME:SECONDS.
-
-  IF thing:NAME = "Sun" RETURN V(0, 0, 0).
-
-  LOCAL originalThing IS thing.
-  LOCAL removals IS 0.
-  LOCAL finalPosition IS V(0, 0, 0).
-  UNTIL NOT thing:HASBODY {
-    SET finalPosition TO finalPosition + POSITIONAT(thing, timeStamp).
-    SET thing TO thing:BODY.
-    SET removals TO removals + 1.
-  }
-  SET finalPosition TO finalPosition - POSITIONAT(BODY("Sun"), timeStamp).
-  IF removals > 1 RETURN finalPosition - originalThing:BODY:POSITION.
-  ELSE            RETURN finalPosition.
-}
-
 FUNCTION gaussProblemPIteration {
   PARAMETER r_1.
   PARAMETER r_2.
@@ -115,24 +83,24 @@ FUNCTION gaussProblemPIteration {
   LOCAL f_dot IS SQRT(mu / p) * TAN(phaseAngle / 2) * ((1 - COS(phaseAngle)) / p - 1 / r_1_mag - 1 / r_2_mag).
   LOCAL deltaAngle IS 0.
   LOCAL deltaAngleRad IS deltaAngle * CONSTANT:DegToRad.
-  LOCAL time IS 0.
+  LOCAL timeSeconds IS 0.
   LOCAL timeError IS timeTolerance + 1.0.
   IF motionType = "Ellipse" {
     SET deltaAngle TO ARCTAN2( -r_1_mag * r_2_mag * f_dot / SQRT( mu * a ), 1 - r_1_mag / a * (1 - f)).
     SET deltaAngleRad TO deltaAngle * CONSTANT:DegToRad.
-    SET time TO g + SQRT( a^3 / mu) * ( deltaAngleRad - SIN(deltaAngle)).
+    SET timeSeconds TO g + SQRT( a^3 / mu) * ( deltaAngleRad - SIN(deltaAngle)).
   } ELSE {
     SET deltaAngle TO ACOSH( 1 - r_1_mag / a * ( 1 - f)).
     SET deltaAngleRad TO deltaAngle * CONSTANT:DegToRad.
-    SET time TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngleRad).
+    SET timeSeconds TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngleRad).
   }
-  SET timeError TO timeOfFlight - time.
+  SET timeError TO timeOfFlight - timeSeconds.
   pList:ADD(p).
-  tList:ADD(time).
+  tList:ADD(timeSeconds).
 
   LOCAL iterations IS 0.
   LOCAL timeNMinusOne IS 0.
-  LOCAL timeNMinusTwo IS time.
+  LOCAL timeNMinusTwo IS timeSeconds.
   LOCAL pNMinusOne IS 0.
   LOCAL pNMinusTwo IS p.
 
@@ -144,7 +112,7 @@ FUNCTION gaussProblemPIteration {
     SET logMe[16] TO logMe[16] + g + ",".
     SET logMe[17] TO logMe[17] + f_dot + ",".
     SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-    SET logMe[19] TO logMe[19] + time + ",".
+    SET logMe[19] TO logMe[19] + timeSeconds + ",".
     SET logMe[20] TO logMe[20] + timeError + ",".
     SET logMe[21] TO logMe[21] + "-1,".
   }
@@ -159,17 +127,17 @@ FUNCTION gaussProblemPIteration {
   IF motionType = "Ellipse" {
     SET deltaAngle TO ARCTAN2( -r_1_mag * r_2_mag * f_dot / SQRT( mu * a ), 1 - r_1_mag / a * (1 - f)).
     SET deltaAngleRad TO deltaAngle * CONSTANT:DegToRad.
-    SET time TO g + SQRT( a^3 / mu) * ( deltaAngleRad - SIN(deltaAngle)).
+    SET timeSeconds TO g + SQRT( a^3 / mu) * ( deltaAngleRad - SIN(deltaAngle)).
   } ELSE {
     SET deltaAngle TO ACOSH( 1 - r_1_mag / a * ( 1 - f)).
     SET deltaAngleRad TO deltaAngle * CONSTANT:DegToRad.
-    SET time TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngleRad).
+    SET timeSeconds TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngleRad).
   }
 
-  SET timeError TO timeOfFlight - time.
+  SET timeError TO timeOfFlight - timeSeconds.
   pList:ADD(p).
-  tList:ADD(time).
-  SET timeNMinusOne TO time.
+  tList:ADD(timeSeconds).
+  SET timeNMinusOne TO timeSeconds.
   SET pNMinusOne TO p.
 
   IF logAllowed {
@@ -180,7 +148,7 @@ FUNCTION gaussProblemPIteration {
     SET logMe[16] TO logMe[16] + g + ",".
     SET logMe[17] TO logMe[17] + f_dot + ",".
     SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-    SET logMe[19] TO logMe[19] + time + ",".
+    SET logMe[19] TO logMe[19] + timeSeconds + ",".
     SET logMe[20] TO logMe[20] + timeError + ",".
     SET logMe[21] TO logMe[21] + "0,".
   }
@@ -207,16 +175,16 @@ FUNCTION gaussProblemPIteration {
     IF motionType = "Ellipse" {
       SET deltaAngle TO ARCTAN2( -r_1_mag * r_2_mag * f_dot / SQRT( mu * a ), 1 - r_1_mag / a * (1 - f)).
       SET deltaAngleRad TO deltaAngle * CONSTANT:DegToRad.
-      SET time TO g + SQRT( a^3 / mu) * ( deltaAngleRad - SIN(deltaAngle)).
+      SET timeSeconds TO g + SQRT( a^3 / mu) * ( deltaAngleRad - SIN(deltaAngle)).
     } ELSE {
       // Note that the hyperbolic functions don't really use traditional angles, so no unit conversion is needed.
       SET deltaAngle TO ACOSH( 1 - r_1_mag / a * ( 1 - f)).
       SET deltaAngleRad TO deltaAngle * 1.
-      SET time TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngleRad).
+      SET timeSeconds TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngleRad).
     }
-    SET timeError TO timeOfFlight - time.
+    SET timeError TO timeOfFlight - timeSeconds.
     pList:ADD(p).
-    tList:ADD(time).
+    tList:ADD(timeSeconds).
     SET iterations TO iterations + 1.
 
     IF logAllowed {
@@ -227,7 +195,7 @@ FUNCTION gaussProblemPIteration {
       SET logMe[16] TO logMe[16] + g + ",".
       SET logMe[17] TO logMe[17] + f_dot + ",".
       SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-      SET logMe[19] TO logMe[19] + time + ",".
+      SET logMe[19] TO logMe[19] + timeSeconds + ",".
       SET logMe[20] TO logMe[20] + timeError + ",".
       SET logMe[21] TO logMe[21] + iterations + ",".
       FOR message IN logMe {
@@ -347,7 +315,7 @@ FUNCTION gaussProblemUniversalVariables {
   LOCAL C IS 0.
   LOCAL y IS 0.
   LOCAL x IS 0.
-  LOCAL time IS 0.
+  LOCAL timeSeconds IS 0.
   LOCAL C_prime IS 0.
   LOCAL S_prime IS 0.
   LOCAL dt_dz IS 0.
@@ -361,7 +329,7 @@ FUNCTION gaussProblemUniversalVariables {
       SET firstTime TO FALSE.
     } ELSE {
       IF dt_dz = 0 SET z TO z + 1.
-      ELSE SET z TO z - ( time - timeOfFlight) / dt_dz.
+      ELSE SET z TO z - ( timeSeconds - timeOfFlight) / dt_dz.
       IF z > (4*CONSTANT:PI)^2 SET failed TO TRUE.
     }
     SET S TO S_Z(z).
@@ -370,18 +338,18 @@ FUNCTION gaussProblemUniversalVariables {
     ELSE SET y TO -1.
     IF (y > 0) AND (C < 1e10) AND (S < 1e10) {
       SET x TO SQRT( y / C ).
-      SET time TO (( x^3 ) * S + A * SQRT( y )) / SQRT( mu ).
+      SET timeSeconds TO (( x^3 ) * S + A * SQRT( y )) / SQRT( mu ).
       SET C_prime TO C_Z_prime(z, C, S).
       SET S_prime TO S_Z_prime(z, C, S).
       SET dt_dz TO (x^3 * (S_prime - 3 * S * C_prime / ( 2 * C) ) + A / 8 * ( 3 * S * SQRT( y ) / C + A / x)) / SQRT(mu).
-      SET timeError TO timeOfFlight - time.
+      SET timeError TO timeOfFlight - timeSeconds.
       IF logAllowed {
         SET logMe[07] TO logMe[07] + z + ",".
         SET logMe[08] TO logMe[08] + C + ",".
         SET logMe[09] TO logMe[09] + S + ",".
         SET logMe[10] TO logMe[10] + y + ",".
         SET logMe[11] TO logMe[11] + x + ",".
-        SET logMe[12] TO logMe[12] + time + ",".
+        SET logMe[12] TO logMe[12] + timeSeconds + ",".
         SET logMe[13] TO logMe[13] + dt_dz + ",".
         SET logMe[14] TO logMe[14] + C_prime + ",".
         SET logMe[15] TO logMe[15] + S_prime + ",".
@@ -462,7 +430,7 @@ IF errorCode = "None" {
   LOCAL r_1 IS V(0, 0, 0).
   LOCAL r_2 IS V(0, 0, 0).
 
-  LOCAL timeStamp IS TIME(116941814.5).
+  LOCAL timeStampNew IS TIME(116941814.5).
   LOCAL startTime IS TIME. //TIME(TIME:SECONDS).
 
   LOCAL plotData IS LIST().
@@ -483,11 +451,11 @@ IF errorCode = "None" {
 
   // Time Offset is offset in time from now, in units hundredths of the synodic period of the two bodies
   FOR timeOffset IN RANGE(0, 301, 5) {
-    SET timeStamp TO startTime + (timeOffset / 100) * synodicPeriod.
-    SET r_1 TO absolutePosition(fromBody, timeStamp) - absolutePosition(sunBody, timeStamp).
-    SET r_2 TO absolutePosition(toBody, timeStamp) - absolutePosition(sunBody, timeStamp).
-    SET fromBodyVelocity TO absoluteVelocity(fromBody, timeStamp) - absoluteVelocity(sunBody, timeStamp).
-    SET toBodyVelocity TO absoluteVelocity(toBody, timeStamp) - absoluteVelocity(sunBody, timeStamp).
+    SET timeStampNew TO startTime + (timeOffset / 100) * synodicPeriod.
+    SET r_1 TO absolutePosition(fromBody, timeStampNew) - absolutePosition(sunBody, timeStampNew).
+    SET r_2 TO absolutePosition(toBody, timeStampNew) - absolutePosition(sunBody, timeStampNew).
+    SET fromBodyVelocity TO absoluteVelocity(fromBody, timeStampNew) - absoluteVelocity(sunBody, timeStampNew).
+    SET toBodyVelocity TO absoluteVelocity(toBody, timeStampNew) - absoluteVelocity(sunBody, timeStampNew).
     // Number is time of flight in hundredths of the synodic period
     FOR number IN RANGE(30, 151, 5) {
       SET timeOfFlight TO synodicPeriod * ((number) / 100).
@@ -505,17 +473,17 @@ IF errorCode = "None" {
         singleTrajectoryData:ADD("Start Delta V", "").
         singleTrajectoryData:ADD("End Delta V", "").
         singleTrajectoryData:ADD("Total Delta V", "").
-        singleTrajectoryData:ADD("Time Stamp", timeStamp:SECONDS).
+        singleTrajectoryData:ADD("Time Stamp", timeStampNew:SECONDS).
         singleTrajectoryData:ADD("Time Of Flight", timeOfFlight).
       } ELSE {
         singleTrajectoryData:ADD("Start Delta V", (fromBodyVelocity - singleTrajectoryData["v_1"]):MAG).
         singleTrajectoryData:ADD("End Delta V", (toBodyVelocity - singleTrajectoryData["v_2"]):MAG).
         singleTrajectoryData:ADD("Total Delta V", singleTrajectoryData["Start Delta V"] + singleTrajectoryData["End Delta V"]).
-        singleTrajectoryData:ADD("Time Stamp", timeStamp:SECONDS).
+        singleTrajectoryData:ADD("Time Stamp", timeStampNew:SECONDS).
         singleTrajectoryData:ADD("Time Of Flight", timeOfFlight).
       }
       singleTrajectoryData:ADD("Time Offset", (timeOffset / 10) * synodicPeriod).
-      singleTrajectoryData:ADD("Universal Time", timeStamp:SECONDS).
+      singleTrajectoryData:ADD("Universal Time", timeStampNew:SECONDS).
       singleTrajectoryData:ADD("From Velocity", fromBodyVelocity).
       singleTrajectoryData:ADD("To Velocity", toBodyVelocity).
       IF NOT successRate:KEYS:CONTAINS(singleTrajectoryData["Motion Type"]) {
