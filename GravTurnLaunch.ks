@@ -232,10 +232,9 @@ UNTIL mode > 6 {
 		// note that maxGs is relative to sea level on THIS BODY, not Earth/Kerbin.
 		// desired throttle = (maxGs * body_g - accel from SRBs)/available accel from variable engines
 		IF (shipInfo["Maximum"]["Variable"]["Accel"] <> 0) {
-			IF minThrottle <> 1	SET globalThrottle TO  (((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]) - minThrottle)/(1-minThrottle).
-			ELSE								SET globalThrottle TO   ((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]).
-		} ELSE SET globalThrottle TO  1.0.
-		SET globalThrottle TO  MIN( MAX( globalThrottle, 0.05), 1.0).
+			SET globalThrottle TO ((maxGs*body_g - shipInfo["Current"]["Constant"]["Accel"]) / shipInfo["Maximum"]["Variable"]["Accel"]).
+		} ELSE SET globalThrottle TO 1.0.
+		SET globalThrottle TO MIN( MAX( globalThrottle, 0.05), 1.0).
 
 		// Engine staging
 		// this should drop any LF main stage and allow the final orbiter to take off
