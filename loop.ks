@@ -120,6 +120,8 @@ FUNCTION endScript {
 	RCS OFF.
 	setLockedSteering(FALSE).
 	setLockedThrottle(FALSE).
+	UNLOCK WHEELSTEERING.
+	UNLOCK WHEELTHROTTLE.
 	SET autoSteer TO "".
 	SET autoSteerOld TO "".
 
@@ -145,7 +147,7 @@ setLockedThrottle(FALSE).
 
 UNTIL done {
 	SET tempChar TO "".
-	IF TERMINAL:INPUT:HASCHAR {
+	UNTIL NOT TERMINAL:INPUT:HASCHAR {
 		SET tempChar TO TERMINAL:INPUT:GETCHAR().
 
 		// if the operator entered the "Enter" key, attempt to interperet the input

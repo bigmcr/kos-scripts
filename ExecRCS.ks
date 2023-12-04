@@ -15,8 +15,9 @@ LIST RCS IN RCSEngines.
 // [3]			maximum thrust (scalar, Newtons)
 // [4]			maximum mDot (scalar, kg/s)
 LOCAL engineStats IS engineStatsRCS(RCSEngines).
-LOCAL RCSIsp IS engineStats[0].
-LOCAL RCSThrust IS engineStats[3].
+LOCAL RCSIsp IS engineStats["Isp"].
+LOCAL RCSThrust IS engineStats["thrustMax"].
+LOCAL RCSm_dot IS engineStats["mDotMax"].
 
 CLEARSCREEN. PRINT "Total Thrust: " + ROUND(RCSThrust, 0) + " kN, Engine Count: " + RCSEngines:LENGTH.
 
@@ -41,7 +42,7 @@ IF errorCode = "None" {
 
 	LOCAL dV_req TO ND:DELTAV:MAG.
 	LOCAL v_e IS RCSIsp * g_0.
-	LOCAL m_dot IS RCSThrust / v_e.
+	LOCAL m_dot IS RCSm_dot.
 	LOCAL burnTime IS m_i * (1 - e ^ (- dV_req / v_e ) ) / m_dot.
 	LOCAL m_f IS m_i - burnTime*m_dot.
 	LOCAL a_i IS RCSThrust / m_i.										// initial acceleration at the start of the burn (m/s^2)
@@ -108,15 +109,21 @@ IF errorCode = "None" {
 	SET globalSteer TO ND:DELTAV.
 	IF debug PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
 	//now we need to wait until the burn vector and ship's facing are aligned
-	WAIT UNTIL (ABS(ND:DELTAV:DIRECTION:PITCH - FACING:PITCH) < 0.15 AND ABS(ND:DELTAV:DIRECTION:YAW - FACING:YAW) < 0.15 AND SHIP:ANGULARVEL:MAG < 0.01).
+	IF isStockRockets() {
+		// In stock rockets, assume that we can control roll rate
+		WAIT UNTIL (ABS(ND:DELTAV:DIRECTION:PITCH - FACING:PITCH) < 0.15 AND ABS(ND:DELTAV:DIRECTION:YAW - FACING:YAW) < 0.15 AND SHIP:ANGULARVEL:MAG < 0.01).
+		// if the node is more than 5 minutes away, pause for twice as long as the steering manager's stopping time to allow all roll rotation to be damped out
+		IF ND:ETA > 5*60 WAIT STEERINGMANAGER:MAXSTOPPINGTIME*2.
+	} ELSE {
+		// If non-stock rockets, don't wait for the roll rate to be zero'd out.
+		WAIT UNTIL (ABS(ND:DELTAV:DIRECTION:PITCH - FACING:PITCH) < 0.15 AND ABS(ND:DELTAV:DIRECTION:YAW - FACING:YAW) < 0.15).
+	}
 
-	// if the node is more than 5 minutes away, pause for twice as long as the steering manager's stopping time to allow all roll rotation to be damped out
-	IF ND:ETA > 5*60 WAIT STEERINGMANAGER:MAXSTOPPINGTIME*2.
 	// always turn off physics warp
 	SET KUNIVERSE:TIMEWARP:WARP TO 0.
 	SET KUNIVERSE:TIMEWARP:MODE TO "RAILS".
 
-	// if ullage is not a concern, warp to 15 seconds before burntime
+	// warp to 15 seconds before burntime
 	warpToTime(TIME:SECONDS + ND:ETA - t_ign - 15).
 	IF debug PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
 	IF physicsWarpPerm {

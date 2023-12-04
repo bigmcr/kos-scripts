@@ -84,9 +84,9 @@ IF printingAllowed {
 // NEXTNODE:ORBIT is hyperbolic trajectory to current BODY SOI edge.
 // NEXTNODE:ORBIT:NEXTPATCH is elliptical transfer orbit in parent's SOI.
 FUNCTION apoOfTransferTrajectory {
-  PARAMETER time.
+  PARAMETER timeETA.
   IF NEXTNODE:ORBIT:HASNEXTPATCH {
-    SET NEXTNODE:ETA TO time.
+    SET NEXTNODE:ETA TO timeETA.
     IF NEXTNODE:ORBIT:HASNEXTPATCH {
       RETURN ABS(0-NEXTNODE:ORBIT:NEXTPATCH:APOAPSIS).
     }

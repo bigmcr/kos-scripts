@@ -1,39 +1,6 @@
 @LAZYGLOBAL OFF.
 CLEARSCREEN.
 
-FUNCTION absolutePosition {
-  PARAMETER thing.
-  PARAMETER timeStamp IS TIME:SECONDS.
-
-  IF thing:NAME = "Sun" RETURN V(0, 0, 0).
-
-  LOCAL originalThing IS thing.
-  LOCAL removals IS 0.
-  LOCAL finalPosition IS V(0, 0, 0).
-  UNTIL NOT thing:HASBODY {
-    SET finalPosition TO finalPosition + POSITIONAT(thing, timeStamp).
-    SET thing TO thing:BODY.
-    SET removals TO removals + 1.
-  }
-  SET finalPosition TO finalPosition - POSITIONAT(BODY("Sun"), timeStamp).
-  IF removals = 2 RETURN finalPosition - originalThing:BODY:POSITION.
-  IF removals = 3 {PRINT "3 Removals". RETURN finalPosition - originalThing:BODY:BODY:POSITION.}
-  RETURN finalPosition.
-}
-
-FUNCTION absoluteVelocity {
-  PARAMETER thing.
-  PARAMETER timeStamp IS TIME:SECONDS.
-
-  LOCAL removals IS 0.
-  LOCAL finalVelocity IS V(0, 0, 0).
-  UNTIL NOT thing:HASBODY {
-    SET finalVelocity TO finalVelocity + VELOCITYAT(thing, timeStamp):ORBIT.
-    SET thing TO thing:BODY.
-  }
-  RETURN finalVelocity.
-}
-
 IF NOT HASTARGET PRINT "Select a target".
 UNTIL HASTARGET {WAIT 0.0.}
 
@@ -59,7 +26,7 @@ LOCAL fromBody IS BODY("Kerbin").
 LOCAL toBody IS BODY("Duna").
 LOCAL sunBody IS BODY("Sun").
 LOCAL period IS MIN(fromBody:ORBIT:PERIOD, toBody:ORBIT:PERIOD).
-LOCAL timeStamp IS 0.
+LOCAL timeStampNew IS 0.
 LOCAL r_1 IS V(0,0,0).
 LOCAL r_2 IS V(0,0,0).
 LOCAL r_3 IS V(0,0,0).
@@ -68,15 +35,15 @@ LOCAL v_2 IS V(0,0,0).
 LOCAL v_3 IS V(0,0,0).
 // Time Offset is offset in time from now, in units tenths of the synodic period of the two bodies
 FOR timeOffset IN RANGE(0, 30 * 16, 1) {
-  SET timeStamp TO startTime + (timeOffset / 16) * period.
-  SET r_1 TO absolutePosition(fromBody, timeStamp).
-  SET r_2 TO absolutePosition(toBody, timeStamp).
-  SET r_3 TO absolutePosition(sunBody, timeStamp).
-  SET v_1 TO absoluteVelocity(fromBody, timeStamp).
-  SET v_2 TO absoluteVelocity(toBody, timeStamp).
-  SET v_3 TO absoluteVelocity(sunBody, timeStamp).
+  SET timeStampNew TO startTime + (timeOffset / 16) * period.
+  SET r_1 TO absolutePosition(fromBody, timeStampNew).
+  SET r_2 TO absolutePosition(toBody, timeStampNew).
+  SET r_3 TO absolutePosition(sunBody, timeStampNew).
+  SET v_1 TO absoluteVelocity(fromBody, timeStampNew).
+  SET v_2 TO absoluteVelocity(toBody, timeStampNew).
+  SET v_3 TO absoluteVelocity(sunBody, timeStampNew).
   LOG ((timeOffset / 16) * period) + "," +
-      timeStamp:SECONDS + "," +
+      timeStampNew:SECONDS + "," +
       r_1:X + "," +
       r_1:Y + "," +
       r_1:Z + "," +

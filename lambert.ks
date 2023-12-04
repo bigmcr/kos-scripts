@@ -101,10 +101,10 @@ function lambert2 {
     set order to order + 1.
   }
 
-  local v to ssign * z * isn.
+  local vv to ssign * z * isn.
   local w to x * ism.
-  local vcvec to smu * (v + w) * uniC.
-  local vr to smu * (v - w).
+  local vcvec to smu * (vv + w) * uniC.
+  local vr to smu * (vv - w).
 
   return lexicon("v0", vcvec + vr * unir0, "v1", vcvec - vr * unir1).
 }

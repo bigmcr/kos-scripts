@@ -12,7 +12,7 @@ FUNCTION findLowestSpot {
 		IF (detailed OR (ABS(northOffset) = params["distance"])) SET eastInterval TO params["interval"].
 		ELSE SET eastInterval TO 2 * params["distance"].
 		FOR eastOffset IN RANGE (-params["distance"], params["distance"] + 1, eastInterval) {
-			SET testTerrainHeight TO SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + northOffset * north + eastOffset * east):TERRAINHEIGHT.
+			SET testTerrainHeight TO SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + northOffset * northVector + eastOffset * east):TERRAINHEIGHT.
 //			PRINT "(N, E) = (" + ROUND(northOffset) + "," + ROUND(eastOffset) + ")".
 			IF testTerrainHeight > params["terrainHeight"] {
 				SET params["terrainHeight"] TO testTerrainHeight.
@@ -106,43 +106,43 @@ LOCAL mediumVD IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Medium Distance", 1.0, TRUE
 LOCAL shortVD IS VECDRAW(V(0,0,0), V(0,0,0), RED, "Short Distance", 1.0, TRUE, 0.2).
 LOCAL desiredHeading IS 0.
 LOCAL east IS east_for(SHIP).
-LOCAL north IS NORTH:VECTOR.
+LOCAL northVector IS northVector:VECTOR.
 
 LOCAL boundaryVDs IS LEXICON().
 boundaryVDs:ADD("long",LIST()).
-boundaryVDs["Long"]:ADD(VECDRAW( rangeData["long"]["distance"]*north + rangeData["long"]["distance"]*east, -2*rangeData["long"]["distance"]* east, YELLOW, "NORTH", 1.0, TRUE, 0.2)).
-boundaryVDs["Long"]:ADD(VECDRAW(-rangeData["long"]["distance"]*north + rangeData["long"]["distance"]*east,  2*rangeData["long"]["distance"]*north, YELLOW,  "EAST", 1.0, TRUE, 0.2)).
-boundaryVDs["Long"]:ADD(VECDRAW( rangeData["long"]["distance"]*north - rangeData["long"]["distance"]*east, -2*rangeData["long"]["distance"]*north, YELLOW,  "WEST", 1.0, TRUE, 0.2)).
-boundaryVDs["Long"]:ADD(VECDRAW(-rangeData["long"]["distance"]*north - rangeData["long"]["distance"]*east,  2*rangeData["long"]["distance"]* east, YELLOW, "SOUTH", 1.0, TRUE, 0.2)).
+boundaryVDs["Long"]:ADD(VECDRAW( rangeData["long"]["distance"]*northVector + rangeData["long"]["distance"]*east, -2*rangeData["long"]["distance"]* east, YELLOW, "north", 1.0, TRUE, 0.2)).
+boundaryVDs["Long"]:ADD(VECDRAW(-rangeData["long"]["distance"]*northVector + rangeData["long"]["distance"]*east,  2*rangeData["long"]["distance"]*northVector, YELLOW,  "EAST", 1.0, TRUE, 0.2)).
+boundaryVDs["Long"]:ADD(VECDRAW( rangeData["long"]["distance"]*northVector - rangeData["long"]["distance"]*east, -2*rangeData["long"]["distance"]*northVector, YELLOW,  "WEST", 1.0, TRUE, 0.2)).
+boundaryVDs["Long"]:ADD(VECDRAW(-rangeData["long"]["distance"]*northVector - rangeData["long"]["distance"]*east,  2*rangeData["long"]["distance"]* east, YELLOW, "SOUTH", 1.0, TRUE, 0.2)).
 boundaryVDs:ADD("medium",LIST()).
-boundaryVDs["medium"]:ADD(VECDRAW( rangeData["medium"]["distance"]*north + rangeData["medium"]["distance"]*east, -2*rangeData["medium"]["distance"]* east, BLUE, "NORTH", 1.0, TRUE, 0.2)).
-boundaryVDs["medium"]:ADD(VECDRAW(-rangeData["medium"]["distance"]*north + rangeData["medium"]["distance"]*east,  2*rangeData["medium"]["distance"]*north, BLUE,  "EAST", 1.0, TRUE, 0.2)).
-boundaryVDs["medium"]:ADD(VECDRAW( rangeData["medium"]["distance"]*north - rangeData["medium"]["distance"]*east, -2*rangeData["medium"]["distance"]*north, BLUE,  "WEST", 1.0, TRUE, 0.2)).
-boundaryVDs["medium"]:ADD(VECDRAW(-rangeData["medium"]["distance"]*north - rangeData["medium"]["distance"]*east,  2*rangeData["medium"]["distance"]* east, BLUE, "SOUTH", 1.0, TRUE, 0.2)).
+boundaryVDs["medium"]:ADD(VECDRAW( rangeData["medium"]["distance"]*northVector + rangeData["medium"]["distance"]*east, -2*rangeData["medium"]["distance"]* east, BLUE, "north", 1.0, TRUE, 0.2)).
+boundaryVDs["medium"]:ADD(VECDRAW(-rangeData["medium"]["distance"]*northVector + rangeData["medium"]["distance"]*east,  2*rangeData["medium"]["distance"]*northVector, BLUE,  "EAST", 1.0, TRUE, 0.2)).
+boundaryVDs["medium"]:ADD(VECDRAW( rangeData["medium"]["distance"]*northVector - rangeData["medium"]["distance"]*east, -2*rangeData["medium"]["distance"]*northVector, BLUE,  "WEST", 1.0, TRUE, 0.2)).
+boundaryVDs["medium"]:ADD(VECDRAW(-rangeData["medium"]["distance"]*northVector - rangeData["medium"]["distance"]*east,  2*rangeData["medium"]["distance"]* east, BLUE, "SOUTH", 1.0, TRUE, 0.2)).
 boundaryVDs:ADD("short",LIST()).
-boundaryVDs["short"]:ADD(VECDRAW( rangeData["short"]["distance"]*north + rangeData["short"]["distance"]*east, -2*rangeData["short"]["distance"]* east, RED, "NORTH", 1.0, TRUE, 0.2)).
-boundaryVDs["short"]:ADD(VECDRAW(-rangeData["short"]["distance"]*north + rangeData["short"]["distance"]*east,  2*rangeData["short"]["distance"]*north, RED,  "EAST", 1.0, TRUE, 0.2)).
-boundaryVDs["short"]:ADD(VECDRAW( rangeData["short"]["distance"]*north - rangeData["short"]["distance"]*east, -2*rangeData["short"]["distance"]*north, RED,  "WEST", 1.0, TRUE, 0.2)).
-boundaryVDs["short"]:ADD(VECDRAW(-rangeData["short"]["distance"]*north - rangeData["short"]["distance"]*east,  2*rangeData["short"]["distance"]* east, RED, "SOUTH", 1.0, TRUE, 0.2)).
+boundaryVDs["short"]:ADD(VECDRAW( rangeData["short"]["distance"]*northVector + rangeData["short"]["distance"]*east, -2*rangeData["short"]["distance"]* east, RED, "north", 1.0, TRUE, 0.2)).
+boundaryVDs["short"]:ADD(VECDRAW(-rangeData["short"]["distance"]*northVector + rangeData["short"]["distance"]*east,  2*rangeData["short"]["distance"]*northVector, RED,  "EAST", 1.0, TRUE, 0.2)).
+boundaryVDs["short"]:ADD(VECDRAW( rangeData["short"]["distance"]*northVector - rangeData["short"]["distance"]*east, -2*rangeData["short"]["distance"]*northVector, RED,  "WEST", 1.0, TRUE, 0.2)).
+boundaryVDs["short"]:ADD(VECDRAW(-rangeData["short"]["distance"]*northVector - rangeData["short"]["distance"]*east,  2*rangeData["short"]["distance"]* east, RED, "SOUTH", 1.0, TRUE, 0.2)).
 
 LOCAL headingOffsetVD IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Heading Offset", 1.0, TRUE, 0.2).
 LOCAL headingCourseVD IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Heading Course", 1.0, TRUE, 0.2).
 LOCAL groundVelocity IS VXCL(SHIP:UP:VECTOR, VELOCITY:SURFACE).
-LOCAL highDirectionSpeed IS VDOT(groundVelocity, HEADING(yaw_for(rangeData["long"]["northOffset"] * north + rangeData["long"]["eastOffset"] * east), 0):VECTOR).
+LOCAL highDirectionSpeed IS VDOT(groundVelocity, HEADING(yaw_for(rangeData["long"]["northOffset"] * northVector + rangeData["long"]["eastOffset"] * east), 0):VECTOR).
 
 UNTIL AG1 {
 	SET downSlopeInfo TO findDownSlopeInfo().
 	SET aboveGround TO heightAboveGround().
 	SET east TO east_for(SHIP).
 	SET groundVelocity TO VXCL(SHIP:UP:VECTOR, VELOCITY:SURFACE).
-	SET highDirectionSpeed TO VDOT(groundVelocity, HEADING(yaw_for(rangeData["long"]["northOffset"] * north + rangeData["long"]["eastOffset"] * east), 0):VECTOR).
+	SET highDirectionSpeed TO VDOT(groundVelocity, HEADING(yaw_for(rangeData["long"]["northOffset"] * northVector + rangeData["long"]["eastOffset"] * east), 0):VECTOR).
 	findLowestSpot(rangeData["long"], TRUE).
 	findLowestSpot(rangeData["medium"], TRUE).
 	findLowestSpot(rangeData["short"], TRUE).
 
-	SET longVD:VEC   TO   rangeData["long"]["northOffset"] * NORTH +   rangeData["long"]["eastOffset"] * east -   rangeData["long"]["verticalOffset"] * SHIP:UP:VECTOR.
-	SET mediumVD:VEC TO rangeData["medium"]["northOffset"] * NORTH + rangeData["medium"]["eastOffset"] * east - rangeData["medium"]["verticalOffset"] * SHIP:UP:VECTOR.
-	SET shortVD:VEC  TO  rangeData["short"]["northOffset"] * NORTH +  rangeData["short"]["eastOffset"] * east -  rangeData["short"]["verticalOffset"] * SHIP:UP:VECTOR.
+	SET longVD:VEC   TO   rangeData["long"]["northOffset"] * northVector +   rangeData["long"]["eastOffset"] * east -   rangeData["long"]["verticalOffset"] * SHIP:UP:VECTOR.
+	SET mediumVD:VEC TO rangeData["medium"]["northOffset"] * northVector + rangeData["medium"]["eastOffset"] * east - rangeData["medium"]["verticalOffset"] * SHIP:UP:VECTOR.
+	SET shortVD:VEC  TO  rangeData["short"]["northOffset"] * northVector +  rangeData["short"]["eastOffset"] * east -  rangeData["short"]["verticalOffset"] * SHIP:UP:VECTOR.
 	SET velocityVecDraw:VEC TO MIN(10,VELOCITY:SURFACE:MAG) * VELOCITY:SURFACE:NORMALIZED.
 
 	PRINT "Long Range    " AT(40, 10).
@@ -174,7 +174,7 @@ UNTIL AG1 {
 		PRINT "Ground Speed = " + distanceToString(SHIP:GROUNDSPEED, 3) + "/s     " AT (0, 4).
 		PRINT "Slope of Ground " + ROUND(downSlopeInfo["slope"], 2) + " deg    " AT (0, 5).
 		PRINT "Slope of Ground " + distanceToString(TAN(downSlopeInfo["slope"]) * 100, 1) + "/100 m     " AT (0, 6).
-		PRINT "Ground Slope Heading = " + ROUND(downSlopeInfo["heading"], 2) + " deg from North     " AT (0, 7).
+		PRINT "Ground Slope Heading = " + ROUND(downSlopeInfo["heading"], 2) + " deg from northVector     " AT (0, 7).
 		PRINT "High Direction Speed " + distanceToString(highDirectionSpeed, 2) + "/s      " AT (0, 8).
 		PRINT "Throttle at " + ROUND(THROTTLE * 100) + "%    " AT (0, 10).
 	  PRINT "H_PID at " + ROUND(H_PID:OUTPUT, 2) + " deg from vertical    " AT (0, 11).
@@ -244,18 +244,18 @@ UNTIL AG1 {
 //	ELSE IF rangeData["medium"]["terrainHeight"] > rangeData["short"]["terrainHeight"] SET H_PID:SETPOINT TO 10.0.
 //	ELSE SET H_PID:SETPOINT TO 5.0.
 
-	IF rangeData["long"]["northOffset"] <> 0 AND rangeData["long"]["northOffset"] <> 0 SET desiredHeading TO yaw_for(rangeData["long"]["northOffset"] * NORTH + rangeData["long"]["eastOffset"] * east).
-	ELSE 																																							 SET desiredHeading TO yaw_for(rangeData["medium"]["northOffset"] * NORTH + rangeData["medium"]["eastOffset"] * east).
+	IF rangeData["long"]["northOffset"] <> 0 AND rangeData["long"]["northOffset"] <> 0 SET desiredHeading TO yaw_for(rangeData["long"]["northOffset"] * northVector + rangeData["long"]["eastOffset"] * east).
+	ELSE 																																							 SET desiredHeading TO yaw_for(rangeData["medium"]["northOffset"] * northVector + rangeData["medium"]["eastOffset"] * east).
   SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 	SET headingSteeringAdjust TO -2 * ABS(angleDifference(desiredHeading, yaw_for(VELOCITY:SURFACE))).
 	IF H_PID:INPUT < 0 SET headingSteeringAdjust TO -headingSteeringAdjust.
 	IF headingSteeringAdjust > 30 SET headingSteeringAdjust TO 30.
 	IF headingSteeringAdjust < 30 SET headingSteeringAdjust TO -30.
   SET globalSteer TO HEADING (desiredHeading + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, highDirectionSpeed)).
-	PRINT "desiredHeading at " + ROUND(desiredHeading, 2) + " deg from north    " AT (0, 12).
-	PRINT "Surface Velocity heading at " + ROUND(yaw_for(VELOCITY:SURFACE), 2) + " deg from north     " AT (0, 13).
+	PRINT "desiredHeading at " + ROUND(desiredHeading, 2) + " deg from northVector    " AT (0, 12).
+	PRINT "Surface Velocity heading at " + ROUND(yaw_for(VELOCITY:SURFACE), 2) + " deg from northVector     " AT (0, 13).
 	PRINT "headingSteeringAdjust at " + ROUND(headingSteeringAdjust, 2) + " deg    " AT (0, 14).
-	PRINT "globalSteer at " + ROUND(globalSteer:YAW, 2) + " deg from north    " AT (0, 15).
+	PRINT "globalSteer at " + ROUND(globalSteer:YAW, 2) + " deg from northVector    " AT (0, 15).
 	PRINT "Horizontal Speed SP " + distanceToString(H_PID:SETPOINT, 2) + "/s     " AT (0, 16).
 	PRINT "Item 1 " + ROUND(angleDifference(desiredHeading, yaw_for(VELOCITY:SURFACE))) + " degrees difference    " AT (0, 17).
 
