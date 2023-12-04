@@ -44,7 +44,11 @@ FUNCTION updateScreen {
 	PRINT connectionToKSC():TOSTRING:PADLEFT(5) AT (25, 0).
 	PRINT runLocal:TOSTRING:PADLEFT(5) AT (25, 1).
 	PRINT loopMode:PADLEFT(10) AT (20, 2).
-  PRINT ROUND(shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"], 0):TOSTRING:PADLEFT(5) AT (25, 3).
+  IF (shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"] <> 0) {
+    PRINT ROUND(shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"], 0):TOSTRING:PADLEFT(5) AT (25, 3).
+  } ELSE {
+    PRINT ROUND(shipInfo["Stage 0"]["DeltaVRCS"], 0):TOSTRING:PADLEFT(5) AT (25, 3).
+  }
 
 	PRINT ROUND(SHIP:ORBIT:INCLINATION, 3):TOSTRING:PADLEFT(8) AT (4, 5).
 	IF SHIP:ORBIT:SEMIMAJORAXIS > 0 PRINT timeToString(SHIP:ORBIT:PERIOD, 0):PADLEFT(12) AT (4, 6).
@@ -81,8 +85,8 @@ FUNCTION updateScreen {
 		FOR eachResource IN SHIP:RESOURCES {
 			linesToPrint:ADD(eachResource:NAME:PADLEFT(15) +
 						ROUND(resourceList[eachResource:NAME]["Quantity"], 3):TOSTRING:PADLEFT(11) +
-						(ROUND(resourceList[eachResource:NAME]["Mass"], 3)):PADLEFT(16) +
-						(ROUND(resourceList[eachResource:NAME]["Quantity Use"], 4)):PADLEFT(21)).
+						(ROUND(resourceList[eachResource:NAME]["Mass"], 3)):TOSTRING:PADLEFT(16) +
+						(ROUND(resourceList[eachResource:NAME]["Quantity Use"], 4)):TOSTRING:PADLEFT(21)).
 			SET index TO index + 1.
 		}
 	} ELSE IF loopMode = "Orbit" OR loopMode = "targetorbit" {
@@ -91,9 +95,6 @@ FUNCTION updateScreen {
 		linesToPrint:ADD("Name " + localOrbit:NAME).
 		linesToPrint:ADD("Apoapsis " + distanceToString(localOrbit:APOAPSIS, 4)).
 		linesToPrint:ADD("Periapsis " + distanceToString(localOrbit:PERIAPSIS, 4)).
-		linesToPrint:ADD("Orbited Body " + localOrbit:BODY:NAME).
-		linesToPrint:ADD("Orbited Body MU " + BODY:MU + " m^3/s^2").
-		linesToPrint:ADD("Orbited Body Radius " + distanceToString(BODY:Radius, 4)).
 		linesToPrint:ADD("Period " + timeToString(localOrbit:PERIOD, 4)).
 		linesToPrint:ADD("Period " + localOrbit:PERIOD + " s").
 		linesToPrint:ADD("Inclination " + ROUND(localOrbit:INCLINATION, 4) + " deg").
@@ -115,6 +116,10 @@ FUNCTION updateScreen {
 		IF localOrbit:HASNEXTPATCH {
 		  linesToPrint:ADD("Next Patch ETA " + timeToString(localOrbit:NEXTPATCHETA)).
 		}
+  } ELSE IF loopMode = "Body" {
+    linesToPrint:ADD("Orbited Body " + SHIP:ORBIT:BODY:NAME).
+    linesToPrint:ADD("Orbited Body MU " + SHIP:ORBIT:BODY:MU + " m^3/s^2").
+    linesToPrint:ADD("Orbited Body Radius " + distanceToString(SHIP:ORBIT:BODY:Radius, 4)).
 	} ELSE IF loopMode = "Processor" OR loopMode = "kOS" {
     LOCAL names IS "".
     LOCAL capacities IS "".
@@ -163,24 +168,24 @@ FUNCTION updateScreen {
             eachRCS:TOPENABLED:TOSTRING:PADLEFT(7) +
             ROUND(eachRCS:ISP, 0):TOSTRING:PADLEFT(7)).
     }
-    } ELSE IF loopMode = "engines" {
-      linesToPrint:ADD("Engine       Thrust  ISP  M Dot    Ign    Gimbal   Min Throttle Stab").
-      linesToPrint:ADD("Name         Newton    s   kg/s              Deg              %").
-      FOR eachEngine IN shipInfo["CurrentStage"]["Engines"] {
-        linesToPrint:ADD(
-          (CHOOSE eachEngine:TITLE:PADRIGHT(13) IF eachEngine:TITLE:FIND(" ") = -1 ELSE eachEngine:TITLE:SUBSTRING(0, eachEngine:TITLE:FIND(" ")):PADRIGHT(13)) +
-          ROUND(eachEngine:MAXTHRUST * 1000):TOSTRING:PADLEFT(6) +
-          ROUND(eachEngine:ISP):TOSTRING:PADLEFT(5) +
-          ROUND(eachEngine:MAXMASSFLOW * 1000):TOSTRING:PADLEFT(7) +
-          eachEngine:IGNITIONS:TOSTRING:PADLEFT(7) +
-          (CHOOSE ("0":PADLEFT(10)) IF NOT eachEngine:HASGIMBAL ELSE eachEngine:GIMBAL:RANGE:TOSTRING:PADLEFT(10)) +
-          (eachEngine:MINTHROTTLE*100):TOSTRING:PADLEFT(15) +
-          ROUND(eachEngine:FUELSTABILITY * 100):TOSTRING:PADLEFT(5)).
-      }
-    } ELSE IF loopMode = "Universe" {
-      linesToPrint:ADD("Stock Rockets: " + isStockRockets()).
-      linesToPrint:ADD("Stock World: " + isStockWorld()).
+  } ELSE IF loopMode = "engines" {
+    linesToPrint:ADD("Engine       Thrust  ISP  M Dot    Ign    Gimbal   Min Throttle Stab").
+    linesToPrint:ADD("Name         Newton    s   kg/s              Deg              %").
+    FOR eachEngine IN shipInfo["CurrentStage"]["Engines"] {
+      linesToPrint:ADD(
+        (CHOOSE eachEngine:TITLE:PADRIGHT(13) IF eachEngine:TITLE:FIND(" ") = -1 ELSE eachEngine:TITLE:SUBSTRING(0, eachEngine:TITLE:FIND(" ")):PADRIGHT(13)) +
+        ROUND(eachEngine:MAXTHRUST * 1000):TOSTRING:PADLEFT(6) +
+        ROUND(eachEngine:ISP):TOSTRING:PADLEFT(5) +
+        ROUND(eachEngine:MAXMASSFLOW * 1000):TOSTRING:PADLEFT(7) +
+        eachEngine:IGNITIONS:TOSTRING:PADLEFT(7) +
+        (CHOOSE ("0":PADLEFT(10)) IF NOT eachEngine:HASGIMBAL ELSE eachEngine:GIMBAL:RANGE:TOSTRING:PADLEFT(10)) +
+        (eachEngine:MINTHROTTLE*100):TOSTRING:PADLEFT(15) +
+        ROUND(eachEngine:FUELSTABILITY * 100):TOSTRING:PADLEFT(5)).
     }
+  } ELSE IF loopMode = "Universe" OR loopMode = "World" {
+    linesToPrint:ADD("Stock Rockets: " + isStockRockets()).
+    linesToPrint:ADD("Stock World: " + isStockWorld()).
+  }
   printLines(linesToPrint, 13).
 
 	SET timeDelta TO TIME:SECONDS - oldTime.
