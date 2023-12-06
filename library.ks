@@ -1774,7 +1774,11 @@ FUNCTION isLFFullThrust {
 	// This function returns the status of the currently active engines.
 	// If the currently active engines are at greater than 85% of available
 	// thrust, this function returns TRUE, otherwise FALSE.
+	// 85% was chosen because with a TWR of 1.2, 85% of thrust is a TWR of 1.0.
 	PARAMETER unclampPercent IS 0.85.
+
+	// If the maximum variable thrust is zero, return TRUE, as there are no LF engines.
+	IF shipInfo["Maximum"]["Variable"]["Accel"] = 0 RETURN TRUE.
 
 	LOCAL totalThrust IS 0.0.
 	LOCAL currentThrust IS 0.0.
