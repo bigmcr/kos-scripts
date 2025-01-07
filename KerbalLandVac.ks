@@ -53,22 +53,19 @@ LOCAL pitchValue IS 0.
 LOCAL headingValue IS 90.
 LOCAL startTime IS 0.
 LOCAL startPosition IS SHIP:GEOPOSITION.
-LOCAL groundSlope TO 0.
-LOCAL groundSlopeHeading TO 0.
 LOCAL headerCreated IS FALSE.
 LOCAL downslopeDirectionVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Direction" , 1.0, FALSE, 0.2).
 LOCAL downslopeSpeedVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), RED, "Down Speed", 1.0, FALSE, 0.2).
 LOCAL sideSpeedVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), GREEN, "Side Speed", 1.0, FALSE, 0.2).
 LOCAL gravityAccel TO 0.
 LOCAL effectiveAccel TO 0.
-LOCAL downSlopeInfo IS LEXICON().
-LOCAL downSlopeVector IS V(0,0,0).
+LOCAL slopeInfo IS LEXICON().
 LOCAL downslopeDirection IS 0.
 LOCAL sideDirection IS 0.
 LOCAL downslopeSpeed IS 0.
 LOCAL sideSpeed IS 0.
 LOCAL headingSteeringAdjust IS 0.
-LOCAL minPitch IS 70.
+LOCAL minPitch IS 85.
 
 AG1 OFF.
 
@@ -78,18 +75,15 @@ LOCAL downslopeDirectionVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Down Slope
 UNTIL mode > 5 {
 	PRINT "Mode " + mode AT (40, 0).
 	SET aboveGround TO heightAboveGround().
-	SET downSlopeInfo TO findDownSlopeInfo().
-	SET groundSlope TO downSlopeInfo["slope"].
-	SET groundSlopeHeading TO downSlopeInfo["heading"].
-	SET downSlopeVector TO downSlopeInfo["Vector"].
-	SET downslopeDirection TO HEADING(groundSlopeHeading +  0, 0):VECTOR:NORMALIZED.
-	SET sideDirection      TO HEADING(groundSlopeHeading + 90, 0):VECTOR:NORMALIZED.
+	SET slopeInfo TO findDownSlopeInfo().
+	SET downslopeDirection TO HEADING(slopeInfo["heading"] +  0, 0):VECTOR:NORMALIZED.
+	SET sideDirection      TO HEADING(slopeInfo["heading"] + 90, 0):VECTOR:NORMALIZED.
 	SET downslopeSpeed  TO VELOCITY:SURFACE * downslopeDirection.
 	SET sideSpeed       TO VELOCITY:SURFACE * sideDirection.
 	SET velocityPitch   TO pitch_for(-VELOCITY:SURFACE).
 
-	SET downslopeVecDraw:VEC TO 10*downSlopeVector.
-	SET downslopeDirectionVecDraw:VEC TO 10*SHIP:NORTH:VECTOR * ANGLEAXIS(groundSlopeHeading, UP:VECTOR).
+	SET downslopeVecDraw:VEC TO 10*slopeInfo["Vector"].
+	SET downslopeDirectionVecDraw:VEC TO 10*SHIP:NORTH:VECTOR * ANGLEAXIS(slopeInfo["heading"], UP:VECTOR).
 
 	IF (TIME:SECONDS <> oldTime) {
 		SET hAccel TO (GROUNDSPEED - oldHSpeed)/(TIME:SECONDS - oldTime).
@@ -102,9 +96,9 @@ UNTIL mode > 5 {
 		PRINT "Vertical Speed " + distanceToString(VERTICALSPEED, 2) + "/s    " AT (0, 2).
 		PRINT "Vertical Acceleration " + distanceToString(vAccel, 2) + "/s^2    " AT (0, 3).
 		PRINT "Ground Speed = " + distanceToString(SHIP:GROUNDSPEED, 3) + "/s     " AT (0, 4).
-		PRINT "Slope of Ground " + ROUND(groundSlope, 2) + " deg    " AT (0, 5).
-		PRINT "Slope of Ground " + distanceToString(TAN(groundSlope) * 100, 1) + "/100 m     " AT (0, 6).
-		PRINT "Ground Slope Heading = " + ROUND(groundSlopeHeading, 2) + " deg from North     " AT (0, 7).
+		PRINT "Slope of Ground " + ROUND(slopeInfo["slope"], 2) + " deg    " AT (0, 5).
+		PRINT "Slope of Ground " + distanceToString(TAN(slopeInfo["slope"]) * 100, 1) + "/100 m     " AT (0, 6).
+		PRINT "Ground Slope Heading = " + ROUND(slopeInfo["heading"], 2) + " deg from North     " AT (0, 7).
 		PRINT "Down-Slope Speed " + distanceToString(downslopeSpeed, 2) + "/s      " AT (0, 8).
 		PRINT "Side-Slope Speed " + distanceToString(sideSpeed, 2) + "/s      " AT (0, 9).
 		PRINT "Throttle at " + ROUND(THROTTLE * 100) + "%    " AT (0, 10).
@@ -113,6 +107,7 @@ UNTIL mode > 5 {
 		IF connectionToKSC() {
 			LOCAL message IS "".
 			IF NOT headerCreated {
+				DELETEPATH("0:EqualTime.csv").
 				SET headerCreated TO TRUE.
 				SET message TO "Mission Time,".
 				SET message TO message + "Horizontal Distance,".
@@ -148,8 +143,8 @@ UNTIL mode > 5 {
 			SET message TO message + "," + downslopeSpeed.
 			SET message TO message + "," + sideSpeed.
 			SET message TO message + "," + aboveGround.
-			SET message TO message + "," + groundSlope.
-			SET message TO message + "," + groundSlopeHeading.
+			SET message TO message + "," + slopeInfo["slope"].
+			SET message TO message + "," + slopeInfo["heading"].
 			SET message TO message + "," + T_PID:SETPOINT.
 			SET message TO message + "," + T_PID:OUTPUT.
 			SET message TO message + "," + H_PID:OUTPUT.
@@ -190,55 +185,48 @@ UNTIL mode > 5 {
 		IF GROUNDSPEED < 0.1 SET globalSteer TO HEADING (0, 90).
 		ELSE SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(70, velocityPitch)).
 	}
-	// Mode 3 - Maintain height above ground with 10 m/s horizontal speed in the direction of downslope until slope is less than 5.0 degrees
+	// Mode 3 - Maintain height above ground with 5 m/s horizontal speed in the direction of downslope until slope is less than 5.0 degrees
 	// Note that the steering is limited to a pitch of 85 degrees at minimum. This limits the remaining horizontal velocity
 	IF mode = 3 {
 		PRINT "VSpeed SP = " + ROUND(T_PID:SETPOINT, 2) + "    " AT (40, 1).
-		PRINT "Slope = " + ROUND(groundSlope, 2) + "     " AT (40, 2).
+		PRINT "Slope = " + ROUND(slopeInfo["slope"], 2) + " deg" AT (40, 2).
 		PRINT "               " AT (40, 3).
 		PRINT "Slope < 5.0    " AT (40, 4).
-		IF aboveGround < 1000 SET T_PID:SETPOINT TO 10.0.
-		ELSE IF aboveGround > 1250 SET T_PID:SETPOINT TO -10.0.
-		ELSE SET T_PID:SETPOINT TO 0.
-		SET H_PID:SETPOINT TO 10.0.
+		SET T_PID:SETPOINT TO (112.5 - aboveGround) / 12.5.
+		SET H_PID:SETPOINT TO 5.0.
 
-	  SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		IF H_PID:OUTPUT < 0 SET headingSteeringAdjust TO - 2 * sideSpeed.
+		SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
+		IF H_PID:OUTPUT < 0 SET headingSteeringAdjust TO -2 * sideSpeed.
 		ELSE SET headingSteeringAdjust TO 2 * sideSpeed.
 		IF headingSteeringAdjust > 30 SET headingSteeringAdjust TO 30.
 		IF headingSteeringAdjust < 30 SET headingSteeringAdjust TO -30.
-	  SET globalSteer TO HEADING (groundSlopeHeading + headingSteeringAdjust + 180, 90 - H_PID:UPDATE(TIME:SECONDS, downslopeSpeed)).
+		IF angleDifference(yaw_for(SHIP:VELOCITY:SURFACE), slopeInfo["Heading"]) > 30
+			SET globalSteer TO HEADING(yaw_for(SHIP:VELOCITY:SURFACE), minPitch).
+		ELSE
+			SET globalSteer TO HEADING (slopeInfo["Heading"] + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, downSlopeSpeed)).
 
 		SET downslopeDirectionVecDraw:SHOW TO TRUE.
 		SET downslopeSpeedVecDraw:SHOW TO TRUE.
 		SET sideSpeedVecDraw:SHOW TO TRUE.
-	  SET downslopeDirectionVecDraw:VEC TO 10*HEADING(groundSlopeHeading, 0):VECTOR.
+	  SET downslopeDirectionVecDraw:VEC TO 10*HEADING(slopeInfo["heading"], 0):VECTOR.
 	  SET downslopeSpeedVecDraw:VEC TO MIN(10, ABS(downslopeSpeed))*downslopeDirection.
 	  SET sideSpeedVecDraw:VEC TO MIN(10, ABS(sideSpeed))*sideDirection.
 
-		IF (aboveGround < 500 OR groundSlope < 0.0 OR AG1) advanceMode().
+		IF (aboveGround < 50 OR slopeInfo["slope"] < 5.0) advanceMode().
 	}
 	// Mode 4 - Maintain Vertical Speed at setpoint until height above ground is less than 2 meters
-	// Note that the steering is limited in patch based on height above ground. This cancels the last horizontal velocity
+	// Note that the steering is limited in pitch based on height above ground. This cancels the last horizontal velocity
 	IF mode = 4 {
 		PRINT "AGL = " + ROUND(aboveGround) + "        " AT (40, 1).
-		PRINT "Slope = " + ROUND(groundSlope,2) + "     " AT (40, 2).
+		PRINT "Slope = " + ROUND(slopeInfo["slope"],2) + "     " AT (40, 2).
 		PRINT "minPitch = " + minPitch + "     " AT (40, 3).
 		PRINT "AGL < 5        " AT (40, 4).
-		IF (aboveGround > 1000) {SET T_PID:SETPOINT TO -20. SET minPitch TO 45.}
-		ELSE IF (aboveGround > 50) {SET T_PID:SETPOINT TO -10. SET minPitch TO 70.}
-		ELSE IF (aboveGround > 25) {SET T_PID:SETPOINT TO -1. SET KUNIVERSE:TIMEWARP:WARP TO 0. SET minPitch TO 85.}
-		ELSE IF (aboveGround < 2) {advanceMode().}
+		SET T_PID:SETPOINT TO MIN(-2, MIN(-aboveGround/25.0, (25 - aboveGround) / 12.5)).
 		SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		IF cancelHoriz AND GROUNDSPEED < 0.25 SET cancelHoriz TO FALSE.
-		IF NOT cancelHoriz AND GROUNDSPEED > 0.5 SET cancelHoriz TO TRUE.
-		IF NOT cancelHoriz SET globalSteer TO HEADING (0, 90).
-		ELSE SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, velocityPitch)).
+		SET globalSteer TO HEADING(yaw_for(-VELOCITY:SURFACE), MAX(minPitch, pitch_for(-VELOCITY:SURFACE))).
+		IF (aboveGround < 2) advanceMode().
 		GEAR ON.
 		LIGHTS ON.
-		SET downslopeDirectionVecDraw:SHOW TO FALSE.
-		SET downslopeSpeedVecDraw:SHOW TO FALSE.
-		SET sideSpeedVecDraw:SHOW TO FALSE.
 	}
 	// Mode 5 - Vertical Drop to the ground - use RCS for stabilization
 	IF mode = 5 {
@@ -251,7 +239,7 @@ UNTIL mode > 5 {
 		PRINT "SrfSpd " + ROUND(VELOCITY:SURFACE:MAG, 3) + "     " AT (40, 3).
 		PRINT "SrfSpd < 0.5     " AT (40, 4).
 		SET globalThrottle TO 0.
-		SET globalSteer TO SHIP:UP.
+		SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), MAX(minPitch, pitch_for(-VELOCITY:SURFACE))).
 		IF (TIME:SECONDS > startTime + 5) AND (VELOCITY:SURFACE:MAG < 0.5) advanceMode().
 	}
 	WAIT 0.

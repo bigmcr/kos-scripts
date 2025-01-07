@@ -494,6 +494,11 @@ FUNCTION createCommandList {
 		RETURN "stageInfo - incorrect arguments".
 		})).
 
+	possibleCommands:ADD("worldInfo", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
+		logWorldInfo().
+		RETURN "Logged world info".
+		})).
+
 	possibleCommands:ADD("logActions", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {logAllActions(). RETURN "Action file created!".})).
 	possibleCommands:ADD("log actions", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {RETURN possibleCommands["logActions"]["Delegate"]().})).
 	possibleCommands:ADD("actions", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {RETURN possibleCommands["logActions"]["Delegate"]().})).
@@ -556,3 +561,20 @@ FUNCTION createCommandList {
 	RETURN possibleCommands.
 }
 PRINT "Loop Commands Run!".
+
+
+FUNCTION logWorldInfo {
+		LOCAL message IS "".
+		LOCAL fileName IS "BodyInfo.csv".
+		IF connectionToKSC() SET fileName TO "0:" + fileName.
+		IF EXISTS(fileName) DELETEPATH(fileName).
+		SET message TO message + "Body Name," + SHIP:BODY:NAME + "" + CHAR(10).
+		SET message TO message + "Body Description," + SHIP:BODY:DESCRIPTION + "" + CHAR(10).
+		SET message TO message + "Body Mass," + SHIP:BODY:MASS*1000 + ",kg" + CHAR(10).
+		SET message TO message + "Body Rotation Period," + SHIP:BODY:ROTATIONPERIOD + ",s" + CHAR(10).
+		SET message TO message + "Body Radius," + SHIP:BODY:RADIUS + ",m" + CHAR(10).
+		SET message TO message + "Body MU," + SHIP:BODY:MU + ",m^3/s^2" + CHAR(10).
+		SET message TO message + "Body SOI Radius," + SHIP:BODY:SOIRADIUS + ",m" + CHAR(10).
+		SET message TO message + "Body Current Distance," + SHIP:BODY:POSITION:MAG + ",m" + CHAR(10).
+		LOG message TO fileName.
+}

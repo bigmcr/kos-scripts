@@ -1,6 +1,6 @@
 @LAZYGLOBAL OFF.
 
-PARAMETER desiredHeight IS 1000.
+PARAMETER desiredHeight IS heightAboveGround().
 PARAMETER maxVelocity IS 50.
 
 SET maxVelocity TO ABS(maxVelocity).
@@ -40,6 +40,10 @@ ON AG1 {
 ON AG2 {
   SET X_PID:SETPOINT TO X_PID:SETPOINT - 10.
   RETURN TRUE.
+}
+
+ON AG9 {
+  SET done TO TRUE.
 }
 
 UNTIL done {
@@ -84,6 +88,8 @@ UNTIL done {
   PRINT "Vertical Velocity SP = " + distanceToString(V_PID:SETPOINT, 3) + "/s     " AT (0, 4).
   PRINT "Throttle at " + ROUND(THROTTLE * 100, 2) + "%    " AT (0, 5).
   PRINT "Groundspeed = " + distanceToString(GROUNDSPEED, 2) + "/s     " AT (0, 6).
+  IF cancelHoriz PRINT "Cancelling horizontal velocity    " AT (0, 7).
+  ELSE           PRINT "Not cancelling horizontal velocity" AT (0, 7).
   SET V_PID:SETPOINT TO X_PID:UPDATE(TIME:SECONDS, aboveGround).
   SET globalThrottle TO V_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 

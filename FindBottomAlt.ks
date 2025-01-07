@@ -13,7 +13,7 @@ FUNCTION findLowestSpot {
 		ELSE SET eastInterval TO 2 * params["distance"].
 		FOR eastOffset IN RANGE (-params["distance"], params["distance"] + 1, eastInterval) {
 			SET testTerrainHeight TO SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + northOffset * northVector + eastOffset * east):TERRAINHEIGHT.
-//			PRINT "(N, E) = (" + ROUND(northOffset) + "," + ROUND(eastOffset) + ")".
+			PRINT "(N, E) = (" + ROUND(northOffset) + "," + ROUND(eastOffset) + ")".
 			IF testTerrainHeight > params["terrainHeight"] {
 				SET params["terrainHeight"] TO testTerrainHeight.
 				SET params["northOffset"] TO northOffset.
@@ -56,8 +56,6 @@ WHEN MAXTHRUST = 0 THEN {
 	PRINT "Staging from max thrust".
 	stageFunction().
 }
-
-SET globalThrottle TO 1.
 
 LOCAL pitchValue IS 0.
 LOCAL headingValue IS 90.
@@ -106,21 +104,21 @@ LOCAL mediumVD IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Medium Distance", 1.0, TRUE
 LOCAL shortVD IS VECDRAW(V(0,0,0), V(0,0,0), RED, "Short Distance", 1.0, TRUE, 0.2).
 LOCAL desiredHeading IS 0.
 LOCAL east IS east_for(SHIP).
-LOCAL northVector IS northVector:VECTOR.
+LOCAL northVector IS NORTH:VECTOR.
 
 LOCAL boundaryVDs IS LEXICON().
 boundaryVDs:ADD("long",LIST()).
-boundaryVDs["Long"]:ADD(VECDRAW( rangeData["long"]["distance"]*northVector + rangeData["long"]["distance"]*east, -2*rangeData["long"]["distance"]* east, YELLOW, "north", 1.0, TRUE, 0.2)).
+boundaryVDs["Long"]:ADD(VECDRAW( rangeData["long"]["distance"]*northVector + rangeData["long"]["distance"]*east, -2*rangeData["long"]["distance"]* east, YELLOW, "NORTH", 1.0, TRUE, 0.2)).
 boundaryVDs["Long"]:ADD(VECDRAW(-rangeData["long"]["distance"]*northVector + rangeData["long"]["distance"]*east,  2*rangeData["long"]["distance"]*northVector, YELLOW,  "EAST", 1.0, TRUE, 0.2)).
 boundaryVDs["Long"]:ADD(VECDRAW( rangeData["long"]["distance"]*northVector - rangeData["long"]["distance"]*east, -2*rangeData["long"]["distance"]*northVector, YELLOW,  "WEST", 1.0, TRUE, 0.2)).
 boundaryVDs["Long"]:ADD(VECDRAW(-rangeData["long"]["distance"]*northVector - rangeData["long"]["distance"]*east,  2*rangeData["long"]["distance"]* east, YELLOW, "SOUTH", 1.0, TRUE, 0.2)).
 boundaryVDs:ADD("medium",LIST()).
-boundaryVDs["medium"]:ADD(VECDRAW( rangeData["medium"]["distance"]*northVector + rangeData["medium"]["distance"]*east, -2*rangeData["medium"]["distance"]* east, BLUE, "north", 1.0, TRUE, 0.2)).
+boundaryVDs["medium"]:ADD(VECDRAW( rangeData["medium"]["distance"]*northVector + rangeData["medium"]["distance"]*east, -2*rangeData["medium"]["distance"]* east, BLUE, "NORTH", 1.0, TRUE, 0.2)).
 boundaryVDs["medium"]:ADD(VECDRAW(-rangeData["medium"]["distance"]*northVector + rangeData["medium"]["distance"]*east,  2*rangeData["medium"]["distance"]*northVector, BLUE,  "EAST", 1.0, TRUE, 0.2)).
 boundaryVDs["medium"]:ADD(VECDRAW( rangeData["medium"]["distance"]*northVector - rangeData["medium"]["distance"]*east, -2*rangeData["medium"]["distance"]*northVector, BLUE,  "WEST", 1.0, TRUE, 0.2)).
 boundaryVDs["medium"]:ADD(VECDRAW(-rangeData["medium"]["distance"]*northVector - rangeData["medium"]["distance"]*east,  2*rangeData["medium"]["distance"]* east, BLUE, "SOUTH", 1.0, TRUE, 0.2)).
 boundaryVDs:ADD("short",LIST()).
-boundaryVDs["short"]:ADD(VECDRAW( rangeData["short"]["distance"]*northVector + rangeData["short"]["distance"]*east, -2*rangeData["short"]["distance"]* east, RED, "north", 1.0, TRUE, 0.2)).
+boundaryVDs["short"]:ADD(VECDRAW( rangeData["short"]["distance"]*northVector + rangeData["short"]["distance"]*east, -2*rangeData["short"]["distance"]* east, RED, "NORTH", 1.0, TRUE, 0.2)).
 boundaryVDs["short"]:ADD(VECDRAW(-rangeData["short"]["distance"]*northVector + rangeData["short"]["distance"]*east,  2*rangeData["short"]["distance"]*northVector, RED,  "EAST", 1.0, TRUE, 0.2)).
 boundaryVDs["short"]:ADD(VECDRAW( rangeData["short"]["distance"]*northVector - rangeData["short"]["distance"]*east, -2*rangeData["short"]["distance"]*northVector, RED,  "WEST", 1.0, TRUE, 0.2)).
 boundaryVDs["short"]:ADD(VECDRAW(-rangeData["short"]["distance"]*northVector - rangeData["short"]["distance"]*east,  2*rangeData["short"]["distance"]* east, RED, "SOUTH", 1.0, TRUE, 0.2)).
@@ -145,18 +143,18 @@ UNTIL AG1 {
 	SET shortVD:VEC  TO  rangeData["short"]["northOffset"] * northVector +  rangeData["short"]["eastOffset"] * east -  rangeData["short"]["verticalOffset"] * SHIP:UP:VECTOR.
 	SET velocityVecDraw:VEC TO MIN(10,VELOCITY:SURFACE:MAG) * VELOCITY:SURFACE:NORMALIZED.
 
-	PRINT "Long Range    " AT(40, 10).
-	PRINT " North Offset " + ROUND(rangeData["long"]["northOffset"]) + "   " AT(40, 11).
-	PRINT "  East Offset " + ROUND(rangeData["long"]["eastOffset"]) + "   " AT(40, 12).
-	PRINT "       Height " + distanceToString(rangeData["long"]["terrainHeight"], 3) + "   " AT(40, 13).
-	PRINT "Medium Range  " AT(40, 14).
-	PRINT " North Offset " + ROUND(rangeData["medium"]["northOffset"]) + "   " AT(40, 15).
-	PRINT "  East Offset " + ROUND(rangeData["medium"]["eastOffset"]) + "   " AT(40, 16).
-	PRINT "       Height " + distanceToString(rangeData["medium"]["terrainHeight"], 3) + "   " AT(40, 17).
-	PRINT "Short Range   " AT(40, 18).
-	PRINT " North Offset " + ROUND(rangeData["short"]["northOffset"]) + "   " AT(40, 19).
-	PRINT "  East Offset " + ROUND(rangeData["short"]["eastOffset"]) + "   " AT(40, 20).
-	PRINT "       Height " + distanceToString(rangeData["short"]["terrainHeight"], 3) + "   " AT(40, 21).
+	PRINT "Long Range    " AT(0, 30).
+	PRINT " North Offset " + ROUND(rangeData["long"]["northOffset"]) + "   " AT(0, 31).
+	PRINT "  East Offset " + ROUND(rangeData["long"]["eastOffset"]) + "   " AT(0, 32).
+	PRINT "       Height " + distanceToString(rangeData["long"]["terrainHeight"] - ALTITUDE, 3) + "   " AT(0, 33).
+	PRINT "Medium Range  " AT(0, 34).
+	PRINT " North Offset " + ROUND(rangeData["medium"]["northOffset"]) + "   " AT(0, 35).
+	PRINT "  East Offset " + ROUND(rangeData["medium"]["eastOffset"]) + "   " AT(0, 36).
+	PRINT "       Height " + distanceToString(rangeData["medium"]["terrainHeight"] - ALTITUDE, 3) + "   " AT(0, 37).
+	PRINT "Short Range   " AT(0, 38).
+	PRINT " North Offset " + ROUND(rangeData["short"]["northOffset"]) + "   " AT(0, 39).
+	PRINT "  East Offset " + ROUND(rangeData["short"]["eastOffset"]) + "   " AT(0, 40).
+	PRINT "       Height " + distanceToString(rangeData["short"]["terrainHeight"] - ALTITUDE, 3) + "   " AT(0, 41).
 	PRINT "Mode " + mode AT (40, 0).
 
 	IF (TIME:SECONDS <> oldTime) {

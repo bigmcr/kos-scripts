@@ -2,7 +2,7 @@
 CLEARSCREEN.
 
 //SBbisectionSearch(0).
-LOCAL burnInfo IS SBSecantSearch(0).
+LOCAL burnInfo IS SBSecantSearch(10).
 
 updateShipInfo().
 
@@ -30,7 +30,10 @@ setLockedThrottle(FALSE).
 setLockedSteering(FALSE).
 SET loopMessage TO "Stopped " + distanceToString(heightAboveGround()) + " above ground".
 
+// find Universal Time of impact with the ground.
+// returns UT in seconds.
 FUNCTION findImpactUT {
+  // returns estimated height above ground of given ship at given time.
   FUNCTION absHeightAtUT {
     PARAMETER utToInspect.
     PARAMETER shipToInspect IS SHIP.
@@ -39,7 +42,7 @@ FUNCTION findImpactUT {
     RETURN ABS(positionOfShip:MAG - groundHeight).
   }
   // FUNCTION hillClimb(delegate, initialGuess, initialStepSize, logFile, iterationMax, smallestStepRatio, cyclicalPeriod, cyclicalPeriodCutoff, deleteOldLogFile).
-  RETURN hillClimb(absHeightAtUT@, TIME:SECONDS + 60, 64, "0:hillClimbGround.csv", 100, 10).
+  RETURN hillClimb(absHeightAtUT@, TIME:SECONDS + 60, 64, "", 100, 20)["finalGuess"].
 }
 
 FUNCTION SBSecantSearch {
@@ -50,7 +53,7 @@ FUNCTION SBSecantSearch {
   LOCAL startTime IS TIME:SECONDS.
   IF EXISTS("0:RK4Search.csv") DELETEPATH("0:RK4Search.csv").
   LOG "Type,Time,iterations,x_n,x_n-1,x_n-2,f(x_n),f(x_n-1),f(x_n-2),Thrust,Mass Flow,Radius,Current Accel,Current Position,Current Velocity,Normalized Accel,Burn Time,Delta V" TO "0:RK4Search.csv".
-  LOCAL estimatedBurnStartTime IS findImpactUT()["finalGuess"] - VELOCITY:SURFACE:MAG/shipInfo["Maximum"]["Accel"].
+  LOCAL estimatedBurnStartTime IS findImpactUT() - VELOCITY:SURFACE:MAG/shipInfo["Maximum"]["Accel"].
   LOCAL x_n_minus_2 IS estimatedBurnStartTime - 60.
   LOCAL f_x_n_minus_2 IS simulateSuicideBurnRK(x_n_minus_2, coarseTime, marginDistance, TRUE).
   LOCAL x_n_minus_1 IS estimatedBurnStartTime - 30.

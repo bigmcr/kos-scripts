@@ -65,7 +65,7 @@ IF SHIP:BODY:ATM:EXISTS {
 LOCAL modeStartYaw TO launchAzimuth.
 
 IF connectionToKSC() AND EXISTS("0:precisionCalcs.csv") DELETEPATH("0:precisionCalcs.csv").
-IF connectionToKSC() LOG "Time,Mode,Stage,Mass (kg),Ship Facing Pitch (deg),Prograde Pitch (deg),Pitch Setpoint (deg),Horizontal Speed (m/s),Altitude (m),Current Accel (m/s^2),Centripital Accel (m/s^2),Local g (m/s^2),Vertical Accel Req'd (m/s^2),Max Allowed Accel (m/s^2),Required Pitch (deg),Predicted Accel (m/s^2),Predicted Velocity (m/s),Predicted Position (m),Vertical Speed (m/s),Throttle,Raw Ship Accel (m/s^2),Current Constant Accel (m/s^2),Max Variable Accel (m/s^2)" TO "0:precisionCalcs.csv".
+IF connectionToKSC() LOG "Time,Mode,Stage,Mass (kg),Ship Facing Pitch (deg),Prograde Pitch (deg),Pitch Setpoint (deg),Horizontal Speed (m/s),Altitude (m),Current Accel (m/s^2),Centripital Accel (m/s^2),Local g (m/s^2),Vertical Accel Req'd (m/s^2),Max Allowed Accel (m/s^2),Required Pitch (deg),Predicted Accel (m/s^2),Predicted Velocity (m/s),Predicted Position (m),Vertical Speed (m/s),Throttle,Raw Ship Accel (m/s^2),Max Variable Accel (m/s^2)" TO "0:precisionCalcs.csv".
 
 // whenever the mode changes, initialize things for the new mode.
 ON mode {
@@ -180,7 +180,6 @@ UNTIL mode > 3 {
 													 VERTICALSPEED + "," +
 													 THROTTLE + "," +
 													 (SHIP:THRUST / SHIP:MASS) + "," +
-													 shipInfo["Current"]["Constant"]["Accel"]  + "," +
 													 shipInfo["Maximum"]["Variable"]["Accel"] TO "0:precisionCalcs.csv".
 	engineInfo(0, 20, TRUE).
 	// Prelaunch - stage the LF engines

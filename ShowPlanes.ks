@@ -7,7 +7,7 @@ LOCAL vecDraws IS LEXICON().
 LOCAL startedWithTarget IS HASTARGET.
 LOCAL done IS FALSE.
 LOCAL vecDrawWidth IS 0.1.
-LOCAL arrowsInPlane IS 8.
+LOCAL arrowsInPlane IS 16.
 IF NOT SHIP:BODY:HASBODY SET showEcliptic TO FALSE.
 
 MAPVIEW ON.
@@ -21,6 +21,31 @@ ON AG2 {
 	RETURN TRUE.
 }
 
+LOCAL orbits IS LIST().
+LOCAL targetOrbit IS 0.
+IF HASTARGET {
+	SET targetOrbit TO TARGET:ORBIT.
+	UNTIL NOT targetOrbit:HASNEXTPATCH {
+	  orbits:ADD(targetOrbit).
+	  SET targetOrbit TO targetOrbit:NEXTPATCH.
+	}
+	orbits:ADD(targetOrbit).
+}
+LOCAL finalTargetOrbit IS 0.
+LOCAL previousTargetOrbit IS 0.
+FOR eachOrbit IN orbits {
+  IF eachOrbit:HASNEXTPATCH AND eachOrbit:NEXTPATCH:BODY:NAME = SHIP:BODY:NAME {
+    SET previousTargetOrbit TO eachOrbit.
+  }
+  IF eachOrbit:BODY:NAME = SHIP:BODY:NAME {
+    SET finalTargetOrbit TO eachOrbit.
+  }
+}
+LOCAL targetPositionTime IS TIME:SECONDS.
+IF HASTARGET AND (TARGET:BODY:NAME <> SHIP:BODY:NAME) {
+	SET targetPositionTime TO (finalTargetOrbit:NEXTPATCHETA + previousTargetOrbit:NEXTPATCHETA)/2.
+} ELSE SET targetPositionTime TO TIME:SECONDS.
+
 LOCAL radius IS (SHIP:BODY:RADIUS + SHIP:BODY:ATM:HEIGHT) * radiusMultiplier.
 
 LOCAL northV IS NORTH:VECTOR.
@@ -30,9 +55,9 @@ LOCAL targetLANVector TO V(0,0,0).
 LOCAL targetNormVector TO V(0,0,0).
 LOCAL targetPeriVector TO V(0,0,0).
 IF startedWithTarget {
-	SET targetLANVector TO (SOLARPRIMEVECTOR * ANGLEAXIS(-TARGET:ORBIT:LAN, northV)):NORMALIZED.
-	SET targetNormVector TO VCRS(TARGET:VELOCITY:ORBIT, TARGET:POSITION - bodyPos):NORMALIZED.
-	SET targetPeriVector TO (targetLANVector * ANGLEAXIS(-TARGET:ORBIT:ARGUMENTOFPERIAPSIS, targetNormVector)):NORMALIZED.
+	SET targetLANVector TO (SOLARPRIMEVECTOR * ANGLEAXIS(-finalTargetOrbit:LAN, northV)):NORMALIZED.
+	SET targetNormVector TO VCRS(TARGET:VELOCITY:ORBIT, POSITIONAT(TARGET, targetPositionTime) - bodyPos):NORMALIZED.
+	SET targetPeriVector TO (targetLANVector * ANGLEAXIS(-finalTargetOrbit:ARGUMENTOFPERIAPSIS, targetNormVector)):NORMALIZED.
 }
 
 LOCAL eclipticNormVector TO V(0, 0, 0).
@@ -46,9 +71,9 @@ IF startedWithTarget {
 	//                            start,            vec,      color, label,        scale, show, width, pointy
 	vecDraws:ADD("Target", 				VECDRAW(V(0,0,0), V(0,0,0), RED, "Target"     	, 1.0, TRUE, 0.2, TRUE)).
 	SET vecDraws["Target"]:STARTUPDATER TO {RETURN bodyPos.}.
-	SET vecDraws["Target"]:VECUPDATER TO {RETURN (TARGET:POSITION - bodyPos):NORMALIZED * RADIUS.}.
+	SET vecDraws["Target"]:VECUPDATER TO {RETURN (POSITIONAT(TARGET, targetPositionTime) - bodyPos):NORMALIZED * RADIUS.}.
 	vecDraws:ADD("TargetVel", 		VECDRAW(V(0,0,0), V(0,0,0), RED, "Target Vel"  	, 1.0, TRUE, 0.2, TRUE)).
-	SET vecDraws["TargetVel"]:STARTUPDATER TO {RETURN TARGET:POSITION.}.
+	SET vecDraws["TargetVel"]:STARTUPDATER TO {RETURN POSITIONAT(TARGET, targetPositionTime).}.
 	SET vecDraws["TargetVel"]:VECUPDATER TO {RETURN TARGET:VELOCITY:ORBIT:NORMALIZED * RADIUS * 0.5.}.
 	vecDraws:ADD("TargetLAN", 		VECDRAW(V(0,0,0), V(0,0,0), RED, "Target LAN"  	, 1.0, TRUE, 0.2, FALSE)).
 	SET vecDraws["TargetLAN"]:STARTUPDATER TO {RETURN bodyPos.}.
@@ -108,7 +133,7 @@ CLEARSCREEN.
 UNTIL done OR NOT MAPVIEW
 {
 	printOrbit(SHIP:ORBIT, "Ship Orbit", 0, 0).
-	IF startedWithTarget printOrbit(TARGET:ORBIT, "Target Orbit", 40, 0).
+	IF startedWithTarget printOrbit(finalTargetOrbit, "Target Orbit", 40, 0).
 	SET bodyPos TO SHIP:BODY:POSITION.
 	PRINT "The ship is " + distanceToString(targetNormVector * (  SHIP:POSITION - bodyPos), 2):TOSTRING:PADLEFT(10) + " from the target plane.        " AT (0, 10).
 	IF showEcliptic {
@@ -127,9 +152,9 @@ UNTIL done OR NOT MAPVIEW
 		PRINT "Activate AG2 to toggle ecliptic plane data.        "   AT (0, 15).
 	}
 	IF startedWithTarget {
-		SET targetLANVector  TO (SOLARPRIMEVECTOR * ANGLEAXIS(-TARGET:ORBIT:LAN, northV)):NORMALIZED.
-		SET targetNormVector TO VCRS(TARGET:VELOCITY:ORBIT, TARGET:POSITION - bodyPos):NORMALIZED.
-		SET targetPeriVector TO (targetLANVector * ANGLEAXIS(-TARGET:ORBIT:ARGUMENTOFPERIAPSIS, targetNormVector)):NORMALIZED.
+		SET targetLANVector  TO (SOLARPRIMEVECTOR * ANGLEAXIS(-finalTargetOrbit:LAN, northV)):NORMALIZED.
+		SET targetNormVector TO VCRS(TARGET:VELOCITY:ORBIT, POSITIONAT(TARGET, targetPositionTime) - bodyPos):NORMALIZED.
+		SET targetPeriVector TO (targetLANVector * ANGLEAXIS(-finalTargetOrbit:ARGUMENTOFPERIAPSIS, targetNormVector)):NORMALIZED.
 	} ELSE {
 		SET targetLANVector  TO V(0, 0, 0).
 		SET targetNormVector TO V(0, 0, 0).
@@ -161,6 +186,28 @@ UNTIL done OR NOT MAPVIEW
 		SET vecDraws["EclipticPlane"][vecNumber]:VEC   TO radius * (SOLARPRIMEVECTOR * ANGLEAXIS(-45 * (vecNumber + 1), eclipticNormVector) - SOLARPRIMEVECTOR * ANGLEAXIS(-45 * vecNumber, eclipticNormVector)).
 	}
 
+	SET orbits TO LIST().
+	IF HASTARGET {
+		SET targetOrbit TO TARGET:ORBIT.
+		UNTIL NOT targetOrbit:HASNEXTPATCH {
+		  orbits:ADD(targetOrbit).
+		  SET targetOrbit TO targetOrbit:NEXTPATCH.
+		}
+		orbits:ADD(targetOrbit).
+	}
+	SET finalTargetOrbit TO 0.
+	SET previousTargetOrbit TO 0.
+	FOR eachOrbit IN orbits {
+	  IF eachOrbit:HASNEXTPATCH AND eachOrbit:NEXTPATCH:BODY:NAME = SHIP:BODY:NAME {
+	    SET previousTargetOrbit TO eachOrbit.
+	  }
+	  IF eachOrbit:BODY:NAME = SHIP:BODY:NAME {
+	    SET finalTargetOrbit TO eachOrbit.
+	  }
+	}
+	IF HASTARGET AND (TARGET:BODY:NAME <> SHIP:BODY:NAME) {
+		SET targetPositionTime TO (finalTargetOrbit:NEXTPATCHETA + previousTargetOrbit:NEXTPATCHETA)/2.
+	} ELSE SET targetPositionTime TO TIME:SECONDS.
 	WAIT 0.
 }
 

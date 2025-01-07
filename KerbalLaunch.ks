@@ -10,9 +10,10 @@ IF SHIP:BODY:ATM:EXISTS AND altitudeTarget = 30000 SET altitudeTarget TO SHIP:BO
 setLockedThrottle(FALSE).
 setLockedSteering(FALSE).
 
-RUNPATH("0:GravTurnLaunch", finalInclination, FALSE, 10, altitudeTarget, initialStage, maxGs).
-RUNPATH("0:Circ", "apo").
-RUNPATH("0:Exec").
+RUNPATH("GravTurnLaunch", finalInclination, TRUE, 10, altitudeTarget, initialStage, maxGs).
+endScript().
+RUNPATH("Circ", "apo").
+RUNPATH("Exec").
 REMOVE NEXTNODE.
 
 SET loopMessage TO distanceToString(APOAPSIS) + "x" + distanceToString(PERIAPSIS) + " orbit " + ROUND(ABS(SHIP:ORBIT:INCLINATION - finalInclination), 1) + " deg inc error".

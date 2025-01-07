@@ -31,7 +31,7 @@ FUNCTION updateScreen {
 	PRINT "                                                                                " AT (0, 4).
 	PRINT "INC          deg                                                                " AT (0, 5).
 	PRINT "PER                                                                             " AT (0, 6).
-	PRINT "SMA                                                                             " AT (0, 7).
+	PRINT "LAN          deg                                                                " AT (0, 7).
 	PRINT "ECC                                                                             " AT (0, 8).
 	PRINT "                                                                                " AT (0, 9).
 	PRINT "Current Input                           Loop Message                            " AT (0, 10).
@@ -53,7 +53,7 @@ FUNCTION updateScreen {
 	PRINT ROUND(SHIP:ORBIT:INCLINATION, 3):TOSTRING:PADLEFT(8) AT (4, 5).
 	IF SHIP:ORBIT:SEMIMAJORAXIS > 0 PRINT timeToString(SHIP:ORBIT:PERIOD, 0):PADLEFT(12) AT (4, 6).
 	ELSE							PRINT "TTP " + timeToString(ETA:PERIAPSIS, 0):PADLEFT(12) AT (0,6).
-	PRINT distanceToString(SHIP:ORBIT:SEMIMAJORAXIS, 4):PADLEFT(11) AT (4, 7).
+	PRINT ROUND(SHIP:ORBIT:LAN, 2):TOSTRING:PADLEFT(8) AT (4, 7).
 	PRINT ROUND(SHIP:ORBIT:ECCENTRICITY, 6):TOSTRING:PADLEFT(8) AT (4, 8).
 
   IF autoSteer = "" PRINT "None" AT (32, 1).
@@ -89,37 +89,64 @@ FUNCTION updateScreen {
 						(ROUND(resourceList[eachResource:NAME]["Quantity Use"], 4)):TOSTRING:PADLEFT(21)).
 			SET index TO index + 1.
 		}
-	} ELSE IF loopMode = "Orbit" OR loopMode = "targetorbit" {
+  } ELSE IF loopMode = "info" OR loopMode = "help" {
+    linesToPrint:ADD("The following are all valid options for LoopMode").
+    linesToPrint:ADD("Anything else will be treated the same as Default:").
+    linesToPrint:ADD("    Info or Help").
+    linesToPrint:ADD("    Resource or Resources").
+    linesToPrint:ADD("    Orbit or OrbitNext or OrbitTarget or OrbitTargetNext or OrbitNode").
+    linesToPrint:ADD("    Body").
+    linesToPrint:ADD("    Processor or kOS").
+    linesToPrint:ADD("    Ship").
+    linesToPrint:ADD("    RCS").
+    linesToPrint:ADD("    Engines").
+    linesToPrint:ADD("    Universe").
+	} ELSE IF loopMode = "Orbit" OR loopMode = "OrbitNext" OR loopMode = "OrbitTarget" OR loopMode = "OrbitTargetNext" OR loopMode = "OrbitNode" {
 		LOCAL localOrbit IS SHIP:ORBIT.
-		IF loopMode = "targetorbit" AND HASTARGET SET localOrbit TO TARGET:ORBIT.
-		linesToPrint:ADD("Name " + localOrbit:NAME).
+    IF loopMode = "OrbitNext" AND ORBIT:HASNEXTPATCH {
+      SET localOrbit TO ORBIT:NEXTPATCH.
+  		linesToPrint:ADD("Name " + localOrbit:NAME).
+    }
+    IF loopMode = "OrbitTarget" AND HASTARGET {
+      SET localOrbit TO TARGET:ORBIT.
+  		linesToPrint:ADD("Name " + localOrbit:NAME).
+    }
+    IF loopMode = "OrbitTargetNext" AND HASTARGET AND TARGET:ORBIT:HASNEXTPATCH {
+      IF HASTARGET AND TARGET:ORBIT:HASNEXTPATCH SET localOrbit TO TARGET:ORBIT:NEXTPATCH.
+  		linesToPrint:ADD("Name " + localOrbit:NAME).
+    }
+    IF loopMode = "OrbitNode" AND HASNODE {
+      IF HASNODE SET localOrbit TO NEXTNODE:ORBIT.
+  		linesToPrint:ADD("Name " + localOrbit:NAME).
+    }
 		linesToPrint:ADD("Apoapsis " + distanceToString(localOrbit:APOAPSIS, 4)).
 		linesToPrint:ADD("Periapsis " + distanceToString(localOrbit:PERIAPSIS, 4)).
-		linesToPrint:ADD("Period " + timeToString(localOrbit:PERIOD, 4)).
-		linesToPrint:ADD("Period " + localOrbit:PERIOD + " s").
+    IF localOrbit:ECCENTRICITY > 1 {
+      linesToPrint:ADD("Period N/A s").
+    } ELSE {
+      linesToPrint:ADD("Period " + timeToString(localOrbit:PERIOD, 4)).
+      linesToPrint:ADD("Period " + localOrbit:PERIOD + " s").
+    }
 		linesToPrint:ADD("Inclination " + ROUND(localOrbit:INCLINATION, 4) + " deg").
 		linesToPrint:ADD("Eccentricity " + ROUND(localOrbit:ECCENTRICITY, 4)).
 		linesToPrint:ADD("Semi-Major Axis " + distanceToString(localOrbit:SEMIMAJORAXIS, 4)).
 		linesToPrint:ADD("Semi-Minor Axis " + distanceToString(localOrbit:SEMIMINORAXIS, 4)).
 		linesToPrint:ADD("Longitude of Ascending Node " + ROUND(localOrbit:LAN, 4) + " deg").
 		linesToPrint:ADD("Argument of Periapsis " + ROUND(localOrbit:ARGUMENTOFPERIAPSIS, 4) + " deg").
-		linesToPrint:ADD("True Anomaly  " + ROUND(localOrbit:TRUEANOMALY, 4) + " deg").
-		linesToPrint:ADD("Mean Anomaly at Epoch " + ROUND(localOrbit:MEANANOMALYATEPOCH, 4) + " deg").
+		linesToPrint:ADD("True Anomaly " + ROUND(localOrbit:TRUEANOMALY, 4) + " deg").
     linesToPrint:ADD("Mean Anomaly " + ROUND(trueToMeanAnomaly(localOrbit:TRUEANOMALY, localOrbit:ECCENTRICITY), 4) + " deg").
-		linesToPrint:ADD("Epoch " + localOrbit:EPOCH).
 		linesToPrint:ADD("Transition " + localOrbit:TRANSITION).
-    IF VERTICALSPEED < 0 linesToPrint:ADD("Flight path angle -" + ROUND(ABS(90 - VANG(-BODY:POSITION, SHIP:VELOCITY:ORBIT)), 4) + " deg").
-    ELSE linesToPrint:ADD("Flight path angle " + ROUND(ABS(90 - VANG(-BODY:POSITION, SHIP:VELOCITY:ORBIT)), 4) + " deg").
-		linesToPrint:ADD("Position (r) " + distanceToString(SHIP:BODY:POSITION:MAG, 4)).
+    linesToPrint:ADD("Flight path angle " + ROUND(flightPathAngle(localOrbit:TRUEANOMALY, localOrbit:ECCENTRICITY), 4) + " deg").
+		linesToPrint:ADD("Position (r) " + distanceToString((localOrbit:POSITION - localOrbit:BODY:POSITION):MAG, 4)).
 		linesToPrint:ADD("Velocity " + distanceToString(localOrbit:VELOCITY:ORBIT:MAG, 4) + "/s").
 		linesToPrint:ADD("Has Next Patch " + localOrbit:HASNEXTPATCH).
 		IF localOrbit:HASNEXTPATCH {
 		  linesToPrint:ADD("Next Patch ETA " + timeToString(localOrbit:NEXTPATCHETA)).
 		}
   } ELSE IF loopMode = "Body" {
-    linesToPrint:ADD("Orbited Body " + SHIP:ORBIT:BODY:NAME).
-    linesToPrint:ADD("Orbited Body MU " + SHIP:ORBIT:BODY:MU + " m^3/s^2").
-    linesToPrint:ADD("Orbited Body Radius " + distanceToString(SHIP:ORBIT:BODY:Radius, 4)).
+    linesToPrint:ADD("Orbited Body " + SHIP:BODY:NAME).
+    linesToPrint:ADD("Orbited Body MU " + SHIP:BODY:MU + " m^3/s^2").
+    linesToPrint:ADD("Orbited Body Radius " + distanceToString(SHIP:BODY:Radius, 4)).
 	} ELSE IF loopMode = "Processor" OR loopMode = "kOS" {
     LOCAL names IS "".
     LOCAL capacities IS "".
@@ -134,9 +161,9 @@ FUNCTION updateScreen {
       ELSE SET names TO names + "      None".
       SET capacities TO capacities + eachProc:VOLUME:CAPACITY:TOSTRING:PADLEFT(10).
       SET freeSpaces TO freeSpaces + eachProc:VOLUME:FREESPACE:TOSTRING:PADLEFT(10).
-      SET fileCounts TO fileCounts + CORE:VOLUME:FILES:LENGTH:TOSTRING:PADLEFT(10).
-      SET powerReqs TO powerReqs + ROUND(CORE:VOLUME:POWERREQUIREMENT, 2):TOSTRING:PADLEFT(10).
-      SET bootFiles TO bootFiles + CORE:BOOTFILENAME:PADLEFT(10).
+      SET fileCounts TO fileCounts + eachProc:VOLUME:FILES:LENGTH:TOSTRING:PADLEFT(10).
+      SET powerReqs TO powerReqs + ROUND(eachProc:VOLUME:POWERREQUIREMENT, 2):TOSTRING:PADLEFT(10).
+      SET bootFiles TO bootFiles + eachProc:BOOTFILENAME:PADLEFT(10).
     }
     linesToPrint:ADD("Processor count           " + processorList:LENGTH:TOSTRING:PADLEFT(10)).
     linesToPrint:ADD("Volume Name               " + names).
@@ -147,8 +174,9 @@ FUNCTION updateScreen {
     linesToPrint:ADD("Core Boot File            " + bootFiles).
   } ELSE IF loopMode = "Ship" {
     linesToPrint:ADD("Part Count         " + SHIP:PARTS:LENGTH:TOSTRING:PADLEFT(10)).
-    linesToPrint:ADD("DeltaV             " + (ROUND(SHIP:DELTAV:CURRENT, 2) + "m/s"):PADLEFT(10)).
-    linesToPrint:ADD("DeltaV Custom      " + (ROUND(shipInfo["CurrentStage"]["DeltaV"], 2) + "m/s"):PADLEFT(10)).
+    linesToPrint:ADD("DeltaV             " + (ROUND(SHIP:DELTAV:CURRENT, 2) + " m/s"):PADLEFT(10)).
+    linesToPrint:ADD("DeltaV Custom      " + (ROUND(shipInfo["CurrentStage"]["DeltaV"], 2) + " m/s"):PADLEFT(10)).
+    linesToPrint:ADD("DeltaV RCS         " + (ROUND(shipInfo["CurrentStage"]["DeltaVRCS"], 2) + " m/s"):PADLEFT(10)).
     linesToPrint:ADD("Stage Number       " + SHIP:STAGENUM:TOSTRING:PADLEFT(10)).
     linesToPrint:ADD("Current Stage      " + shipInfo["NumberOfStages"]:TOSTRING:PADLEFT(10)).
     linesToPrint:ADD("Type               " + SHIP:TYPE:PADLEFT(10)).
@@ -167,6 +195,7 @@ FUNCTION updateScreen {
             eachRCS:STARBOARDENABLED:TOSTRING:PADLEFT(7) +
             eachRCS:TOPENABLED:TOSTRING:PADLEFT(7) +
             ROUND(eachRCS:ISP, 0):TOSTRING:PADLEFT(7)).
+      linesToPrint:ADD("Total dV from RCS in current stage: " + ROUND(shipInfo["CurrentStage"]["deltaVRCS"], 2) + " m/s").
     }
   } ELSE IF loopMode = "engines" {
     linesToPrint:ADD("Engine       Thrust  ISP  M Dot    Ign    Gimbal   Min Throttle Stab").

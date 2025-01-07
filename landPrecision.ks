@@ -41,8 +41,7 @@ LOCAL accelRatios IS 0.
 LOCAL maxAccel IS shipInfo["Maximum"]["Accel"].
 LOCAL requiredAccel IS maxAccel.
 
-LOCAL startVelocitySurface IS -SHIP:VELOCITY:SURFACE.	// Initial velocity is negative, as we are approaching the landing spot
-LOCAL positiveDirectionVector IS VXCL(SHIP:UP:VECTOR, startVelocitySurface):NORMALIZED.
+LOCAL positiveDirectionVector IS VXCL(SHIP:UP:VECTOR, -SHIP:VELOCITY:SURFACE):NORMALIZED.
 
 LOCAL hAccelInitial IS SQRT(shipInfo["Maximum"]["Accel"]^2 - (centripitalAccel - local_g)^2).//shipInfo["Maximum"]["Accel"].
 LOCAL timeElapsed IS 0.
@@ -154,7 +153,7 @@ UNTIL mode > 4 {
 
 	PRINT "Mode " + mode AT (40, 3).
 	SET aboveGround TO heightAboveGround().
-	SET positiveDirectionVector TO VXCL(SHIP:UP:VECTOR, startVelocitySurface):NORMALIZED.
+	SET positiveDirectionVector TO VXCL(SHIP:UP:VECTOR, -SHIP:VELOCITY:SURFACE):NORMALIZED.
 	SET hSpeed TO VDOT(VXCL(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE), positiveDirectionVector).
 	SET centripitalAccel TO hSpeed^2/(SHIP:POSITION - SHIP:BODY:POSITION):MAG.
 	SET local_g TO mu/(SHIP:POSITION - SHIP:BODY:POSITION):SQRMAGNITUDE.

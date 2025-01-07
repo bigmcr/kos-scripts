@@ -334,6 +334,8 @@ FUNCTION logData {
 		FOR eachKey IN dataToLog:KEYS {
 			logData(dataToLog[eachKey], fileName, increment + 1, eachKey).
 		}
+	} ELSE IF dataToLog:ISTYPE("Vector") {
+		LOG padValue + dataToLog:TYPENAME + "," + dataToLog:TOSTRING():REPLACE("V(",""):REPLACE(")","") TO fileName.
 	} ELSE IF dataToLog:ISTYPE("Engine") {
 		LOG padValue + dataToLog:TYPENAME + "," + dataToLog:CONFIG:REPLACE(",","") + ",Max Thrust," + dataToLog:MAXTHRUST + ",Isp," + dataToLog:ISP TO fileName.
 	} ELSE IF dataToLog:ISTYPE("RCS") {
@@ -372,7 +374,8 @@ FUNCTION logShipInfo {
 		LOG ",mDot," + ROUND(shipInfo["Stage " + stageNumber]["mDot"], 4) + ",kg/s" TO fileName.
 		LOG ",Resources has " + shipInfo["Stage " + stageNumber]["Resources"]:KEYS:LENGTH + " items in it" TO fileName.
 		FOR eachResource IN shipInfo["Stage " + stageNumber]["Resources"]:KEYS {LOG ",," + eachResource + "," + shipInfo["Stage " + stageNumber]["Resources"][eachResource] + ",kg" TO fileName.}
-		LOG ",Fuels has " + shipInfo["Stage " + stageNumber]["Fuels"]:LENGTH + " items in it,Engine,Fuel,Used Mass kg,Unused Mass kg,Mass Ratio" TO fileName.
+		IF shipInfo["Stage " + stageNumber]["Fuels"]:LENGTH = 0 LOG ",Fuels has 0 items in it" TO fileName.
+		ELSE LOG ",Fuels has " + shipInfo["Stage " + stageNumber]["Fuels"]:LENGTH + " items in it,Engine,Fuel,Used Mass kg,Unused Mass kg,Mass Ratio" TO fileName.
 		FOR e IN shipInfo["Stage " + stageNumber]["Fuels"]:KEYS {
 			FOR f IN shipInfo["Stage " + stageNumber]["Fuels"][e]:KEYS {
 				LOG ",," + e + "," + f + "," +
@@ -381,7 +384,8 @@ FUNCTION logShipInfo {
 						shipInfo["Stage " + stageNumber]["Fuels"][e][f]["Ratio"] TO fileName.
 			}
 		}
-		LOG ",RCS Fuels has " + shipInfo["Stage " + stageNumber]["FuelsRCS"]:LENGTH + " items in it,Engine,Fuel,Used Mass kg,Unused Mass kg,Mass Ratio" TO fileName.
+		IF shipInfo["Stage " + stageNumber]["FuelsRCS"]:LENGTH = 0 LOG ",RCS Fuels has 0 items in it" TO fileName.
+		ELSE LOG ",RCS Fuels has " + shipInfo["Stage " + stageNumber]["FuelsRCS"]:LENGTH + " items in it,Engine,Fuel,Used Mass kg,Unused Mass kg,Mass Ratio" TO fileName.
 		FOR e IN shipInfo["Stage " + stageNumber]["FuelsRCS"]:KEYS {
 			FOR f IN shipInfo["Stage " + stageNumber]["FuelsRCS"][e]:KEYS {
 				LOG ",," + e + "," + f + "," +
@@ -1093,17 +1097,20 @@ FUNCTION hillClimb2D {
 //     LEXICON[heading] - scalar - compass heading of downhill, in degrees
 //     LEXICON[slope] - scalar - slope of the ground, in degrees
 //     LEXICON[vector] - Vector - direction of downhill in a vector with length of 1 meter.
-FUNCTION findDownSlopeInfo {
+// Like all directional functions, north is taken as the Y axis and east is the X axis
+FUNCTION findUpSlopeInfo {
 	PARAMETER northOffset IS 0.0.
 	PARAMETER eastOffset IS 0.0.
 	PARAMETER distance IS 0.5.
-	LOCAL terrainHeight IS                 SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (       0 + northOffset)*SHIP:NORTH:VECTOR + (       0 + eastOffset)*east_for(SHIP)):TERRAINHEIGHT.
-	LOCAL heightNorth   IS terrainHeight - SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + northOffset)*SHIP:NORTH:VECTOR + (       0 + eastOffset)*east_for(SHIP)):TERRAINHEIGHT.
-	LOCAL heightEast    IS terrainHeight - SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (       0 + northOffset)*SHIP:NORTH:VECTOR + (distance + eastOffset)*east_for(SHIP)):TERRAINHEIGHT.
+	LOCAL eastVector IS east_for(SHIP).
+	LOCAL terrainHeight IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (       0 + northOffset)*SHIP:NORTH:VECTOR + (       0 + eastOffset)*eastVector):TERRAINHEIGHT                .
+	LOCAL heightNorth   IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (distance + northOffset)*SHIP:NORTH:VECTOR + (       0 + eastOffset)*eastVector):TERRAINHEIGHT - terrainHeight.
+	LOCAL heightEast    IS SHIP:BODY:GEOPOSITIONOF(SHIP:POSITION + (       0 + northOffset)*SHIP:NORTH:VECTOR + (distance + eastOffset)*eastVector):TERRAINHEIGHT - terrainHeight.
 	LOCAL returnMe IS LEXICON().
-	returnMe:ADD("heading", ARCTAN2(heightNorth, heightEast)).
+	returnMe:ADD("heading", ARCTAN2(heightEast, heightNorth)).
 	returnMe:ADD("slope", ARCTAN2(SQRT(heightNorth * heightNorth + heightEast * heightEast), distance)).
-  returnMe:ADD("vector", 1*(SHIP:NORTH:VECTOR*ANGLEAXIS(returnMe["slope"], east_for(ship)))*ANGLEAXIS(returnMe["heading"], SHIP:UP:VECTOR)).
+  returnMe:ADD("vector", ((SHIP:NORTH:VECTOR*ANGLEAXIS(-returnMe["slope"], eastVector))*ANGLEAXIS(returnMe["heading"], SHIP:UP:VECTOR))).
+	returnMe:ADD("vectorFlat", VXCL(SHIP:UP:VECTOR,returnMe["vector"]):NORMALIZED).
 	returnMe:ADD("terrainHeight", terrainHeight).
 	returnMe:ADD("heightNorth", heightNorth).
 	returnMe:ADD("heightEast", heightEast).
@@ -1115,15 +1122,19 @@ FUNCTION findDownSlopeInfo {
 //     LEXICON[heading] - scalar - compass heading of uphill, in degrees
 //     LEXICON[slope] - scalar - slope of the ground, in degrees
 //     LEXICON[vector] - Vector - direction of uphill in a vector with length of 1 meter.
-FUNCTION findUpSlopeInfo {
+FUNCTION findDownSlopeInfo {
 	PARAMETER northOffset IS 0.0.
 	PARAMETER eastOffset IS 0.0.
 	PARAMETER distance IS 5.0.
-	LOCAL data IS findDownSlopeInfo(northOffset, eastOffset, distance).
+	LOCAL data IS findUpSlopeInfo(northOffset, eastOffset, distance).
 	LOCAL returnMe IS LEXICON().
 	returnMe:ADD("heading", data["heading"] + 180).
 	returnMe:ADD("slope", data["slope"]).
 	returnMe:ADD("vector", -data["vector"]).
+	returnMe:ADD("vectorFlat", -data["vectorFlat"]).
+	returnMe:ADD("terrainHeight", data["terrainHeight"]).
+	returnMe:ADD("heightNorth", data["heightNorth"]).
+	returnMe:ADD("heightEast", data["heightEast"]).
 	RETURN returnMe.
 }
 
@@ -1918,6 +1929,9 @@ FUNCTION printOrbit
 	PRINT "Argument of Periapsis " + ROUND(orb:ARGUMENTOFPERIAPSIS, 4) + "     " AT(Xcoord, Ycoord + 8).
 }
 
+// Log the list of orbits passed to the passed file name.
+//	orbs - orbit (or list of orbits) that should be logged
+//	fileName - file name that the orbits should be logged to
 FUNCTION logOrbit
 {
 	PARAMETER orbs.
@@ -2106,6 +2120,9 @@ FUNCTION logOrbit
 	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:VELOCITY:ORBIT:Z + ",".}
 	SET message TO message + "m".
 	LOG message TO fileName.
+
+	// Add a blank line to the end - it helps to differentiate between runs
+	LOG "" TO fileName.
 }
 
 // get desired launch azimuth given desired circular orbit altitude and inclination
@@ -2720,17 +2737,35 @@ FUNCTION trueToMeanAnomaly {
   // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
   IF eccentricity = 0 RETURN trueAnomaly.
 
-	// note that eccentric anomaly is in radians
-	LOCAL eccentricAnomaly IS CONSTANT:DegToRad * 2 * ARCTAN(TAN(trueAnomaly / 2) / SQRT((1 + eccentricity) / (1 - eccentricity))).
-//	PRINT "eccentric anomaly: " + eccentricAnomaly.
+	IF eccentricity < 1 { // elliptical case
+		// note that eccentric anomaly is in radians
+		LOCAL eccentricAnomaly IS CONSTANT:DegToRad * 2 * ARCTAN(TAN(trueAnomaly / 2) / SQRT((1 + eccentricity) / (1 - eccentricity))).
+	//	PRINT "eccentric anomaly: " + eccentricAnomaly.
 
-//  This method also calculates eccentric anomaly equally well, but it is much more processor intensive than the other one.
-//	LOCAL cosE IS (eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly)).
-//	LOCAL sinE IS SQRT(1 - eccentricity^2) * SIN(trueAnomaly)/(1 + eccentricity * COS(trueAnomaly)).
-//  LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCTAN2(sinE, cosE).
-  LOCAL meanAnomaly IS CONSTANT:RadToDeg * (eccentricAnomaly - eccentricity * SIN(eccentricAnomaly * CONSTANT:RadToDeg)).
-	IF meanAnomaly < 0 SET meanAnomaly TO meanAnomaly + 360.
-  RETURN normalizeAngle(meanAnomaly).
+	//  This method also calculates eccentric anomaly equally well, but it is much more processor intensive than the other one.
+	//	LOCAL cosE IS (eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly)).
+	//	LOCAL sinE IS SQRT(1 - eccentricity^2) * SIN(trueAnomaly)/(1 + eccentricity * COS(trueAnomaly)).
+	//  LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCTAN2(sinE, cosE).
+	  LOCAL meanAnomaly IS CONSTANT:RadToDeg * (eccentricAnomaly - eccentricity * SIN(eccentricAnomaly * CONSTANT:RadToDeg)).
+		RETURN normalizeAngle(meanAnomaly).
+	} ELSE { // hyperbolic case
+		// Note: equations taken from https://en.wikipedia.org/wiki/Hyperbolic_trajectory, section "Equations of Motion"
+		// Hyperbolic Eccentric Anomaly
+		LOCAL bigE IS ACOSH((CONSTANT:DegToRad * COS(trueAnomaly) + eccentricity)/(1 + eccentricity * CONSTANT:DegToRad * COS(trueAnomaly))).
+
+		LOCAL meanAnomaly IS eccentricity * SINH(bigE) - bigE.
+		RETURN normalizeAngle(meanAnomaly).
+	}
+}
+
+// Calculate Flight Path Angle
+// passed:
+//		True anomaly (scalar)
+//		Eccentricity (scalar)
+FUNCTION flightPathAngle {
+	PARAMETER trueAnomaly.
+	PARAMETER eccentricity.
+	RETURN ARCTAN(eccentricity * SIN(trueAnomaly) / (1 + eccentricity * COS(trueAnomaly))).
 }
 
 // Given an angle in degrees, returns the normalized angle in degrees

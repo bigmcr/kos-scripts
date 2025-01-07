@@ -28,7 +28,7 @@ PANELS OFF.
 RADIATORS OFF.
 
 
-LOCAL pitchPID IS PIDLOOP(1, 0.1, 0, 0, 60).						// PID loop to control pitch
+LOCAL pitchPID IS PIDLOOP(1, 0.1, 0, 0, 75).						// PID loop to control pitch
 LOCAL T_PID IS PIDLOOP(0.5, 0.1, 0, 0.05, 1).					// PID loop to control trottle during vertical descent phase
 
 LOCAL oldTime IS ROUND( TIME:SECONDS, 1).
@@ -163,7 +163,7 @@ UNTIL mode > 4 {
 		IF (timerStartTime = 0) SET timerStartTime TO TIME:SECONDS.
 		IF (TIME:SECONDS > timerStartTime + 10) {
 			pitchPID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-			SET pitchPID:SETPOINT TO (heightPrediction(120)["max"] + 500 - ALTITUDE) / 600.
+			SET pitchPID:SETPOINT TO (heightPrediction(timeToHSpeedZero)["max"] + 500 - ALTITUDE) / 600.
 			advanceMode().
 		}
 	}
@@ -175,7 +175,7 @@ UNTIL mode > 4 {
 		PRINT "SrfVel Pitch " + ROUND(velocityPitch, 2) + "      " AT (40, 4).
 		IF (timerStartTime = 0) SET timerStartTime TO TIME:SECONDS.
 		IF (TIME:SECONDS > timerStartTime + 60) {
-			SET pitchPID:SETPOINT TO (heightPrediction(120)["max"] + 500 - ALTITUDE) / 600.
+			SET pitchPID:SETPOINT TO (heightPrediction(timeToHSpeedZero)["max"] + 500 - ALTITUDE) / 600.
 			SET timerStartTime TO TIME:SECONDS.
 		}
 		SET pitchValue TO pitchPID:UPDATE(TIME:SECONDS, VERTICALSPEED).
@@ -216,6 +216,7 @@ UNTIL mode > 4 {
 		PRINT "SrfVel Pitch > 20" AT (40, 2).
 		PRINT "             " AT (40, 3).
 		PRINT "SrfVel Pitch " + ROUND(velocityPitch, 2) + "      " AT (40, 4).
+		SET pitchPID:SETPOINT TO (heightPrediction(timeToHSpeedZero)["max"] + 500 - ALTITUDE) / 600.
 		SET pitchValue TO pitchPID:UPDATE(TIME:SECONDS, VERTICALSPEED).
 		IF (aimTarget AND HASTARGET AND (TARGET:POSITION:MAG < oldDistance)) {
 			SET headingValue TO 180 + 4 * yaw_for(VELOCITY:SURFACE) - 3 * yaw_for(TARGET:POSITION).
