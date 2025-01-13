@@ -15,20 +15,19 @@ UNTIL (tempChar = TERMINAL:INPUT:ENTER OR tempChar = TERMINAL:INPUT:BACKSPACE) {
   IF (SHIP:GEOPOSITION:LAT = 0) OR (targetInclinationParameter = 90) SET inclinationOffset TO 0.
   ELSE IF (targetInclinationParameter < SHIP:GEOPOSITION:LAT) SET inclinationOffset TO 90.
   ELSE SET inclinationOffset TO ARCSIN( TAN(SHIP:GEOPOSITION:LAT) / TAN(targetInclinationParameter)).
-  SET deltaLANPlus  TO normalizeAngle(      targetLAN - SHIP:GEOPOSITION:LNG - SHIP:BODY:ROTATIONANGLE + inclinationOffset).
-  SET deltaLANMinus TO normalizeAngle(180 + targetLAN - SHIP:GEOPOSITION:LNG - SHIP:BODY:ROTATIONANGLE - inclinationOffset).
+  SET deltaLANPlus  TO normalizeAngle(180 + targetLAN - SHIP:GEOPOSITION:LNG - SHIP:BODY:ROTATIONANGLE + inclinationOffset).
+  SET deltaLANMinus TO normalizeAngle(  0 + targetLAN - SHIP:GEOPOSITION:LNG - SHIP:BODY:ROTATIONANGLE - inclinationOffset).
   CLEARSCREEN.
-  IF deltaLANMinus < deltaLANPlus {
-    SET deltaLAN TO deltaLANMinus.
+  IF deltaLANPlus < deltaLANMinus {
+    SET deltaLAN TO deltaLANPlus.
     SET targetInclination TO -targetInclinationParameter.
   } ELSE {
-    SET deltaLAN TO deltaLANPlus.
+    SET deltaLAN TO deltaLANMinus.
   }
   PRINT "Ship Latitude: " + ROUND(SHIP:GEOPOSITION:LAT, 3) + " deg".
   PRINT "Ship Longitude: " + ROUND(SHIP:GEOPOSITION:LNG, 3) + " deg".
   PRINT "Rotation Angle: " + ROUND(SHIP:BODY:ROTATIONANGLE, 3) + " deg".
   PRINT "Desired longitude of ascending node " + ROUND(targetLAN, 3) + " deg".
-  PRINT "Current longitude of ascending node " + ROUND(SHIP:GEOPOSITION:LNG + inclinationOffset, 3) + " deg".
   PRINT "Desired inclination " + ROUND(targetInclination, 3) + " deg".
   PRINT "Delta LAN Offset " + ROUND(inclinationOffset, 3) + " deg".
   PRINT "Delta LAN " + ROUND(deltaLAN, 3) + " deg".

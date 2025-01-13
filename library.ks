@@ -1542,28 +1542,30 @@ FUNCTION logAllParts
 //			nothing
 FUNCTION activateOmniAntennae
 {
-	LOCAL allParts IS LIST().
-	LIST PARTS IN allParts.
-	LOCAL mods TO 0.
-	LOCAL isAntenna TO FALSE.
-	FOR eachPart IN allParts {
-		SET mods TO eachPart:MODULES.
-		SET isAntenna TO FALSE.
-		FOR mod IN MODS {
-			IF (mod="ModuleRTAntenna") {
-				IF NOT (eachPart:GETMODULE("ModuleRTAntenna"):HASFIELD("dish range")) {
-					SET isAntenna TO TRUE.
+	if Career():CANDOACTIONS {
+		LOCAL allParts IS LIST().
+		LIST PARTS IN allParts.
+		LOCAL mods TO 0.
+		LOCAL isAntenna TO FALSE.
+		FOR eachPart IN allParts {
+			SET mods TO eachPart:MODULES.
+			SET isAntenna TO FALSE.
+			FOR mod IN MODS {
+				IF (mod="ModuleRTAntenna") {
+					IF NOT (eachPart:GETMODULE("ModuleRTAntenna"):HASFIELD("dish range")) {
+						SET isAntenna TO TRUE.
+					}
+				}
+				IF (mod="ModuleDeployableAntenna") {
+					IF NOT (eachPart:GETMODULE("ModuleDeployableAntenna"):HASFIELD("dish range")) {
+						SET isAntenna TO TRUE.
+					}
 				}
 			}
-			IF (mod="ModuleDeployableAntenna") {
-				IF NOT (eachPart:GETMODULE("ModuleDeployableAntenna"):HASFIELD("dish range")) {
-					SET isAntenna TO TRUE.
-				}
+			IF (isAntenna) {
+				IF ADDONS:AVAILABLE("RT") eachPart:GETMODULE("ModuleRTAntenna"):DOACTION("activate",TRUE).
+				ELSE eachPart:GETMODULE("ModuleDeployableAntenna"):DOACTION("extend antenna",TRUE).
 			}
-		}
-		IF (isAntenna) {
-			IF ADDONS:AVAILABLE("RT") eachPart:GETMODULE("ModuleRTAntenna"):DOACTION("activate",TRUE).
-			ELSE eachPart:GETMODULE("ModuleDeployableAntenna"):DOACTION("extend antenna",TRUE).
 		}
 	}
 }
@@ -1577,28 +1579,30 @@ FUNCTION activateOmniAntennae
 //			nothing
 FUNCTION deactivateOmniAntennae
 {
-	LOCAL allParts IS LIST().
-	LIST PARTS IN allParts.
-	LOCAL mods TO 0.
-	LOCAL isAntenna TO FALSE.
-	FOR eachPart IN allParts {
-		SET mods TO eachPart:MODULES.
-		SET isAntenna TO FALSE.
-		FOR mod IN MODS {
-			IF (mod="ModuleRTAntenna") {
-				IF NOT (eachPart:GETMODULE("ModuleRTAntenna"):HASFIELD("dish range")) {
-					SET isAntenna TO TRUE.
+	if Career():CANDOACTIONS {
+		LOCAL allParts IS LIST().
+		LIST PARTS IN allParts.
+		LOCAL mods TO 0.
+		LOCAL isAntenna TO FALSE.
+		FOR eachPart IN allParts {
+			SET mods TO eachPart:MODULES.
+			SET isAntenna TO FALSE.
+			FOR mod IN MODS {
+				IF (mod="ModuleRTAntenna") {
+					IF NOT (eachPart:GETMODULE("ModuleRTAntenna"):HASFIELD("dish range")) {
+						SET isAntenna TO TRUE.
+					}
+				}
+				IF (mod="ModuleDeployableAntenna") {
+					IF NOT (eachPart:GETMODULE("ModuleDeployableAntenna"):HASFIELD("dish range")) {
+						SET isAntenna TO TRUE.
+					}
 				}
 			}
-			IF (mod="ModuleDeployableAntenna") {
-				IF NOT (eachPart:GETMODULE("ModuleDeployableAntenna"):HASFIELD("dish range")) {
-					SET isAntenna TO TRUE.
-				}
+			IF (isAntenna) {
+				IF ADDONS:AVAILABLE("RT") eachPart:GETMODULE("ModuleRTAntenna"):DOACTION("deactivate",TRUE).
+				ELSE eachPart:GETMODULE("ModuleDeployableAntenna"):DOACTION("retract antenna",TRUE).
 			}
-		}
-		IF (isAntenna) {
-			IF ADDONS:AVAILABLE("RT") eachPart:GETMODULE("ModuleRTAntenna"):DOACTION("deactivate",TRUE).
-			ELSE eachPart:GETMODULE("ModuleDeployableAntenna"):DOACTION("retract antenna",TRUE).
 		}
 	}
 }
