@@ -2145,6 +2145,12 @@ FUNCTION desiredAzimuth
 	RETURN launchAzimuth.
 }
 
+FUNCTION naiveAzimuth {
+  PARAMETER inclination.
+  PARAMETER lat.
+	RETURN ARCSIN(COS(inclination)/COS(lat)).
+}
+
 // global list of initialized PID logs.
 GLOBAL initPIDLog IS LEXICON().
 

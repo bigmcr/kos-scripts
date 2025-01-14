@@ -23,7 +23,7 @@ LOCAL mode IS 0.
 
 LOCAL yawValue IS 0.										// yaw adjustment factor for inclination tuning
 LOCAL PITCH_PID IS PIDLOOP(2.0, 0.25, 2.0).	// PID loop to control pitch
-LOCAL YAW_PID IS PIDLOOP(2.0, 0.25, 2.0, -2, 2).		// PID loop to control yaw
+LOCAL YAW_PID IS PIDLOOP(20, 5, 20, -2, 2).		// PID loop to control yaw
 LOCAL gravTurnStart TO 1000.						// The altitude of the start of the gravity turn
 LOCAL gravTurnExponent TO 0.740740741.	// The exponent used in the calculation of the gravity turn
 LOCAL endMessage IS "Blank".						// Used to determine the reason for exiting the loop
@@ -65,7 +65,7 @@ WHEN PERIAPSIS > 0 AND physicsWarpPerm THEN {
 
 LOCAL modeStartYaw TO launchAzimuth.
 
-IF connectionToKSC() LOG "Time,Mode,Stage,Mass (kg),Actual Pitch (deg),Prograde Pitch (deg),Pitch Value (deg),Horizontal Speed (m/s),Current Accel (m/s^2),Centripital Accel (m/s^2),Altitude (m),Local g (m/s^2),Vertical Accel Req'd (m/s^2),Required Pitch (deg),Vertical Speed (m/s)" TO "0:pitchCalcs.csv".
+IF connectionToKSC() LOG "Time,Mode,Stage,Mass (kg),Actual Pitch (deg),Prograde Pitch (deg),Pitch Value (deg),Horizontal Speed (m/s),Current Accel (m/s^2),Centripital Accel (m/s^2),Altitude (m),Local g (m/s^2),Vertical Accel Req'd (m/s^2),Required Pitch (deg),Vertical Speed (m/s),Mode Start Yaw (deg),LAN (deg),SMA (m),Arg Pe (deg),True Anomaly,e,Inclination (deg)" TO "0:pitchCalcs.csv".
 
 // whenever the mode changes, initialize things for the new mode.
 ON mode {
@@ -113,7 +113,6 @@ ON mode {
 		PRINT "Horizontal   " AT (40, 1).
 		PRINT "             " AT (40, 2).
 		PRINT "             " AT (40, 3).
-		SET modeStartYaw TO launchAzimuth.
 	}
 
 	// Maintain vertical speed
@@ -142,7 +141,7 @@ UNTIL mode > 6 {
 	IF accelRatios > SIN(85) SET accelRatios TO SIN(85).
 	IF accelRatios < 0 SET accelRatios TO 0.
 	IF connectionToKSC() LOG MISSIONTIME + "," + mode + "," + (shipInfo["NumberOfStages"] - 1) + "," + SHIP:MASS*1000 + "," + (90 - vang(SHIP:UP:VECTOR, SHIP:FACING:FOREVECTOR)) + "," + (90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE)) + "," + pitchValue + "," + GROUNDSPEED + "," +
-			shipInfo["Current"]["Accel"] + "," + centripitalAccel + "," + ALTITUDE + "," + local_g + "," + requiredVerticalAccel + "," + ARCSIN(accelRatios) + "," + VERTICALSPEED TO "0:pitchCalcs.csv".
+			shipInfo["Current"]["Accel"] + "," + centripitalAccel + "," + ALTITUDE + "," + local_g + "," + requiredVerticalAccel + "," + ARCSIN(accelRatios) + "," + VERTICALSPEED + "," + modeStartYaw + "," + ORBIT:LAN + "," + ORBIT:SEMIMAJORAXIS + "," + ORBIT:ARGUMENTOFPERIAPSIS + "," + ORBIT:TRUEANOMALY + "," + ORBIT:ECCENTRICITY + "," + ORBIT:INCLINATION TO "0:pitchCalcs.csv".
 	engineInfo(0, 20, TRUE).
 	// Prelaunch - stage the LF engines
 	IF mode = 0 {
@@ -194,8 +193,14 @@ UNTIL mode > 6 {
 
 			// reset the integral on the Yaw PID when the ship crosses the equator
 			WHEN (ABS(SHIP:GEOPOSITION:LAT) < 0.1) THEN {
-				SET modeStartYaw TO launchAzimuth.
 				YAW_PID:RESET().
+			}
+
+			// reset the integral on the Yaw PID when the ship crosses the equator
+			WHEN (ABS(YAW_PID:SETPOINT - SHIP:ORBIT:INCLINATION) < 0.01) THEN {
+				PRINT "Resetting Yaw PID".
+				YAW_PID:RESET().
+				SET modeStartYaw TO yaw_for(SHIP:VELOCITY:ORBIT).
 			}
 
 			// When the atmosphere isn't really a concern anymore, let the PID have a little more freedom
@@ -222,10 +227,12 @@ UNTIL mode > 6 {
 			PRINT "Yaw PID Setpoint " + ROUND(YAW_PID:SETPOINT, 4) + "    " AT (0, 9).
 			PRINT "Yaw PID Input " + ROUND(SHIP:ORBIT:INCLINATION, 4) + "    " AT (0, 10).
 			PRINT "Facing Yaw " + ROUND(yaw_for(SHIP), 2) + "    " AT (0, 11).
-			PRINT "Centripital Accel " + distanceToString(centripitalAccel, 4) + "/s^2     " AT (0, 12).
-			PRINT "Local g Accel " + distanceToString(local_g, 4) + "/s^2     " AT (0, 13).
-			PRINT "Current Accel " + ROUND(shipInfo["Current"]["Accel"]/body_g, 4) + " g's      " AT (0, 14).
-			PRINT "Maximum Accel " + ROUND(shipInfo["Maximum"]["Accel"]/body_g, 4) + " g's      " AT (0, 15).
+			PRINT "Mode Start Yaw " + ROUND(modeStartYaw, 3) + " deg" AT (0, 12).
+
+			PRINT "Centripital Accel " + distanceToString(centripitalAccel, 4) + "/s^2     " AT (0, 14).
+			PRINT "Local g Accel " + distanceToString(local_g, 4) + "/s^2     " AT (0, 15).
+			PRINT "Current Accel " + ROUND(shipInfo["Current"]["Accel"]/body_g, 4) + " g's      " AT (0, 16).
+			PRINT "Maximum Accel " + ROUND(shipInfo["Maximum"]["Accel"]/body_g, 4) + " g's      " AT (0, 17).
 		}
 
 		// attempt at calculating the throttle to ensure maxGs acceleration at most
@@ -265,8 +272,11 @@ UNTIL mode > 6 {
 
 		// only call the PID if the ship is through a large portion of the gravity turn and the final inclination is not zero
 		IF (pitch_for(SHIP:VELOCITY:SURFACE) < 45) AND (finalInclination <> 0) {
-			IF (SHIP:GEOPOSITION:LAT > 0.0) SET yawValue TO YAW_PID:UPDATE( TIME:SECONDS, SHIP:ORBIT:INCLINATION).
-			IF (SHIP:GEOPOSITION:LAT < 0.0) SET yawValue TO -YAW_PID:UPDATE( TIME:SECONDS, SHIP:ORBIT:INCLINATION).
+			LOCAL yawSign IS 1.
+			LOCAL headingNorth IS yaw_for(VELOCITY:ORBIT) < 90 OR yaw_for(VELOCITY:ORBIT) > 270.
+			// If you are north and are heading north, an inclination error should result in a lower yaw, so apply a negative.
+			IF headingNorth SET yawSign TO -1.
+			SET yawValue TO yawSign * YAW_PID:UPDATE( TIME:SECONDS, SHIP:ORBIT:INCLINATION).
 		} ELSE SET yawValue TO 0.
 
 		// Gravity turn
@@ -336,7 +346,11 @@ UNTIL mode > 6 {
 		}
 	}
 //	logPID(PITCH_PID, "0:PITCH_PID.csv", TRUE).
-	IF YAW_PID:INPUT <> 0 logPID(YAW_PID, "0:YAW_PID.csv", TRUE).
+	printPID(PITCH_PID, "Pitch PID", 20, 30).
+	IF YAW_PID:INPUT <> 0 {
+		printPID(YAW_PID, "Yaw PID", 0, 30).
+		logPID(YAW_PID, "0:YAW_PID.csv", TRUE).
+	}
 }
 
 SET dontKillAfterScript TO NOT isStockRockets().

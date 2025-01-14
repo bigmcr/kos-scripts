@@ -164,7 +164,7 @@ FUNCTION copyToLocal {
 			FOR f IN fileList:KEYS {IF DELETEPATH(f).}
 
 			COMPILE "0:boot/boot.ks" TO "1:boot.ksm".
-			SET CORE:BOOTFILENAME    TO "1:/boot.ksm".
+			SET CORE:BOOTFILENAME    TO "/boot.ksm".
 			PRINT "Boot file name set to " + CORE:BOOTFILENAME.
 
 			PRINT "Now copying all scripts.".
@@ -198,7 +198,7 @@ FUNCTION copyToLocal {
 				FOR f IN fileList:KEYS {IF DELETEPATH(f).}
 
 				COMPILE "0:boot/boot.ks" TO "1:boot.ksm".
-				SET CORE:BOOTFILENAME    TO "1:/boot.ksm".
+				SET CORE:BOOTFILENAME    TO "/boot.ksm".
 				PRINT "Boot file name set to " + CORE:BOOTFILENAME.
 
 				PRINT "Now copying all critical scripts.".

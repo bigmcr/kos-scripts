@@ -16,4 +16,5 @@ RUNPATH("Circ", "apo").
 RUNPATH("Exec").
 REMOVE NEXTNODE.
 
+SET finalInclination TO ABS(finalInclination).
 SET loopMessage TO distanceToString(APOAPSIS) + "x" + distanceToString(PERIAPSIS) + " orbit " + ROUND(ABS(SHIP:ORBIT:INCLINATION - finalInclination), 1) + " deg inc error".
