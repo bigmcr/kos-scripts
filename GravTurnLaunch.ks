@@ -328,7 +328,7 @@ UNTIL mode > 6 {
 		// current orbital velocity is greater than the orbital velocity for a circular orbit at this altitude
 		// periapsis is within 1 km of current altitude (burn is complete)
 		// apoapsis is greater than 10 minutes away AND periapsis is greater than 10 minutes away
-		//		AND altitude is greater than 100,000 meters AND vertical speed is positive
+		//		AND altitude is greater than end altitiude AND vertical speed is positive
 		//		AND periapsis is above ground
 		IF (SHIP:VELOCITY:ORBIT:SQRMAGNITUDE*0.999 > MU/(SHIP:POSITION - SHIP:BODY:POSITION):MAG) {
 			SET endMessage TO "Final orbital velocity met".
