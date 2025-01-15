@@ -22,7 +22,7 @@ LOCAL mode IS 0.
 // Mode 6 - Maintain vertical speed of 0 m/s
 
 LOCAL yawValue IS 0.										// yaw adjustment factor for inclination tuning
-LOCAL PITCH_PID IS PIDLOOP(2.0, 0.25, 2.0).	// PID loop to control pitch
+LOCAL PITCH_PID IS PIDLOOP(2.0, 0.25, 2.0, -5, 5).	// PID loop to control pitch
 LOCAL YAW_PID IS PIDLOOP(20, 5, 20, -2, 2).		// PID loop to control yaw
 LOCAL gravTurnStart TO 1000.						// The altitude of the start of the gravity turn
 LOCAL gravTurnExponent TO 0.740740741.	// The exponent used in the calculation of the gravity turn
@@ -346,7 +346,7 @@ UNTIL mode > 6 {
 		}
 	}
 //	logPID(PITCH_PID, "0:PITCH_PID.csv", TRUE).
-	printPID(PITCH_PID, "Pitch PID", 20, 30).
+	printPID(PITCH_PID, "Pitch PID", 40, 30).
 	IF YAW_PID:INPUT <> 0 {
 		printPID(YAW_PID, "Yaw PID", 0, 30).
 		logPID(YAW_PID, "0:YAW_PID.csv", TRUE).
