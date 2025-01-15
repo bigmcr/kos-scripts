@@ -304,8 +304,8 @@ UNTIL mode > 6 {
 			// when vertical speed is within one second of falling below zero, start controlling pitch to maintain 0 vertical speed
 			IF VERTICALSPEED < local_g {
 				PITCH_PID:RESET().
-				SET PITCH_PID:MAXOUTPUT TO 15.
-				SET PITCH_PID:MINOUTPUT TO -15.
+				SET PITCH_PID:MAXOUTPUT TO 5.
+				SET PITCH_PID:MINOUTPUT TO -5.
 				SET mode to 6.
 			}
 		}
