@@ -109,8 +109,8 @@ IF thisSatNumber <> 1 {
   SET nodeTime TO nodeTime + TIME:SECONDS.
   LOCAL leadPeriod IS leadVessel:ORBIT:PERIOD.
   LOCAL desiredAngle IS (thisSatNumber - 1) * 360 / constellationSize.
-  LOCAL actualAngle IS normalizeAngle(SHIP:BODY:GEOPOSITIONOF(POSITIONAT(leadVessel, nodeTime)):LNG - SHIP:BODY:GEOPOSITIONOF(POSITIONAT(SHIP, nodeTime)):LNG).
-  LOCAL deltaAngle IS normalizeAngle(actualAngle - desiredAngle).
+  LOCAL actualAngle IS normalizeAngle360(SHIP:BODY:GEOPOSITIONOF(POSITIONAT(leadVessel, nodeTime)):LNG - SHIP:BODY:GEOPOSITIONOF(POSITIONAT(SHIP, nodeTime)):LNG).
+  LOCAL deltaAngle IS normalizeAngle360(actualAngle - desiredAngle).
   LOCAL ecc IS SHIP:ORBIT:ECCENTRICITY.
   LOCAL eccentricAnomalyDelta IS 2 * ARCTAN((1 - ecc)/(1 + ecc) * TAN((actualAngle - desiredAngle)/2)).
   LOCAL timeChangeNeeded IS SHIP:ORBIT:PERIOD / (2 * CONSTANT:PI) * (eccentricAnomalyDelta*CONSTANT:DegToRad - ecc * SIN(eccentricAnomalyDelta)).

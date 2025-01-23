@@ -41,7 +41,7 @@ UNTIL ABS(estimateTimeFromNow - estimateTimeFromNowOld) < 0.5 OR iteration > ite
   SET retrogradeMeanAnomaly TO trueToMeanAnomaly(retrogradeTrueAnomaly).
   SET burnTrueAnomaly TO retrogradeTrueAnomaly - 90 - burnInfo["theta_turn"].
   SET burnMeanAnomaly TO trueToMeanAnomaly(burnTrueAnomaly).
-  SET estimateTimeFromNow TO normalizeAngle(burnMeanAnomaly - trueToMeanAnomaly(SHIP:ORBIT:TRUEANOMALY)) / meanAngularMotion.
+  SET estimateTimeFromNow TO normalizeAngle360(burnMeanAnomaly - trueToMeanAnomaly(SHIP:ORBIT:TRUEANOMALY)) / meanAngularMotion.
   SET iteration TO iteration + 1.
 }
 

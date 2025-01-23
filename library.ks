@@ -2738,7 +2738,7 @@ FUNCTION meanToTrueAnomaly {
     SET trueAnomaly TO trueAnomaly + 360.0.
   }
 
-  RETURN normalizeAngle(trueAnomaly).
+  RETURN normalizeAngle360(trueAnomaly).
 }
 
 // given the true anomaly (in degrees), returns mean anomaly (in degrees)
@@ -2759,14 +2759,14 @@ FUNCTION trueToMeanAnomaly {
 	//	LOCAL sinE IS SQRT(1 - eccentricity^2) * SIN(trueAnomaly)/(1 + eccentricity * COS(trueAnomaly)).
 	//  LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCTAN2(sinE, cosE).
 	  LOCAL meanAnomaly IS CONSTANT:RadToDeg * (eccentricAnomaly - eccentricity * SIN(eccentricAnomaly * CONSTANT:RadToDeg)).
-		RETURN normalizeAngle(meanAnomaly).
+		RETURN normalizeAngle360(meanAnomaly).
 	} ELSE { // hyperbolic case
 		// Note: equations taken from https://en.wikipedia.org/wiki/Hyperbolic_trajectory, section "Equations of Motion"
 		// Hyperbolic Eccentric Anomaly
 		LOCAL bigE IS ACOSH((CONSTANT:DegToRad * COS(trueAnomaly) + eccentricity)/(1 + eccentricity * CONSTANT:DegToRad * COS(trueAnomaly))).
 
 		LOCAL meanAnomaly IS eccentricity * SINH(bigE) - bigE.
-		RETURN normalizeAngle(meanAnomaly).
+		RETURN normalizeAngle360(meanAnomaly).
 	}
 }
 
@@ -2781,11 +2781,19 @@ FUNCTION flightPathAngle {
 }
 
 // Given an angle in degrees, returns the normalized angle in degrees
-FUNCTION normalizeAngle {
+// Returns an angle between 0 degrees and 360 degrees
+FUNCTION normalizeAngle360 {
 	PARAMETER angle.
 	LOCAL tempAngle IS ARCTAN2(SIN(angle), COS(angle)).
 	IF tempAngle < 0 SET tempAngle TO tempAngle + 360.
 	RETURN tempAngle.
+}
+
+// Given an angle in degrees, returns the normalized angle in degrees
+// Returns an angle between -180 degrees and 180 degrees
+FUNCTION normalizeAngle180 {
+	PARAMETER angle.
+	RETURN normalizeAngle360(angle) - 180.
 }
 
 LOCAL maxHyperbolicVariable IS 709.78.
@@ -2976,4 +2984,20 @@ FUNCTION absoluteVelocity {
     SET thing TO thing:BODY.
   }
   RETURN finalVelocity.
+}
+
+// Find Quadratic Roots
+// Given the three values A, B and C, return the solutions to the quadratic Ax^2 + Bx + C = 0
+// Returns a LEXICON with up to three entries.
+//    Roots will be the number of solutions, scalar with value 0, 1 or 2.
+//    Positive will be the positive solution, if it exists (or the only solution, if there is only one)
+//		Negative will be the negative solution, if it exists.
+FUNCTION solveQuadratic {
+	PARAMETER A.
+	PARAMETER B.
+	PARAMETER C.
+  LOCAL discriminant IS B*B-4*A*C.
+  IF discriminant < 0 RETURN LEXICON("Roots", 0).
+  IF discriminant = 0 RETURN LEXICON("Roots", 1, "Positive", -B/(2*A)).
+  RETURN LEXICON("Roots", 2, "Positive", (-B+SQRT(discriminant))/(2*A), "Negative", (-B-SQRT(discriminant))/(2*A)).
 }
