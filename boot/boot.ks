@@ -108,7 +108,9 @@ FUNCTION copyScript {
 
 FUNCTION copyToLocal {
 	PARAMETER forcedUpdate IS FALSE.
-	IF NOT connectionToKSC() RETURN FALSE.
+	IF NOT connectionToKSC() RETURN 0.
+
+	LOCAL filesCopied IS 0.
 
 	// if the maneuver node script already exists on the volume, only copy over updated files
 	// I.E. files that don't match the original.
@@ -125,13 +127,13 @@ FUNCTION copyToLocal {
 					IF f:READALL:LENGTH <> fileListAndContents[fNameWOExtension]:LENGTH {
 						PRINT f:NAME + " has changed, updating it now".
 						copyScript(f:NAME, "1:").
+						SET filesCopied TO filesCopied + 1.
 					}
 				}
 			}
 		}
 		DELETEPATH("0:TempFolder").
 		PRINT "Finished reviewing files".
-		WAIT 1.
 	} ELSE {
 		CLEARSCREEN.
 		// if the maneuver node script doesn't already exist, or if forcedUpdate is TRUE, copy everything over.
@@ -161,7 +163,7 @@ FUNCTION copyToLocal {
 			PRINT "There is enough room for all files on the local volume.".
 			PRINT "Now deleting all files on the local volume.".
 			SET fileList TO CORE:VOLUME:FILES.
-			FOR f IN fileList:KEYS {IF DELETEPATH(f).}
+			FOR f IN fileList:KEYS {DELETEPATH(f).}
 
 			COMPILE "0:boot/boot.ks" TO "1:boot.ksm".
 			SET CORE:BOOTFILENAME    TO "/boot.ksm".
@@ -170,15 +172,13 @@ FUNCTION copyToLocal {
 			PRINT "Now copying all scripts.".
 			CD("0:Staging").
 			LIST FILES IN fileList.
-			FOR f IN fileList {COPYPATH(f:NAME, "1:" + f:NAME).}
+			FOR f IN fileList {COPYPATH(f:NAME, "1:" + f:NAME). SET filesCopied TO filesCopied + 1.}
 
 			CD("0:").
 			LIST FILES IN fileList.
 			FOR f IN fileList {IF f:EXTENSION = "settings" COPYPATH(f:NAME, "1:" + f:NAME).}
 			DELETEPATH("0:Staging").
 			SWITCH TO 1.
-			WAIT 0.5.
-			RETURN TRUE.
 		} ELSE {
 			PRINT "Now checking to see if there is enough space for critical files".
 			CD("0:Boot"). LIST FILES IN fileList.
@@ -203,23 +203,21 @@ FUNCTION copyToLocal {
 
 				PRINT "Now copying all critical scripts.".
 				CD("0:Staging").
-				FOR f IN criticalFiles {COPYPATH(f, "1:" + f + ".ksm").}
+				FOR f IN criticalFiles {COPYPATH(f, "1:" + f + ".ksm"). SET filesCopied TO filesCopied + 1.}
 
 				CD("0:").
 				LIST FILES IN fileList.
 				FOR f IN fileList {IF f:EXTENSION = "settings" COPYPATH(f:NAME, "1:" + f:NAME).}
 				DELETEPATH("0:Staging").
 				SWITCH TO 1.
-				WAIT 0.5.
-				RETURN TRUE.
 			} ELSE {
 				PRINT "There is not enough space on the local volume".
 				PRINT "Local volume not modified".
 				DELETEPATH("0:Staging").
-				RETURN FALSE.
 			}
 		}
 	}
+	RETURN filesCopied.
 }
 
 // Wait 1/4 of a second for the universe to fully load.

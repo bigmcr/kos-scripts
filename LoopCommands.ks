@@ -451,10 +451,10 @@ FUNCTION createCommandList {
 	possibleCommands:ADD("local", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER forcedUpdate IS FALSE.
 		IF connectionToKSC() {
-			copyToLocal(forcedUpdate).
+			LOCAL filesCopied IS copyToLocal(forcedUpdate).
 			SWITCH TO 1.
 			SET runLocal TO TRUE.
-			RETURN "Updated all scripts, running locally".
+			RETURN "Updated " + filesCopied + " scripts, running locally".
 		}
 		RETURN "Already running locally".
 		})).
