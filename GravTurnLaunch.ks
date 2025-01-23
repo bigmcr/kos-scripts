@@ -299,7 +299,7 @@ UNTIL mode > 6 {
 		IF mode = 5 {
 			SET pitchValue TO 0.0.
 			// This needs to be updated every scan to keep the pitch at 0 as the craft moves around the planet
-			SET globalSteer TO HEADING(modeStartYaw + yawValue, pitchValue).
+			SET globalSteer TO HEADING(yaw_for(SHIP:VELOCITY:ORBIT) + yawValue, pitchValue).
 
 			// when vertical speed is within one second of falling below zero, start controlling pitch to maintain 0 vertical speed
 			IF VERTICALSPEED < local_g {
@@ -321,7 +321,7 @@ UNTIL mode > 6 {
 			}
 			SET PITCH_PID:KD TO MAX(4.0 * (1 - GROUNDSPEED/ABS(SQRT(BODY:MU/(ALTITUDE + BODY:RADIUS)))), 0.0).
 			SET pitchValue TO MIN(80, ARCSIN(accelRatios) + PITCH_PID:UPDATE( TIME:SECONDS, VERTICALSPEED)).
-			SET globalSteer TO HEADING(modeStartYaw + yawValue, pitchValue).
+			SET globalSteer TO HEADING(yaw_for(SHIP:VELOCITY:ORBIT) + yawValue, pitchValue).
 		}
 
 		// when any of the following conditions are met, kill the engine and stop the program
