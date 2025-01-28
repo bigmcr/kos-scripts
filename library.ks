@@ -2793,7 +2793,9 @@ FUNCTION normalizeAngle360 {
 // Returns an angle between -180 degrees and 180 degrees
 FUNCTION normalizeAngle180 {
 	PARAMETER angle.
-	RETURN normalizeAngle360(angle) - 180.
+	LOCAL tempAngle IS ARCTAN2(SIN(angle), COS(angle)).
+	IF tempAngle < -180 SET tempAngle TO tempAngle + 360.
+	RETURN tempAngle.
 }
 
 LOCAL maxHyperbolicVariable IS 709.78.
