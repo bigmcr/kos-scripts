@@ -10,7 +10,7 @@ IF SHIP:BODY:ATM:EXISTS AND altitudeTarget = 30000 SET altitudeTarget TO SHIP:BO
 setLockedThrottle(FALSE).
 setLockedSteering(FALSE).
 
-RUNPATH("GravTurnLaunch", finalInclination, TRUE, 10, altitudeTarget, initialStage, maxGs).
+RUNPATH("GravTurnLaunch", finalInclination, altitudeTarget, initialStage, maxGs).
 endScript().
 RUNPATH("Circ", "apo").
 RUNPATH("Exec").

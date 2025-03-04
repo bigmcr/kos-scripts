@@ -1903,15 +1903,15 @@ FUNCTION printPID
 	PARAMETER Ycoord IS 0.
 	PARAMETER roundDigits IS 4.
 	PRINT PIDName AT(Xcoord, Ycoord + 0).
-	PRINT "CV " + ROUND(PID:OUTPUT, roundDigits) + "    " AT(Xcoord, Ycoord + 1).
-	PRINT "PV " + ROUND(PID:INPUT, roundDigits) + "     " AT(Xcoord, Ycoord + 2).
-	PRINT "SP " + ROUND(PID:SETPOINT, roundDigits) + "     " AT(Xcoord, Ycoord + 3).
-	PRINT "Error " + ROUND(PID:ERROR, roundDigits) + "    " AT(Xcoord, Ycoord + 4).
-	PRINT "Error Sum " + ROUND(PID:ERRORSUM, roundDigits) + "   " AT(Xcoord, Ycoord + 5).
-	PRINT "ChangeRate " + ROUND(PID:CHANGERATE, roundDigits) + "      " AT(Xcoord, Ycoord + 6).
-	PRINT "KP " + ROUND(PID:KP, roundDigits) + "      " AT(Xcoord, Ycoord + 7).
-	PRINT "KI " + ROUND(PID:KI, roundDigits) + "      " AT(Xcoord, Ycoord + 8).
-	PRINT "KD " + ROUND(PID:KD, roundDigits) + "      " AT(Xcoord, Ycoord + 9).
+	PRINT "CV " + ROUND(PID:OUTPUT, roundDigits) + " ":PADLEFT(roundDigits + 2) AT(Xcoord, Ycoord + 1).
+	PRINT "PV " + ROUND(PID:INPUT, roundDigits) + " ":PADLEFT(roundDigits + 2) AT(Xcoord, Ycoord + 2).
+	PRINT "SP " + ROUND(PID:SETPOINT, roundDigits) + " ":PADLEFT(roundDigits + 2) AT(Xcoord, Ycoord + 3).
+	PRINT "Error " + ROUND(PID:ERROR, roundDigits) + " ":PADLEFT(roundDigits + 2) AT(Xcoord, Ycoord + 4).
+	PRINT "Error Sum " + ROUND(PID:ERRORSUM, roundDigits) + " ":PADLEFT(roundDigits + 2) AT(Xcoord, Ycoord + 5).
+	PRINT "ChangeRate " + ROUND(PID:CHANGERATE, roundDigits) + " ":PADLEFT(roundDigits + 2) AT(Xcoord, Ycoord + 6).
+	PRINT "KP " + ROUND(PID:KP, roundDigits) + " ":PADLEFT(roundDigits + 2) AT(Xcoord, Ycoord + 7).
+	PRINT "KI " + ROUND(PID:KI, roundDigits) + " ":PADLEFT(roundDigits + 2) AT(Xcoord, Ycoord + 8).
+	PRINT "KD " + ROUND(PID:KD, roundDigits) + " ":PADLEFT(roundDigits + 2) AT(Xcoord, Ycoord + 9).
 	PRINT "Min/Max Output: " + PID:MINOUTPUT + " / " + PID:MAXOUTPUT + "       " AT(Xcoord, Ycoord + 10).
 	RETURN 0.
 }

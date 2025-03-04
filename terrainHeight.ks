@@ -1,24 +1,3 @@
-function yaw_for {
-  parameter vect.
-
-  local trig_x is vdot(SHIP:north:vector, vect).
-  local trig_y is vdot(east_for(SHIP), vect).
-
-  local result is arctan2(trig_y, trig_x).
-
-  if result < 0 { 
-    return 360 + result.
-  } else {
-    return result.
-  }
-}
-
-function east_for {
-  parameter ves.
-
-  return vcrs(ves:up:vector, ves:north:vector).
-}
-
 // Find the slope of the ground the given number of meters north and east of the ship.
 FUNCTION findSlopeOfGround {
 	PARAMETER samplePos.
