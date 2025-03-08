@@ -183,9 +183,6 @@ LOCAL mu IS SHIP:BODY:MU.
 LOCAL targetNormal IS getTargetNormalVector(finalInclination, finalLAN).
 LOCAL targetPlaneDistance IS 0.
 LOCAL targetPlaneSpeed IS 0.
-LOCAL targetNormalVecDraw IS VECDRAW(V(0,0,0), V(0,0,0),  YELLOW, "Target Normal"  , 1.0, TRUE, 0.2, FALSE).
-SET targetNormalVecDraw:STARTUPDATER TO {RETURN BODY:POSITION.}.
-SET targetNormalVecDraw:VECUPDATER TO {RETURN 3*BODY:RADIUS * targetNormal.}.
 
 LOCAL actualAccel IS 0.
 LOCAL accelVertical IS 0.
@@ -255,6 +252,7 @@ UNTIL mode > 6 {
 	// Engine ramp up
 	IF mode = 1 {
 		SET pitchValue TO 90.
+		SET globalThrottle TO 1.0.
 		// if the active engines have reached full thrust, stage and switch modes
 		SET globalSteer TO HEADING(0, pitchValue).
 		IF isLFFullThrust() {
