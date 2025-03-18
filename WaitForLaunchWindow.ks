@@ -228,10 +228,11 @@ IF (targetInclination <> 0) OR (targetLAN <> 0) {
 
   LOCAL tempChar IS "".
   LOCAL deltaLAN IS 0.
-  LOCAL timerStart IS 0.
+  LOCAL timerStart IS TIME:SECONDS.
   LOCAL fudgeFactor IS 0.35*SIN(targetInclination).
   LOCAL finalLaunchDirectionIsNorth IS FALSE.
   LOCAL extendedView IS FALSE.
+  LOCAL delayBeforeAuto IS 30.
 
   LOCAL vecDraws IS launchWindowVectorsCreate().
 
@@ -277,6 +278,7 @@ IF (targetInclination <> 0) OR (targetLAN <> 0) {
     PRINT "Press 8 to set the fudge factor to 0 degrees.".
     PRINT "Press 9 to raise the fudge factor by 0.1 degrees.".
     PRINT "Press backspace to abort launch".
+    PRINT "In " + ROUND(timerStart + delayBeforeAuto - TIME:SECONDS, 0) + " seconds, launch in daylight will be selected".
 
     IF TERMINAL:INPUT:HASCHAR {
   		SET tempChar TO TERMINAL:INPUT:GETCHAR().
@@ -301,16 +303,17 @@ IF (targetInclination <> 0) OR (targetLAN <> 0) {
         SET tempChar TO "".
       }
   	}
-    IF (solutions["solutionType"] = "Error") AND (timerStart = 0) AND (targetInclination <> 0) {
-      SET timerStart TO TIME:SECONDS.
+    IF (solutions["solutionType"] = "Error") AND (targetInclination <> 0) {
       CLEARSCREEN.
       PRINT "Launch site is too far from the equator to launch to that inclination.".
       PRINT "You cannot directly launch into that orbit from this launch site.".
-      UNTIL TIME:SECONDS > timerStart + 10 {
-        PRINT "Waiting " + ROUND(timerStart + 10 - TIME:SECONDS, 0) + " seconds, then aborting launch.  " AT (0, 2).
-        WAIT 0.
+      PRINT "Waiting " + ROUND(timerStart + 10 - TIME:SECONDS, 0) + " seconds, then aborting launch.  " AT (0, 2).
+      IF TIME:SECONDS > timerStart + 10 {
+        SET tempChar TO TERMINAL:INPUT:BACKSPACE.
       }
-      SET tempChar TO TERMINAL:INPUT:BACKSPACE.
+    }
+    IF TIME:SECONDS > timerStart + delayBeforeAuto {
+      SET tempChar TO TERMINAL:INPUT:ENTER.
     }
     WAIT 0.
   }

@@ -36,6 +36,7 @@ LOCAL mode IS 0.
 // Mode 5 - Burn horizontal only
 // Mode 6 - Maintain vertical speed of 0 m/s
 
+LOCAL yawAuthority IS SIN(15).								// Number of degrees that the yaw control is allowed to swing the rocket from prograde.
 LOCAL yawValue IS 0.										// yaw adjustment factor for inclination tuning
 LOCAL PITCH_PID IS PIDLOOP(2.0, 0.25, 2.0, -5, 5).	// PID loop to control pitch
 LOCAL gravTurnStart TO 1000.						// The altitude of the start of the gravity turn
@@ -49,7 +50,7 @@ LOCAL useYawPID IS (finalInclination <> 0).
 // This is the position from the orbital plane PID. Input is the position from
 // the orbital plane, output is speed toward or away from the plane.
 // The default values assume an approach speed of 200 m/s for every 10 km of error.
-LOCAL yawPos_PID IS PIDLOOP(0.01, 0.0, 0.15).
+LOCAL yawPos_PID IS PIDLOOP(0.01, 0.00001, 0.15).
 SET yawPos_PID:MAXOUTPUT TO 200.
 SET yawPos_PID:MINOUTPUT TO -yawPos_PID:MAXOUTPUT.
 SET yawPos_PID:SETPOINT TO 0.
@@ -96,7 +97,7 @@ LOCAL defaultYaw TO 0.
 IF connectionToKSC() {
 	IF EXISTS("0:pitchCalcs.csv") DELETEPATH("0:pitchCalcs.csv").
 	IF connectionToKSC() LOG "Time,Mode,Stage,Mass (kg),Actual Pitch (deg),"+
-	"Prograde Pitch (deg),Pitch Value (deg),Horizontal Speed (m/s),"+
+	"Srf Prograde Pitch (deg),Orbit Prograde Pitch (deg),Pitch Value (deg),Horizontal Speed (m/s),"+
 	"Current Accel (m/s^2),Centripital Accel (m/s^2),Altitude (m),"+
 	"Local g (m/s^2),Vertical Accel Req'd (m/s^2),Required Pitch (deg),"+
 	"Horizontal Accel Req'd (m/s^2),Horizontal Accel Available (m/s^2),"+
@@ -230,15 +231,16 @@ UNTIL mode > 6 {
 		SET availableHorizontalAccel TO 0.
 	}
 	IF (availableHorizontalAccel <> 0) {SET accelRatiosHorizontal TO yawSpeed_PID:OUTPUT / availableHorizontalAccel.}
-	IF accelRatiosHorizontal > SIN(30) SET accelRatiosHorizontal TO SIN(30).
-	IF accelRatiosHorizontal < -SIN(30) SET accelRatiosHorizontal TO -SIN(30).
+	IF accelRatiosHorizontal > yawAuthority SET accelRatiosHorizontal TO yawAuthority.
+	IF accelRatiosHorizontal < -yawAuthority SET accelRatiosHorizontal TO -yawAuthority.
 
 	SET targetNormal TO getTargetNormalVector(finalInclination, finalLAN).
 	SET targetPlaneDistance TO targetNormal * (SHIP:POSITION - BODY:POSITION).
 	SET targetPlaneSpeed TO targetNormal * VELOCITY:ORBIT.
 	IF connectionToKSC() LOG MISSIONTIME + "," + mode + "," + (shipInfo["NumberOfStages"] - 1) + "," +
 			SHIP:MASS*1000 + "," + (90 - vang(SHIP:UP:VECTOR, SHIP:FACING:FOREVECTOR)) + "," +
-			(90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE)) + "," + pitchValue + "," +
+			(90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:SURFACE)) + "," + (90 - vang(SHIP:UP:VECTOR, SHIP:VELOCITY:ORBIT)) + "," +
+			pitchValue + "," +
 			GROUNDSPEED + "," + shipInfo["Current"]["Accel"] + "," + centripitalAccel + "," +
 			ALTITUDE + "," + local_g + "," + requiredVerticalAccel + "," +
 			ARCSIN(accelRatiosVertical) + "," + yawSpeed_PID:OUTPUT + "," +
