@@ -2384,20 +2384,6 @@ FUNCTION warpToTime
 	RETURN TIME:SECONDS - startTime.
 }
 
-// Angle Difference
-// This function returns the angular distance between two angles, bound between [-180, 180). All angles are in degrees.
-// Passed the following:
-//			angle 1 (scalar, degrees)
-//			angle 2 (scalar, degrees)
-// Returns the following:
-//			angle difference (scalar, degrees)
-FUNCTION angleDifference
-{
-	PARAMETER angle1.
-	PARAMETER angle2.
-	RETURN MOD(ABS(angle1-angle2+180),360)-180.
-}
-
 // Time to Longitude
 // This function returns the time it will take to rotate to a specific longitude.
 // It assumes that the ship is not in motion relative to the body it is on.
@@ -2409,7 +2395,7 @@ FUNCTION angleDifference
 FUNCTION timeToLongitude
 {
 	PARAMETER desiredLongitude.
-	RETURN TIME:SECONDS + angleDifference(SHIP:GEOPOSITION:LNG, desiredLongitude) / 360 * SHIP:BODY:ROTATIONPERIOD.
+	RETURN TIME:SECONDS + normalizeAngle180(SHIP:GEOPOSITION:LNG, desiredLongitude) / 360 * SHIP:BODY:ROTATIONPERIOD.
 }
 
 // Returns time in seconds to the next time SHIP crosses the input altitude or -1 if input altitude is never crossed
@@ -2746,13 +2732,13 @@ FUNCTION trueToMeanAnomaly {
   PARAMETER trueAnomaly.
   PARAMETER eccentricity IS SHIP:ORBIT:ECCENTRICITY.
 
-  // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
+  // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return true anomaly.
   IF eccentricity = 0 RETURN trueAnomaly.
 
 	IF eccentricity < 1 { // elliptical case
 		// note that eccentric anomaly is in radians
 		LOCAL eccentricAnomaly IS CONSTANT:DegToRad * 2 * ARCTAN(TAN(trueAnomaly / 2) / SQRT((1 + eccentricity) / (1 - eccentricity))).
-	//	PRINT "eccentric anomaly: " + eccentricAnomaly.
+		//PRINT "eccentric anomaly: " + (eccentricAnomaly * CONSTANT:RadToDeg).
 
 	//  This method also calculates eccentric anomaly equally well, but it is much more processor intensive than the other one.
 	//	LOCAL cosE IS (eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly)).
@@ -2763,7 +2749,7 @@ FUNCTION trueToMeanAnomaly {
 	} ELSE { // hyperbolic case
 		// Note: equations taken from https://en.wikipedia.org/wiki/Hyperbolic_trajectory, section "Equations of Motion"
 		// Hyperbolic Eccentric Anomaly
-		LOCAL bigE IS ACOSH((CONSTANT:DegToRad * COS(trueAnomaly) + eccentricity)/(1 + eccentricity * CONSTANT:DegToRad * COS(trueAnomaly))).
+		LOCAL bigE IS ACOSH((eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly))).
 
 		LOCAL meanAnomaly IS eccentricity * SINH(bigE) - bigE.
 		RETURN normalizeAngle360(meanAnomaly).
@@ -3002,4 +2988,57 @@ FUNCTION solveQuadratic {
   IF discriminant < 0 RETURN LEXICON("Roots", 0).
   IF discriminant = 0 RETURN LEXICON("Roots", 1, "Positive", -B/(2*A)).
   RETURN LEXICON("Roots", 2, "Positive", (-B+SQRT(discriminant))/(2*A), "Negative", (-B-SQRT(discriminant))/(2*A)).
+}
+
+// Gets the normal vector of an Orbitable object.
+// The vector is normalized.
+FUNCTION getNormalVector {
+  PARAMETER orbitableObject IS "Equator".
+  IF orbitableObject = "Equator" RETURN SHIP:BODY:ANGULARVEL:NORMALIZED.
+  RETURN VCRS((orbitableObject:POSITION - orbitableObject:BODY:POSITION):NORMALIZED, orbitableObject:VELOCITY:ORBIT:NORMALIZED).
+}
+
+// take the current orbit and a desired final true anomaly and return the time
+// until the passed object will be at that true anomaly.
+// This works for either elliptical or hyperbolic orbits.
+// If the true anomaly is less than the current true anomaly, response varies
+// based on eccentricity.
+//     In the elliptical case, it just adds the period to the true anomaly.
+//     In the hyperbolic case, it returns 0 seconds.
+FUNCTION trueAnomalyDeltaToTime {
+  PARAMETER orbitObject.
+  PARAMETER finalTrueAnomaly.
+  IF orbitObject:ECCENTRICITY < 1 {
+    // for elliptical orbits, this is fairly easy
+    IF finalTrueAnomaly < orbitObject:TRUEANOMALY SET finalTrueAnomaly TO finalTrueAnomaly + 360.
+    LOCAL trueAnomalyDelta IS normalizeAngle360(trueToMeanAnomaly(finalTrueAnomaly) - trueToMeanAnomaly(orbitObject:TRUEANOMALY)).
+    RETURN trueAnomalyDelta / 360 * orbitObject:PERIOD.
+  } ELSE {
+    // For hyperbolic orbits, true anomaly to time is more complicated.
+    IF finalTrueAnomaly < orbitObject:TRUEANOMALY RETURN 0.
+    LOCAL ecc IS orbitObject:ECCENTRICITY.
+    LOCAL a IS orbitObject:SEMIMAJORAXIS.
+    LOCAL GM IS orbitObject:BODY:MU.
+    LOCAL v_0 IS orbitObject:TRUEANOMALY.
+    LOCAL v_1 IS finalTrueAnomaly.
+
+    // Equation taken from http://www.braeunig.us/space/index.htm, section "Orbital Mechanics", equation 4.87.
+    LOCAL F_0 IS ACOSH((ecc + COS(v_0))/(1 + ecc * COS(V_0))).
+    LOCAL F_1 IS ACOSH((ecc + COS(v_1))/(1 + ecc * COS(V_1))).
+
+    // This equation only uses the hyperbolic eccentric anomaly, not the mean anomaly.
+    // Equation taken from http://www.braeunig.us/space/index.htm, section "Orbital Mechanics", equation 4.86.
+    RETURN SQRT((-a)^3/GM)*((ecc*SINH(F_1)-F_1)-(ecc*SINH(F_0)-F_0)).
+  }
+}
+
+// Returns the angle from the first vector to the second vector in the direction
+//   indicated by the third vector, in degrees between 0 and 360.
+FUNCTION VANGSigned {
+  PARAMETER vector1.
+  PARAMETER vector2.
+  PARAMETER vector3.
+  LOCAL norm IS VCRS(vector1:NORMALIZED, vector2:NORMALIZED).
+  IF VDOT(norm, vector3) >= 0 RETURN VANG(vector1, vector2).
+  RETURN 360 - VANG(vector1, vector2).
 }

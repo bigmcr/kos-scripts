@@ -4,187 +4,148 @@ PARAMETER desiredRelativeInclination IS 0.
 // Chosen Node can be "Highest" (default), "nearest", "farthest", "AN" or "DN"
 PARAMETER chosenNode IS "Highest".
 PARAMETER useTargetPlane IS HASTARGET.
-PARAMETER visualize IS FALSE.
+PARAMETER visualize IS TRUE.
 
-// Determine if SHIP will be north of the given plane
-FUNCTION isNorthOfPlane {
-  PARAMETER timeOffset IS 0.
-  PARAMETER useTarget IS HASTARGET.
-  RETURN distanceFromPlane(timeOffset, useTarget) > 0.
-}
+LOCAL bodyPosition IS SHIP:POSITION - SHIP:BODY:POSITION.
+LOCAL targetNormal IS getNormalVector(CHOOSE TARGET IF useTargetPlane ELSE "Equator").
+LOCAL normalVector IS getNormalVector(SHIP).
+LOCAL relativeLANVector IS VCRS(normalVector, targetNormal).
+LOCAL relativeInclination IS VANG(normalVector, targetNormal).
 
-LOCAL errorValue IS -1234.
-LOCAL changeToNorth IS errorValue.
-LOCAL changeToSouth IS errorValue.
-LOCAL effectivePeriod IS 1.
-// If this is not a final trajectory, use the time until the trajectory changes,
-//   be that an SOI change or a maneuver.
-IF (SHIP:ORBIT:TRANSITION <> "Final") {
-  SET effectivePeriod TO ETA:TRANSITION - 10.0.
-} ELSE {
-  SET effectivePeriod TO SHIP:ORBIT:PERIOD.
-}
-LOCAL startTimeDelta IS effectivePeriod / 1000. // given the default period, this is 10 minutes
-LOCAL timeDelta IS startTimeDelta.
-LOCAL currentNorth IS isNorthOfPlane(0, useTargetPlane).
-LOCAL nextNorth IS isNorthOfPlane(timeDelta, useTargetPlane).
+LOCAL angleDelta IS LEXICON().
+angleDelta:ADD("AN", VANGSigned(bodyPosition:NORMALIZED, relativeLANVector, -SHIP:BODY:ANGULARVEL:NORMALIZED)).
+angleDelta:ADD("DN", normalizeAngle360(angleDelta["AN"] + 180)).
 
-LOCAL startTimeDeltaLoop IS startTimeDelta.
-LOCAL loopDone IS FALSE.
-LOCAL iterations IS 0.
-LOCAL iterationsMax IS 1000.
-LOCAL ANExists IS FALSE.
+LOCAL ANExists IS TRUE.
 LOCAL DNExists IS TRUE.
 
-LOCAL logFileName IS "0:incChange.csv".
-IF visualize AND connectionToKSC() {
-  CLEARSCREEN.
-  IF EXISTS(logFileName) DELETEPATH(logFileName).
-  LOG "Target's Orbit Normal Vector," + ROUNDV(VCRS(POSITIONAT(TARGET, TIME:SECONDS) - TARGET:BODY:POSITION, VELOCITYAT(TARGET, TIME:SECONDS):ORBIT):NORMALIZED, 11) TO logFileName.
-  LOG "Body Angular Velocity Vector," + ROUNDV(SHIP:BODY:ANGULARVEL:NORMALIZED, 11) TO logFileName.
-  LOG "Body Position Vector," + ROUNDV(-SHIP:BODY:POSITION, 11) TO logFileName.
-  IF (SHIP:ORBIT:TRANSITION = "Escape") LOG "Transition," + SHIP:ORBIT:TRANSITION + ",Time to Transition (s)," + ETA:TRANSITION TO logFileName.
-  ELSE LOG "Transition," + SHIP:ORBIT:TRANSITION TO logFileName.
-  LOG "Loop,TimeGuess,Radial Distance,Current North,Next North,Current Distance,Next Distance,Time Delta,Iterations" TO logFileName.
-  LOG "Test,0," + SHIP:BODY:DISTANCE + "," +
-  (distanceFromPlane(0, useTargetPlane) > 0) + "," + (distanceFromPlane(startTimeDelta, useTargetPlane) > 0) + "," +
-  distanceFromPlane(0, useTargetPlane) + "," + distanceFromPlane(startTimeDelta, useTargetPlane) + "," +
-  startTimeDelta + ",0" TO logFileName.
-}
+IF SHIP:ORBIT:TRANSITION <> "Final" {
+  angleDelta:ADD("Transition", VANGSigned(bodyPosition, POSITIONAT(SHIP, TIME:SECONDS + ETA:TRANSITION - 10) - SHIP:BODY:POSITION, -SHIP:BODY:ANGULARVEL:NORMALIZED)).
+} ELSE angleDelta:ADD("Transition", 360).
 
-SET iterations TO 0.
-FROM {LOCAL timeGuess IS 0.}
-  UNTIL timeGuess > effectivePeriod OR (changeToNorth <> errorValue AND changeToSouth <> errorValue) OR (iterations > iterationsMax)
-  STEP {SET timeGuess TO timeGuess + timeDelta.}
-  DO {
-    SET currentNorth TO isNorthOfPlane(timeGuess, useTargetPlane).
-    SET nextNorth TO isNorthOfPlane(timeGuess + timeDelta, useTargetPlane).
-    IF currentNorth <> nextNorth {
-      IF currentNorth AND NOT nextNorth {
-        SET changeToSouth TO timeGuess.
-        IF visualize AND connectionToKSC() LOG "Changing to South" TO logFileName.
-      } ELSE {
-        SET changeToNorth TO timeGuess.
-        IF visualize AND connectionToKSC() LOG "Changing to North" TO logFileName.
-      }
-    }
-    SET iterations TO iterations + 1.
-    IF visualize AND connectionToKSC() LOG "Main," + timeGuess + "," + (POSITIONAT(SHIP, TIME:SECONDS + timeGuess) - SHIP:BODY:POSITION):MAG + "," + currentNorth + "," + nextNorth + "," + distanceFromPlane(timeGuess, useTargetPlane) + "," + distanceFromPlane(timeGuess + timeDelta, useTargetPlane) + "," + timeDelta + "," + iterations TO logFileName.
-}
+SET ANExists TO (angleDelta["AN"] < angleDelta["Transition"]).
+SET DNExists TO (angleDelta["DN"] < angleDelta["Transition"]).
 
-SET ANExists TO changeToNorth <> errorValue.
-SET DNExists TO changeToSouth <> errorValue.
+// Now convert the determined mean anomalies to delay times.
+LOCAL delay IS LEXICON().
+IF ANExists delay:ADD("AN", trueAnomalyDeltaToTime(SHIP:ORBIT, SHIP:ORBIT:TRUEANOMALY + angleDelta["AN"])).
+IF DNExists delay:ADD("DN", trueAnomalyDeltaToTime(SHIP:ORBIT, SHIP:ORBIT:TRUEANOMALY + angleDelta["DN"])).
 
-IF ANExists {
-  SET timeDelta TO startTimeDelta.
-  SET startTimeDeltaLoop TO startTimeDelta.
-  SET iterations TO 0.
-  UNTIL ((timeDelta < startTimeDelta / 2^15) AND (timeDelta < 0.01)) OR (iterations > iterationsMax) {
-    SET startTimeDeltaLoop TO timeDelta.
-    SET timeDelta TO timeDelta / 2.
-    SET loopDone TO FALSE.
-    FROM {LOCAL timeGuess IS changeToNorth.}
-      UNTIL ((timeGuess >= changeToNorth + startTimeDeltaLoop) OR loopDone)
-      STEP {SET timeGuess TO timeGuess + timeDelta.}
-      DO {
-        SET currentNorth TO isNorthOfPlane(timeGuess, useTargetPlane).
-        SET nextNorth TO isNorthOfPlane(timeGuess + timeDelta, useTargetPlane).
-        IF currentNorth <> nextNorth {
-          SET loopDone TO TRUE.
-          SET changeToNorth TO timeGuess.
-          IF visualize AND connectionToKSC() LOG "Changing to North" TO logFileName.
-        }
-        SET iterations TO iterations + 1.
-        IF visualize AND connectionToKSC() LOG "North," + timeGuess + "," + (POSITIONAT(SHIP, TIME:SECONDS + timeGuess) - SHIP:BODY:POSITION):MAG + "," + currentNorth + "," + nextNorth + "," + distanceFromPlane(timeGuess, useTargetPlane) + "," + distanceFromPlane(timeGuess + timeDelta, useTargetPlane) + "," + timeDelta + "," + iterations TO logFileName.
-    }
-  }
-}
-
-IF DNExists {
-  SET timeDelta TO startTimeDelta.
-  SET startTimeDeltaLoop TO startTimeDelta.
-  SET iterations TO 0.
-  UNTIL ((timeDelta < startTimeDelta / 2^15) AND (timeDelta < 0.01)) OR (iterations > iterationsMax) {
-    SET startTimeDeltaLoop TO timeDelta.
-    SET timeDelta TO timeDelta / 2.
-    SET loopDone TO FALSE.
-    FROM {LOCAL timeGuess IS changeToSouth.}
-      UNTIL (timeGuess >= changeToSouth + startTimeDeltaLoop) OR loopDone
-      STEP {SET timeGuess TO timeGuess + timeDelta.}
-      DO {
-        SET currentNorth TO isNorthOfPlane(timeGuess, useTargetPlane).
-        SET nextNorth TO isNorthOfPlane(timeGuess + timeDelta, useTargetPlane).
-        IF currentNorth <> nextNorth {
-          SET loopDone TO TRUE.
-          SET changeToSouth TO timeGuess.
-          IF visualize AND connectionToKSC() LOG "Changing to South" TO logFileName.
-        }
-        SET iterations TO iterations + 1.
-        IF visualize AND connectionToKSC() LOG "South," + timeGuess + "," + (POSITIONAT(SHIP, TIME:SECONDS + timeGuess) - SHIP:BODY:POSITION):MAG + "," + currentNorth + "," + nextNorth + "," + distanceFromPlane(timeGuess, useTargetPlane) + "," + distanceFromPlane(timeGuess + timeDelta, useTargetPlane) + "," + timeDelta + "," + iterations TO logFileName.
-    }
-  }
-}
+LOCAL rValues IS LEXICON().
+IF ANExists rValues:ADD("AN", (POSITIONAT(SHIP, TIME:SECONDS + delay["AN"]) - SHIP:BODY:POSITION):MAG).
+IF DNExists rValues:ADD("DN", (POSITIONAT(SHIP, TIME:SECONDS + delay["DN"]) - SHIP:BODY:POSITION):MAG).
 
 // Determine which node to use
-LOCAL chosenTime IS changeToNorth.
 LOCAL usedNode IS "None".
 IF ANExists AND DNExists {
-  IF (chosenNode = "AN") OR (chosenNode = "asc") {
-    SET chosenTime TO changeToNorth.
-    SET usedNode TO "ascending".
+  IF (chosenNode = "AN") OR (chosenNode = "asc") OR (chosenNode = "ascending") {
+    SET usedNode TO "Ascending".
   }
-  IF (chosenNode = "DN") OR (chosenNode = "desc") {
-    SET chosenTime TO changeToSouth.
-    SET usedNode TO "descending".
+  IF (chosenNode = "DN") OR (chosenNode = "desc") OR (chosenNode = "descending")  {
+    SET usedNode TO "Descending".
   }
   IF chosenNode = "Nearest" {
-    SET chosenTime TO MIN(changeToNorth, changeToSouth).
-    SET usedNode TO "nearest".
+    SET usedNode TO (CHOOSE "Ascending" IF (delay["AN"] < delay["DN"]) ELSE "Descending").
   }
   IF chosenNode = "Farthest" {
-    SET chosenTime TO MAX(changeToNorth, changeToSouth).
-    SET usedNode TO "farthest".
+    SET usedNode TO (CHOOSE "Ascending" IF (delay["AN"] > delay["DN"]) ELSE "Descending").
   }
   IF chosenNode = "Highest" {
-    LOCAL positionAtNorth IS (POSITIONAT(SHIP, TIME:SECONDS + changeToNorth) - SHIP:BODY:POSITION):MAG.
-    LOCAL positionAtSouth IS (POSITIONAT(SHIP, TIME:SECONDS + changeToSouth) - SHIP:BODY:POSITION):MAG.
-    IF visualize {
-      PRINT "Altitude at North: " + distanceToString(positionAtNorth, 4).
-      PRINT "Altitude at South: " + distanceToString(positionAtSouth, 4).
-    }
-    IF positionAtNorth > positionAtSouth {
-      IF visualize PRINT "Choosing North".
-      SET chosenTime TO changeToNorth.
-      SET usedNode TO "highest - north".
+    IF rValues["AN"] > rValues["DN"] {
+      SET usedNode TO "Highest - Ascending".
     } ELSE {
-      IF visualize PRINT "Choosing South".
-      SET chosenTime TO changeToSouth.
-      SET usedNode TO "highest - south".
+      SET usedNode TO "Highest - Descending".
     }
   }
-} ELSE IF ANExists AND NOT DNExists {SET chosenTime TO changeToNorth. SET usedNode TO "north".}
-ELSE IF NOT ANExists AND DNExists {SET chosenTime TO changeToSouth. SET usedNode TO "south".}
+  IF chosenNode = "Lowest" {
+    IF rValues["AN"] <= rValues["DN"] {
+      SET usedNode TO "Lowest - Ascending".
+    } ELSE {
+      SET usedNode TO "Lowest - Descending".
+    }
+  }
+} ELSE IF ANExists AND NOT DNExists {SET usedNode TO "Ascending".}
+ELSE IF NOT ANExists AND DNExists {SET usedNode TO "Descending".}
 
-LOCAL vectorToNode IS POSITIONAT(SHIP, TIME:SECONDS + chosenTime) - SHIP:BODY:POSITION.
-LOCAL nodeVelocity IS VELOCITYAT(SHIP, TIME:SECONDS + chosenTime):ORBIT.
-LOCAL directionsAtNode IS getOrbitDirectionsAt(chosenTime, SHIP).
-LOCAL iDelta IS angleFromPlane(useTargetPlane) - desiredRelativeInclination.
-IF useTargetPlane { IF ((TARGET:ORBIT:INCLINATION > 90.0) <> (SHIP:ORBIT:INCLINATION > 90.0)) {SET iDelta TO 0-iDelta. PRINT "Reversing inclination change".}}
-IF chosenTime = changeToSouth {SET iDelta TO 0 - iDelta. IF visualize PRINT "DN - reversing inclination change".}
-LOCAL desiredVelocity IS nodeVelocity * ANGLEAXIS(iDelta, vectorToNode).
-LOCAL deltaV IS desiredVelocity - nodeVelocity.
-ADD NODE(TIME:SECONDS + chosenTime, deltaV * directionsAtNode["radial"], deltaV * directionsAtNode["normal"], deltaV * directionsAtNode["prograde"]).
+LOCAL chosenTime IS "None".
+IF usedNode:CONTAINS("Ascending") SET chosenTime TO delay["AN"].
+IF usedNode:CONTAINS("Descending") SET chosenTime TO delay["DN"].
+
+LOCAL iDelta IS relativeInclination - desiredRelativeInclination.
+
 IF visualize {
-  PRINT "Current Relative Inclination: " + ROUND(angleFromPlane(useTargetPlane), 4) + " degrees".
-  PRINT "Desired Relative Inclination: " + ROUND(desiredRelativeInclination, 4) + " degrees".
-  PRINT "Inc Change Required: " + ROUND(iDelta, 4) + " degrees".
-  PRINT "        radial    normal    prograde    mag".
-  PRINT "Node: " + ROUND(nodeVelocity * directionsAtNode["radial"]):TOSTRING:PADLEFT(8) + ROUND(nodeVelocity * directionsAtNode["normal"]):TOSTRING:PADLEFT(10) + ROUND(nodeVelocity * directionsAtNode["prograde"]):TOSTRING:PADLEFT(12) + ROUND(nodeVelocity:MAG):TOSTRING:PADLEFT(7).
-  PRINT "Want: " + ROUND(desiredVelocity * directionsAtNode["radial"]):TOSTRING:PADLEFT(8) + ROUND(desiredVelocity * directionsAtNode["normal"]):TOSTRING:PADLEFT(10) + ROUND(desiredVelocity * directionsAtNode["prograde"]):TOSTRING:PADLEFT(12) + ROUND(desiredVelocity:MAG):TOSTRING:PADLEFT(7).
-  PRINT "Delt: " + ROUND(deltaV * directionsAtNode["radial"]):TOSTRING:PADLEFT(8) + ROUND(deltaV * directionsAtNode["normal"]):TOSTRING:PADLEFT(10) + ROUND(deltaV * directionsAtNode["prograde"]):TOSTRING:PADLEFT(12) + ROUND(deltaV:MAG):TOSTRING:PADLEFT(7).
-  WAIT 10.
+  LOCAL vecDraws IS LEXICON().
+  LOCAL RADIUS IS SHIP:BODY:RADIUS * 3.
+  LOCAL localBody IS SHIP:BODY.
+
+  vecDraws:ADD("TargetNormal", VECDRAW(V(0,0,0), V(0,0,0),  YELLOW, "Target Normal"  , 1.0, TRUE, 0.2, FALSE)).
+  SET vecDraws["TargetNormal"]:START TO localBody:POSITION.
+  SET vecDraws["TargetNormal"]:VEC TO radius * targetNormal.
+
+  vecDraws:ADD("ShipNormal", VECDRAW(V(0,0,0), V(0,0,0),  RED, "Ship Normal"  , 1.0, TRUE, 0.2, FALSE)).
+  SET vecDraws["ShipNormal"]:START TO localBody:POSITION.
+  SET vecDraws["ShipNormal"]:VEC TO radius * normalVector.
+
+  vecDraws:ADD("LAN", VECDRAW(V(0,0,0), V(0,0,0),  GREEN, "LAN"  , 1.0, TRUE, 0.2, FALSE)).
+  SET vecDraws["LAN"]:START TO localBody:POSITION.
+  SET vecDraws["LAN"]:VEC TO radius * relativeLANVector:NORMALIZED.
+
+  vecDraws:ADD("bodyToShip", VECDRAW(V(0,0,0), V(0,0,0),  WHITE, "Body to SHIP"  , 1.0, TRUE, 0.2, TRUE)).
+  SET vecDraws["bodyToShip"]:START TO localBody:POSITION.
+  SET vecDraws["bodyToShip"]:VEC TO bodyPosition.
+
+  vecDraws:ADD("bodyToNode", VECDRAW(V(0,0,0), V(0,0,0),  WHITE, "Body to AN"  , 1.0, TRUE, 0.2, TRUE)).
+  SET vecDraws["bodyToNode"]:START TO localBody:POSITION.
+  LOCAL bodyToNodeLength IS bodyPosition:MAG.
+  IF ANExists SET bodyToNodeLength TO rValues["AN"].
+  SET vecDraws["bodyToNode"]:VEC TO (bodyPosition*ANGLEAXIS(angleDelta["AN"], normalVector)):NORMALIZED * bodyToNodeLength.
+
+  CLEARSCREEN.
+
+  LOCAL delayDigits IS 9.
+  IF ANExists SET delayDigits TO MAX(delayDigits, timeToString(delay["AN"], 0):LENGTH + 2).
+  IF DNExists SET delayDigits TO MAX(delayDigits, timeToString(delay["DN"], 0):LENGTH + 2).
+  PRINT "Node       True Anomaly     Altitude  Exists  Chosen" + "Delay":PADLEFT(delayDigits).
+  PRINT "Ascending  " + (ROUND(angleDelta["AN"], 3) + " deg"):PADLEFT(12) +
+                        (CHOOSE distanceToString(rValues["AN"], 4) IF ANExists ELSE "N/A"):PADLEFT(13) +
+                        (CHOOSE "Yes" IF ANExists ELSE "No"):PADLEFT(8) +
+                        (CHOOSE "Yes" IF usedNode:CONTAINS("Ascending") ELSE "No"):PADLEFT(8) +
+                        (CHOOSE timeToString(delay["AN"], 0) IF ANExists ELSE "N/A"):PADLEFT(delayDigits).
+  PRINT "Descending " + (ROUND(angleDelta["DN"], 3) + " deg"):PADLEFT(12) +
+                        (CHOOSE distanceToString(rValues["DN"], 4) IF DNExists ELSE "N/A"):PADLEFT(13) +
+                        (CHOOSE "Yes" IF DNExists ELSE "No"):PADLEFT(8) +
+                        (CHOOSE "Yes" IF usedNode:CONTAINS("Descending") ELSE "No"):PADLEFT(8) +
+                        (CHOOSE timeToString(delay["DN"], 0) IF DNExists ELSE "N/A"):PADLEFT(delayDigits).
+  IF angleDelta["Transition"] <> 360 PRINT "Transition " + (ROUND(angleDelta["Transition"], 3) + " deg"):PADLEFT(12).
+  PRINT " ".
+  PRINT "Relative Inclination: " + ROUND(relativeInclination, 3) + " degrees".
+  PRINT "Inclination Delta is " + ROUND(iDelta, 3) + " degrees".
+  PRINT " ".
+
+  IF chosenTime = "None" {
+    PRINT "No time has been chosen!".
+    PRINT "No node will be used.".
+  }
+
+  PRINT "Press ENTER to create the indicated maneuver node.".
+  PRINT "Press BACKSPACE to exit without making a maneuver node.".
+  LOCAL tempChar IS "".
+  UNTIL (tempChar = TERMINAL:INPUT:ENTER OR tempChar = TERMINAL:INPUT:BACKSPACE) {
+    IF TERMINAL:INPUT:HASCHAR SET tempChar TO TERMINAL:INPUT:GETCHAR().
+    WAIT 0.
+  }
+
+  IF tempChar = TERMINAL:INPUT:BACKSPACE SET chosenTime TO "None".
+}
+
+IF chosenTime <> "None" {
+  LOCAL nodeVelocity IS VELOCITYAT(SHIP, TIME:SECONDS + chosenTime):ORBIT.
+  LOCAL directionsAtNode IS getOrbitDirectionsAt(chosenTime, SHIP).
+  LOCAL deltaV IS (nodeVelocity * ANGLEAXIS(iDelta, relativeLANVector)) - nodeVelocity.
+  ADD NODE(TIME:SECONDS + chosenTime, deltaV * directionsAtNode["radial"], deltaV * directionsAtNode["normal"], deltaV * directionsAtNode["prograde"]).
 }
 
 IF ANExists OR DNExists {
-  SET loopMessage TO "Node created at " + usedNode + " node".
+  IF chosenTime <> "None" SET loopMessage TO "Node created at " + usedNode.
+  ELSE SET loopMessage TO "No inclination change node created".
 } ELSE SET loopMessage TO "Neither node exists!".

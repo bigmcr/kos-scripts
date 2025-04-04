@@ -1,5 +1,6 @@
 GLOBAL autoSteer IS "".
 LOCAL autoSteerOld IS "".
+LOCAL previousCommandIndex IS 0.
 GLOBAL runLocal TO TRUE.
 IF runLocal {
 	PRINT "Boot script running locally".
