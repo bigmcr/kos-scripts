@@ -12,7 +12,8 @@ PARAMETER finalInclination IS 0.
 
 // The desired final longitude of the ascending node
 // Note that this is relative to the Solar Prime Vector
-PARAMETER finalLAN IS 0.
+// Default LAN means launch with the current LAN, whatever that is.
+PARAMETER finalLAN IS "Current".
 
 // Whether or not to trigger the initial stage.
 // For a launch from Kerbin/Earth, this is true, but it might not be from Luna/the Mun
@@ -22,7 +23,7 @@ PARAMETER initialStage IS TRUE.
 // For passenger comfort and safety
 PARAMETER maxGs IS 3.
 
-IF finalInclination < 0 {
+IF (finalInclination < 0) AND (finalLAN <> "Current") {
 	SET finalLAN TO normalizeAngle360(finalLAN + 180).
 	SET finalInclination TO ABS(finalInclination).
 }
@@ -170,6 +171,7 @@ ON mode {
 FUNCTION getTargetNormalVector {
 	PARAMETER inclination IS 0.
 	PARAMETER LAN IS 0.
+	IF LAN = "Current" SET LAN TO SHIP:ORBIT:LAN.
 	// Note that the V(0,1,0) is an invariant version of the NORTH vector.
 	RETURN ((V(0,1,0) * ANGLEAXIS(-inclination, SOLARPRIMEVECTOR)) * ANGLEAXIS(-LAN, V(0,1,0))):NORMALIZED.
 }
@@ -196,7 +198,7 @@ LOCAL accelDownRange IS 0.
 IF mode = 0 {
 	PRINT "Mode 0".
 	GLOBAL abortLaunch IS FALSE.
-	RUNPATH("waitForLaunchWindow", finalInclination, finalLAN, FALSE).
+	IF finalLAN <> "Current" RUNPATH("waitForLaunchWindow", finalInclination, finalLAN, FALSE).
 	IF abortLaunch {
 		SET mode TO 10.
 		SET endMessage TO "Launch aborted".
