@@ -22,14 +22,14 @@ UNTIL AG1 OR (tempChar = TERMINAL:INPUT:ENTER) {
 		ELSE 								SET approach TO closestApproach(TIME:SECONDS + SHIP:ORBIT:PERIOD / 4, SHIP:ORBIT:PERIOD / 8).
 	}
 	// If the target is a body, show closest approach distance relative to surface, not center.
-	IF TARGET:TYPENAME = "Body" PRINT "Closest approach: " + distanceToString(approach[1] - TARGET:RADIUS, 3) + "     " AT (0, 3).
-	ELSE                        PRINT "Closest approach: " + distanceToString(approach[1], 3) + "     " AT (0, 3).
+	IF TARGET:TYPENAME = "Body" PRINT "Closest approach: " + distanceToString(approach["Distance"] - TARGET:RADIUS, 3) + "     " AT (0, 3).
+	ELSE                        PRINT "Closest approach: " + distanceToString(approach["Distance"], 3) + "     " AT (0, 3).
 	SET shipToIntercept:SHOW TO MAPVIEW.
 	SET interceptToTarget:SHOW TO MAPVIEW.
 	IF MAPVIEW {
-		SET shipToIntercept:VEC TO POSITIONAT(SHIP, approach[0]).
+		SET shipToIntercept:VEC TO POSITIONAT(SHIP, approach["Time"]).
 		SET interceptToTarget:START TO shipToIntercept:VEC.
-		SET interceptToTarget:VEC TO POSITIONAT(TARGET, approach[0]) - shipToIntercept:VEC.
+		SET interceptToTarget:VEC TO POSITIONAT(TARGET, approach["Time"]) - shipToIntercept:VEC.
 	}
 	IF TERMINAL:INPUT:HASCHAR {
 		SET tempChar TO TERMINAL:INPUT:GETCHAR().
@@ -37,21 +37,21 @@ UNTIL AG1 OR (tempChar = TERMINAL:INPUT:ENTER) {
 }
 
 
-LOCAL shipV IS VELOCITYAT(SHIP, approach[0]):ORBIT.
-LOCAL targetV IS VELOCITYAT(TARGET, approach[0]):ORBIT.
+LOCAL shipV IS VELOCITYAT(SHIP, approach["Time"]):ORBIT.
+LOCAL targetV IS VELOCITYAT(TARGET, approach["Time"]):ORBIT.
 LOCAL deltaVel IS targetV - shipV.
 
 PRINT "Angle between velocities: " + ROUND(VANG(shipV, targetV), 2) + " degrees" AT (0, 3).
 
-LOCAL normalVector IS VCRS(shipV, POSITIONAT(SHIP, approach[0]) - SHIP:BODY:POSITION):NORMALIZED.
+LOCAL normalVector IS VCRS(shipV, POSITIONAT(SHIP, approach["Time"]) - SHIP:BODY:POSITION):NORMALIZED.
 LOCAL radialVector IS VCRS(normalVector, shipV):NORMALIZED.
 
 LOCAL proDv IS VECTORDOTPRODUCT(deltaVel, shipV:NORMALIZED).
 LOCAL normDv IS VECTORDOTPRODUCT(deltaVel, normalVector).
 LOCAL radDv IS VECTORDOTPRODUCT(deltaVel, radialVector).
 
-LOCAL newNode IS NODE(approach[0], radDv, normDv, proDv).
+LOCAL newNode IS NODE(approach["Time"], radDv, normDv, proDv).
 ADD newNode.
 
-SET loopMessage TO "x_f: " + distanceToString(approach[1], 2) + " v_f: " + distanceToString(deltaVel:MAG, 2) + "/s".
+SET loopMessage TO "x_f: " + distanceToString(approach["Distance"], 2) + " v_f: " + distanceToString(deltaVel:MAG, 2) + "/s".
 WAIT 1.

@@ -998,7 +998,7 @@ FUNCTION hillClimb {
 	RETURN returnMe.
 }
 
-// Generic hill climbing function
+// Generic hill climbing function with two dimensions
 // Tries to minimize the value of the passed delegate.
 // Passed the following
 //			delegate, expecting a single scalar input and returns a single scalar
@@ -2454,8 +2454,8 @@ FUNCTION greatCircleDistance
 FUNCTION getOrbitDirectionsAt {
   PARAMETER timeOffset IS 0.
   PARAMETER orbitable IS SHIP.
-  LOCAL velocityOf IS VELOCITYAT(orbitable, TIME:SECONDS + timeOffset):ORBIT.
-  LOCAL positionOf IS POSITIONAT(orbitable, TIME:SECONDS + timeOffset).
+  LOCAL velocityOf IS VELOCITYAT(orbitable, timeOffset):ORBIT.
+  LOCAL positionOf IS POSITIONAT(orbitable, timeOffset).
   LOCAL vectorPrograde IS velocityOf:NORMALIZED.
   LOCAL vectorRadial IS (positionOf - orbitable:BODY:POSITION).
   LOCAL vectorNormal IS VCRS(vectorPrograde, vectorRadial):NORMALIZED.
@@ -2504,41 +2504,37 @@ FUNCTION distanceToTargetOrbitalPlane {
 	RETURN distanceFromPlane(timeoffset, TRUE) / 1000.
 }
 
-// returns a list
-// list[0] time until closest approach (seconds UT)
-// list[1] distance of closest approach (meters)
+// returns a lexicon
+// "Time" time until closest approach (seconds UT)
+// "Distance" distance of closest approach (meters)
 FUNCTION closestApproach {
 	PARAMETER initialGuess IS TIME:SECONDS.
 	PARAMETER initialStepSize IS 10.
+	PARAMETER logFileName IS "".
 	IF (initialGuess < TIME:SECONDS) SET initialGuess TO TIME:SECONDS.
-	IF NOT HASTARGET RETURN LIST(0, 0).
-
-	LOCAL stepSize is initialStepSize.
+	IF NOT HASTARGET RETURN LEXICON("Time", 0, "Distance", 0).
 
 	FUNCTION distanceAtTime {
 	  PARAMETER t.
 	  RETURN (POSITIONAT(SHIP, t) - POSITIONAT(TARGET, t)):MAG.
 	}
 
-	LOCAL iteration IS 0.
-
-//	LOG "Approach Time,Step Size,Distance At Approach,Distance At Approach + Step,Distance At Approach - Step,Iteration" TO "0:HillClimb.csv".
-	// Do the hill climbing
-	LOCAL approachTime is initialGuess.
-	UNTIL (stepSize = (initialStepSize / (2^15))) OR (iteration > 1000) {
-//		LOG approachTime + "," + stepSize + "," + distanceAtTime(approachTime) + "," + distanceAtTime(approachTime + stepSize) + "," + distanceAtTime(approachTime - stepSize) + "," + iteration TO "0:HillClimb.csv".
-		IF distanceAtTime(approachTime + stepSize) < distanceAtTime(approachTime) {
-			SET approachTime TO approachTime + stepSize.
-		} ELSE IF distanceAtTime(approachTime - stepSize) < distanceAtTime(approachTime) {
-			SET approachTime TO approachTime - stepSize.
-		} ELSE {
-			SET stepSize TO (stepSize/2).
-		}
-		SET iteration TO iteration + 1.
+	LOCAL results IS hillClimb(
+		distanceAtTime@,
+		initialGuess,
+		initialStepSize,
+		logFileName,
+		1000).
+	// if things didn't work here with the default, try again half an orbit later.
+	IF results["finalGuess"] < TIME:SECONDS {
+		SET results TO hillClimb(
+			distanceAtTime@,
+			initialGuess + SHIP:ORBIT:PERIOD/2,
+			initialStepSize,
+			logFileName,
+			1000).
 	}
-
-//	PRINT "Closest approach is at UT " + ROUND(approachTime, 0) + " (" + ROUND(approachTime - TIME:SECONDS, 0) + ") seconds from now, distance will be " + ROUND(distanceAtTime(approachTime), 0) + " meters".
-	RETURN LIST(approachTime, distanceAtTime(approachTime)).
+	RETURN LEXICON("Time", results["finalGuess"], "Distance", results["finalValue"]).
 }
 
 // Print some basic information about each of the various orbits that this craft will experience.
