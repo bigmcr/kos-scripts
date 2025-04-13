@@ -1,7 +1,7 @@
 @LAZYGLOBAL OFF.
 
 PARAMETER desiredRelativeInclination IS 0.
-// Chosen Node can be "Highest" (default), "nearest", "farthest", "AN" or "DN"
+// Chosen Node can be "Highest" (default), "nearest", "farthest", "Lowest", "AN" or "DN"
 PARAMETER chosenNode IS "Highest".
 PARAMETER useTargetPlane IS HASTARGET.
 PARAMETER visualize IS TRUE.
@@ -28,8 +28,8 @@ LOCAL DNExists IS (angleDelta["DN"] < angleDelta["Transition"]).
 
 // Now convert the determined true anomalies to UT times.
 LOCAL UTTime IS LEXICON().
-IF ANExists UTTime:ADD("AN", TIME:SECONDS + trueAnomalyDeltaToTime(SHIP:ORBIT, SHIP:ORBIT:TRUEANOMALY + angleDelta["AN"])).
-IF DNExists UTTime:ADD("DN", TIME:SECONDS + trueAnomalyDeltaToTime(SHIP:ORBIT, SHIP:ORBIT:TRUEANOMALY + angleDelta["DN"])).
+IF ANExists UTTime:ADD("AN", TIME:SECONDS + trueAnomalyDeltaToTime(SHIP:ORBIT, SHIP:ORBIT:TRUEANOMALY, SHIP:ORBIT:TRUEANOMALY + angleDelta["AN"])).
+IF DNExists UTTime:ADD("DN", TIME:SECONDS + trueAnomalyDeltaToTime(SHIP:ORBIT, SHIP:ORBIT:TRUEANOMALY, SHIP:ORBIT:TRUEANOMALY + angleDelta["DN"])).
 
 LOCAL rValues IS LEXICON().
 IF ANExists rValues:ADD("AN", (POSITIONAT(SHIP, UTTime["AN"]) - SHIP:BODY:POSITION):MAG).

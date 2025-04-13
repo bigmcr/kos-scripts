@@ -3003,28 +3003,42 @@ FUNCTION getNormalVector {
 //     In the hyperbolic case, it returns 0 seconds.
 FUNCTION trueAnomalyDeltaToTime {
   PARAMETER orbitObject.
+	PARAMETER startingTrueAnomaly.
   PARAMETER finalTrueAnomaly.
   IF orbitObject:ECCENTRICITY < 1 {
     // for elliptical orbits, this is fairly easy
-    IF finalTrueAnomaly < orbitObject:TRUEANOMALY SET finalTrueAnomaly TO finalTrueAnomaly + 360.
-    LOCAL trueAnomalyDelta IS normalizeAngle360(trueToMeanAnomaly(finalTrueAnomaly) - trueToMeanAnomaly(orbitObject:TRUEANOMALY)).
+    IF finalTrueAnomaly < startingTrueAnomaly SET finalTrueAnomaly TO finalTrueAnomaly + 360.
+    LOCAL trueAnomalyDelta IS normalizeAngle360(trueToMeanAnomaly(finalTrueAnomaly) - trueToMeanAnomaly(startingTrueAnomaly)).
     RETURN trueAnomalyDelta / 360 * orbitObject:PERIOD.
   } ELSE {
     // For hyperbolic orbits, true anomaly to time is more complicated.
-    IF finalTrueAnomaly < orbitObject:TRUEANOMALY RETURN 0.
-    LOCAL ecc IS orbitObject:ECCENTRICITY.
-    LOCAL a IS orbitObject:SEMIMAJORAXIS.
-    LOCAL GM IS orbitObject:BODY:MU.
-    LOCAL v_0 IS orbitObject:TRUEANOMALY.
-    LOCAL v_1 IS finalTrueAnomaly.
+    IF finalTrueAnomaly < startingTrueAnomaly RETURN 0.
+		// The time of flight equations only work for positive true anomalies.
+		// Because of this, if the starting true anomaly is less than zero, split
+		// up the equation into two portions - the time to go from the starting true
+		// anomaly to the periapsis, and the time to go from the periapsis to the
+		// final true anomaly.
+		IF startingTrueAnomaly <> 0 {
+			LOCAL firstPortionTime IS trueAnomalyDeltaToTime(orbitObject,0,ABS(startingTrueAnomaly)).
+			LOCAL secondPortionTime IS trueAnomalyDeltaToTime(orbitObject,0,ABS(finalTrueAnomaly)).
+			IF startingTrueAnomaly < 0 SET firstPortionTime TO -firstPortionTime.
+			IF finalTrueAnomaly < 0 SET secondPortionTime TO -secondPortionTime.
+			RETURN secondPortionTime - firstPortionTime.
+		} ELSE {
+			LOCAL ecc IS orbitObject:ECCENTRICITY.
+	    LOCAL a IS orbitObject:SEMIMAJORAXIS.
+	    LOCAL GM IS orbitObject:BODY:MU.
+	    LOCAL v_0 IS startingTrueAnomaly.
+	    LOCAL v_1 IS finalTrueAnomaly.
 
-    // Equation taken from http://www.braeunig.us/space/index.htm, section "Orbital Mechanics", equation 4.87.
-    LOCAL F_0 IS ACOSH((ecc + COS(v_0))/(1 + ecc * COS(V_0))).
-    LOCAL F_1 IS ACOSH((ecc + COS(v_1))/(1 + ecc * COS(V_1))).
+	    // Equation taken from http://www.braeunig.us/space/index.htm, section "Orbital Mechanics", equation 4.87.
+	    LOCAL F_0 IS ACOSH((ecc + COS(v_0))/(1 + ecc * COS(V_0))).
+	    LOCAL F_1 IS ACOSH((ecc + COS(v_1))/(1 + ecc * COS(V_1))).
 
-    // This equation only uses the hyperbolic eccentric anomaly, not the mean anomaly.
-    // Equation taken from http://www.braeunig.us/space/index.htm, section "Orbital Mechanics", equation 4.86.
-    RETURN SQRT((-a)^3/GM)*((ecc*SINH(F_1)-F_1)-(ecc*SINH(F_0)-F_0)).
+	    // This equation only uses the hyperbolic eccentric anomaly, not the mean anomaly.
+	    // Equation taken from http://www.braeunig.us/space/index.htm, section "Orbital Mechanics", equation 4.86.
+			RETURN SQRT((-a)^3/GM)*((ecc*SINH(F_1)-F_1)-(ecc*SINH(F_0)-F_0)).
+		}
   }
 }
 
