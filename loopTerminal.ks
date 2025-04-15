@@ -195,8 +195,8 @@ FUNCTION updateScreen {
             eachRCS:STARBOARDENABLED:TOSTRING:PADLEFT(7) +
             eachRCS:TOPENABLED:TOSTRING:PADLEFT(7) +
             ROUND(eachRCS:ISP, 0):TOSTRING:PADLEFT(7)).
-      linesToPrint:ADD("Total dV from RCS in current stage: " + ROUND(shipInfo["CurrentStage"]["deltaVRCS"], 2) + " m/s").
     }
+    linesToPrint:ADD("Total dV from RCS in current stage: " + ROUND(shipInfo["CurrentStage"]["deltaVRCS"], 2) + " m/s").
   } ELSE IF loopMode = "engines" {
     linesToPrint:ADD("Engine       Thrust  ISP  M Dot    Ign    Gimbal   Min Throttle Stab").
     linesToPrint:ADD("Name         Newton    s   kg/s              Deg              %").
