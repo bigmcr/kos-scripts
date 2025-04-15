@@ -190,5 +190,4 @@ UNTIL mode > 3 {
 SET globalSteer TO HEADING(90, 90).
 SET globalThrottle TO 0.
 WAIT 5.
-PANELS ON.
 SET loopMessage TO "SB Ended: " + distanceToString(recordedData["End Altitude"]) + " above ground".
