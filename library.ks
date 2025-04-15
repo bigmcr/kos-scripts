@@ -3018,12 +3018,10 @@ FUNCTION trueAnomalyDeltaToTime {
 		// up the equation into two portions - the time to go from the starting true
 		// anomaly to the periapsis, and the time to go from the periapsis to the
 		// final true anomaly.
-		IF startingTrueAnomaly <> 0 {
-			LOCAL firstPortionTime IS trueAnomalyDeltaToTime(orbitObject,0,ABS(startingTrueAnomaly)).
+		IF startingTrueAnomaly < 0 {
 			LOCAL secondPortionTime IS trueAnomalyDeltaToTime(orbitObject,0,ABS(finalTrueAnomaly)).
-			IF startingTrueAnomaly < 0 SET firstPortionTime TO -firstPortionTime.
 			IF finalTrueAnomaly < 0 SET secondPortionTime TO -secondPortionTime.
-			RETURN secondPortionTime - firstPortionTime.
+			RETURN secondPortionTime + orbitObject:ETA:PERIAPSIS.
 		} ELSE {
 			LOCAL ecc IS orbitObject:ECCENTRICITY.
 	    LOCAL a IS orbitObject:SEMIMAJORAXIS.
