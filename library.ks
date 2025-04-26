@@ -929,15 +929,17 @@ FUNCTION heightPrediction {
 //			delegate, expecting a single scalar input and returns a single scalar
 //			initialGuess - initial guess of the final value
 //			initialStepSize - how much to start moving the initial guess by
+//			logFileName - log file name. If blank, does not log. Defaults to blank.
 //			iterationMax - maximum iteration number. Defaults to 1000.
 //			smallestStepRatio - Ratio of smallest step size to initial step size
 //        (negative power of 2). Defaults to 15, so the smallest step size
 //        would be initialStepSize / (2^15).
-//			logFileName - log file name. If blank, does not log. Defaults to blank.
 //			cyclicalPeriod - period of cyclical repition in the input of the delegate.
 //        -1 is a special case that indicates input is not cyclical.
 //        Defaults to -1.
 //			cyclicalPeriodCutoff - value below which cyclicalPeriod should be added to the current guess.
+//			deleteOldlogFileName - whether to delete the old version of the log file
+//				or append to the end of the file.
 // Returns the following:
 //			Lexicon with the following members:
 //				"iteration" - scalar - number of the final iteration
