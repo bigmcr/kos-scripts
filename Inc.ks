@@ -40,8 +40,8 @@ IF ANExists nodeVelocity:ADD("AN", VELOCITYAT(SHIP, UTTime["AN"]):ORBIT).
 IF DNExists nodeVelocity:ADD("DN", VELOCITYAT(SHIP, UTTime["DN"]):ORBIT).
 
 LOCAL directionsAtNode IS LEXICON().
-IF ANExists directionsAtNode:ADD("AN", getOrbitDirectionsAt(UTTime["AN"], SHIP)).
-IF DNExists directionsAtNode:ADD("DN", getOrbitDirectionsAt(UTTime["DN"], SHIP)).
+IF ANExists directionsAtNode:ADD("AN", getOrbitDirectionsAt(SHIP, UTTime["AN"])).
+IF DNExists directionsAtNode:ADD("DN", getOrbitDirectionsAt(SHIP, UTTime["DN"])).
 
 LOCAL deltaV IS LEXICON().
 IF ANExists deltaV:ADD("AN", (nodeVelocity["AN"] * ANGLEAXIS(iDelta, relativeLANVector)) - nodeVelocity["AN"]).

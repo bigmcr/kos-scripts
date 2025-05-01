@@ -2450,14 +2450,17 @@ FUNCTION greatCircleDistance
 }
 
 // Function that returns the unit vectors showing the direction of prograde,
-// radial and normal for an arbitrary Orbitable at a specified time offset
+// radial and normal for an arbitrary Orbitable at a specified UT time
+// Passed:
+//	 orbitable object
+//   UT Time (seconds)
 // Returns a lexicon of prograde vector, radial vector, normal vector, position,
 //   velocity
 FUNCTION getOrbitDirectionsAt {
-  PARAMETER timeOffset IS 0.
-  PARAMETER orbitable IS SHIP.
-  LOCAL velocityOf IS VELOCITYAT(orbitable, timeOffset):ORBIT.
-  LOCAL positionOf IS POSITIONAT(orbitable, timeOffset).
+	PARAMETER orbitable IS SHIP.
+  PARAMETER UTTime IS 0.
+  LOCAL velocityOf IS VELOCITYAT(orbitable, UTTime):ORBIT.
+  LOCAL positionOf IS POSITIONAT(orbitable, UTTime).
   LOCAL vectorPrograde IS velocityOf:NORMALIZED.
   LOCAL vectorRadial IS (positionOf - orbitable:BODY:POSITION).
   LOCAL vectorNormal IS VCRS(vectorPrograde, vectorRadial):NORMALIZED.
