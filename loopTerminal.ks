@@ -100,7 +100,7 @@ FUNCTION updateScreen {
     linesToPrint:ADD("    Ship").
     linesToPrint:ADD("    RCS").
     linesToPrint:ADD("    Engines").
-    linesToPrint:ADD("    Universe").
+    linesToPrint:ADD("    Universe or World").
 	} ELSE IF loopMode = "Orbit" OR loopMode = "OrbitNext" OR loopMode = "OrbitTarget" OR loopMode = "OrbitTargetNext" OR loopMode = "OrbitNode" {
 		LOCAL localOrbit IS SHIP:ORBIT.
     IF loopMode = "OrbitNext" AND ORBIT:HASNEXTPATCH {
