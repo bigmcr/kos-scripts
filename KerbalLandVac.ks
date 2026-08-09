@@ -200,7 +200,7 @@ UNTIL mode > 5 {
 		ELSE SET headingSteeringAdjust TO 2 * sideSpeed.
 		IF headingSteeringAdjust > 30 SET headingSteeringAdjust TO 30.
 		IF headingSteeringAdjust < 30 SET headingSteeringAdjust TO -30.
-		IF angleDifference(yaw_for(SHIP:VELOCITY:SURFACE), slopeInfo["Heading"]) > 30
+		IF VANG(SHIP:VELOCITY:SURFACE, slopeInfo["vector"]) > 30
 			SET globalSteer TO HEADING(yaw_for(SHIP:VELOCITY:SURFACE), minPitch).
 		ELSE
 			SET globalSteer TO HEADING (slopeInfo["Heading"] + headingSteeringAdjust, 90 - H_PID:UPDATE(TIME:SECONDS, downSlopeSpeed)).

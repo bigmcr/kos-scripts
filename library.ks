@@ -1450,7 +1450,7 @@ FUNCTION createNode
 	ADD X.            // adds maneuver to flight plan
 }
 
-// Print Lines
+// Print Static Lines
 // This function prints the given number of lines starting at the given row.
 // It assumes that following lines should be printed on following rows.
 // Passed the following
@@ -1461,12 +1461,33 @@ FUNCTION createNode
 // Modified from example code given by nuggreat on Discord on July 1, 2022
 FUNCTION printLines {
     PARAMETER linesToPrint.
-		PARAMETER startingRow IS 0.
+	PARAMETER startingRow IS 0.
     LOCAL i IS startingRow.
-    LOCAL terminalWidth IS TERMINAL:WIDTH.
-		FOR index IN RANGE(linesToPrint:LENGTH) {
-			PRINT linesToPrint[index]:PADRIGHT(terminalWidth) AT (0, startingRow + index).
-		}
+	FOR index IN RANGE(linesToPrint:LENGTH) {
+		PRINT linesToPrint[index]:PADRIGHT(TERMINAL:WIDTH) AT (0, startingRow + index).
+	}
+}
+
+// Print Dynamic Lines
+// This function prints the given string(s) at the given row(s).
+// Passed the following
+//			List of Lexicons, each of which contains a string, X coordinate, and Y coordinate
+// Returns the following:
+//			nothing
+// Modified from example code given by nuggreat on Discord on July 1, 2022
+FUNCTION printDynamicLines {
+    PARAMETER linesToPrint.
+	for eachLine in linesToPrint {
+		PRINT eachLine["string"] AT (eachLine["xCoord"], eachLine["yCoord"]).
+	}
+}
+
+// Count given characters in a string
+// This function returns an integer of the number of times that the given substring is present in the larger string.
+// It defaults to CHAR(10), which is the newline character.
+FUNCTION countCharacters {
+	PARAMETER stringToReview, characterToFind IS CHAR(10).
+	RETURN stringToReview:SPLIT(characterToFind):LENGTH - 1.
 }
 
 // Round Vector
@@ -1944,9 +1965,8 @@ FUNCTION logOrbit
 {
 	PARAMETER orbs.
 	PARAMETER fileName.
-	// if passed only a single orbit, add it it a list.
+	// if passed only a single orbit, add it as a single element list.
 	IF orbs:TYPENAME <> "LIST" SET orbs TO LIST(orbs).
-	IF orbs:TYPENAME <> "LIST" {PRINT "Not passed a valid orbit!". RETURN 0.}
 	LOCAL message IS "".
 
 	SET message TO "Name,".

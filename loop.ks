@@ -1,6 +1,7 @@
 GLOBAL autoSteer IS "".
 LOCAL autoSteerOld IS "".
 LOCAL previousCommandIndex IS 0.
+LOCAL forceScreenUpdate IS FALSE.
 GLOBAL runLocal TO TRUE.
 IF runLocal {
 	PRINT "Boot script running locally".
@@ -14,6 +15,7 @@ GLOBAL loopMessage IS "".
 GLOBAL errorValue IS -1234.
 GLOBAL globalSteer IS SHIP:FACING.
 GLOBAL globalThrottle IS 0.
+GLOBAL loopMode IS "Default".					// Global so the other loop scripts can access it.
 GLOBAL bodList IS LIST().
 LIST BODIES IN bodList.
 // avoiding the use of a file extension allows RUNPATH to determine the file extension
@@ -85,7 +87,6 @@ LOCAL previousCommands IS LIST().
 LOCAL possibleCommands IS createCommandList().
 LOCAL done IS FALSE.
 LOCAL commandValid TO FALSE.
-GLOBAL loopMode IS "Default".					// Global so the other loop scripts can access it.
 LOCAL tempChar IS "".
 
 SET globalSteer TO SHIP:FACING.
@@ -139,6 +140,7 @@ FUNCTION endScript {
 	SET SHIP:CONTROL:MAINTHROTTLE TO 0.
 	CLEARVECDRAWS().
 	SET KUNIVERSE:TIMEWARP:WARP TO 0.
+	SET forceScreenUpdate TO TRUE.
 }
 
 GLOBAL dontKillAfterScript IS FALSE.
@@ -147,6 +149,7 @@ setLockedSteering(FALSE).
 setLockedThrottle(FALSE).
 
 UNTIL done {
+	SET forceScreenUpdate TO FALSE.
 	SET tempChar TO "".
 	UNTIL NOT TERMINAL:INPUT:HASCHAR {
 		SET tempChar TO TERMINAL:INPUT:GETCHAR().
@@ -241,6 +244,7 @@ UNTIL done {
 		ELSE {
 			SET inputString TO inputString + tempChar.
 		}
+		SET forceScreenUpdate TO TRUE.
 	}
 	IF autoSteer <> "" {
 		IF autoSteer <> autoSteerOld setLockedSteering(TRUE).
@@ -302,7 +306,7 @@ UNTIL done {
 			SET autoSteerOld TO autoSteer.
 		}
 	}
-	updateScreen(inputString, previousCommands).
+	updateScreen(inputString, previousCommands, forceScreenUpdate).
 	WAIT 0.1.
 }
 
