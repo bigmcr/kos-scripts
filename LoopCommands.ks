@@ -493,6 +493,11 @@ FUNCTION createCommandList {
 		}
 		RETURN "stageInfo - incorrect arguments".
 		})).
+	possibleCommands:ADD("shipInfo", LEXICON("PossibleArgs", 2, "RequiredArgs", 0, "Delegate", {
+		PARAMETER includeResources IS FALSE.
+		PARAMETER logFileName IS "0:" + SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv".
+		RETURN possibleCommands["stageInfo"]["Delegate"](includeResources, logFileName). 
+		})).
 
 	possibleCommands:ADD("worldInfo", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
 		logWorldInfo().

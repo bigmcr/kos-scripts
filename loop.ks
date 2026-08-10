@@ -171,18 +171,13 @@ UNTIL done {
 					ELSE {argList:ADD(eachArg:TONUMBER(errorValue)).}
 				}
 				// otherwise, leave the argument as a string
-//				PRINT "argList has Length " + argList:LENGTH.
 				debugString(inputString).
 
-//				WAIT 1.
 				// if there is a valid script, process the arguments for it
 				IF EXISTS(argList[0]) {
-//					CLEARSCREEN.
 					FOR arg IN RANGE(0, argList:LENGTH) {
-//						PRINT "Argument " + argList[arg] + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME.
 						debugString("Argument " + (arg) + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME).
 					}
-//					PRINT "Running " + argList[0] + " with " + (argList:LENGTH - 1) + " arguments".
 					debugString("Running " + argList[0] + " locally with " + (argList:LENGTH - 1) + " arguments").
 					IF (argList:LENGTH = 1) RUNPATH(argList[0]).
 					IF (argList:LENGTH = 2) RUNPATH(argList[0], argList[1]).
@@ -194,6 +189,7 @@ UNTIL done {
 					IF NOT dontKillAfterScript endScript().
 					SET dontKillAfterScript TO FALSE.
 					SET commandValid TO TRUE.
+					debugString("LoopMessage from command: " + loopMessage).
 				}
 				// look up the first section to see if it is a valid command in the list.
 				IF (possibleCommands:KEYS:CONTAINS(argList[0])) {
