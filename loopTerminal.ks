@@ -75,8 +75,10 @@ FUNCTION createScreenModes {
 		ELSE SET tempString TO autoSteer.
 		linesToPrintDynamic:ADD(LEXICON("string", tempString, "xCoord", 32, "yCoord", 1)).
 		linesToPrintDynamic:ADD(LEXICON("string", globalThrottle:TOSTRING:PADLEFT(5), "xCoord", 43, "yCoord", 2)).
-		IF (connectionToKSC()) SET tempString TO timeToString(HOMECONNECTION:DELAY, 0):TOSTRING:PADLEFT(5).
-		ELSE SET tempString TO "  N/A".
+		IF (connectionToKSC()) {
+			IF HOMECONNECTION:DELAY < 0.1 SET tempString TO "<0.1s".
+			ELSE SET tempString TO timeToString(HOMECONNECTION:DELAY, 1):TOSTRING:PADLEFT(5).
+		} ELSE SET tempString TO "  N/A".
 		linesToPrintDynamic:ADD(LEXICON("string", tempString, "xCoord", 43, "yCoord", 3)).
 		// print the current input from the operator
 		linesToPrintDynamic:ADD(LEXICON("string", inputString, "xCoord", 0, "yCoord", 11)).
@@ -154,8 +156,10 @@ FUNCTION createScreenModes {
 	SET staticText TO staticText + "Periapsis " + CHAR(10).
 	IF localOrbit:ECCENTRICITY > 1 {
 		SET staticText TO staticText + "Period N/A s" + CHAR(10).
-	} ELSE SET staticText TO staticText + "Period " + CHAR(10).
-	SET staticText TO staticText + "Period " + CHAR(10).
+	} ELSE {
+		SET staticText TO staticText + "Period " + CHAR(10).
+		SET staticText TO staticText + "Period " + CHAR(10).
+	}
 	SET staticText TO staticText + "Inclination " + CHAR(10).
 	SET staticText TO staticText + "Eccentricity " + CHAR(10).
 	SET staticText TO staticText + "Semi-Major Axis " + CHAR(10).
@@ -205,7 +209,7 @@ FUNCTION createScreenModes {
 		IF localOrbit:ECCENTRICITY <= 1 {
 			linesToPrintDynamic:ADD(LEXICON("string", timeToString(localOrbit:PERIOD, 4), "xCoord", 7, "yCoord", rowNumber)). SET rowNumber TO rowNumber + 1.
 			linesToPrintDynamic:ADD(LEXICON("string", localOrbit:PERIOD + " s", "xCoord", 7, "yCoord", rowNumber)). SET rowNumber TO rowNumber + 1.
-		}
+		} ELSE SET rowNumber TO rowNumber + 1.
 		linesToPrintDynamic:ADD(LEXICON("string", ROUND(localOrbit:INCLINATION, 4) + " deg", "xCoord", 12, "yCoord", rowNumber)). SET rowNumber TO rowNumber + 1.
 		linesToPrintDynamic:ADD(LEXICON("string", ROUND(localOrbit:ECCENTRICITY, 4) + " deg", "xCoord", 13, "yCoord", rowNumber)). SET rowNumber TO rowNumber + 1.
 		linesToPrintDynamic:ADD(LEXICON("string", distanceToString(localOrbit:SEMIMAJORAXIS, 4), "xCoord", 16, "yCoord", rowNumber)). SET rowNumber TO rowNumber + 1.
