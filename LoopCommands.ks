@@ -101,7 +101,7 @@ FUNCTION createCommandList {
 		IF changeTo = "On"  {SET SAS TO  TRUE. RETURN  "SAS turned on".}
 		IF changeTo = "Off" {SET SAS TO FALSE. RETURN "SAS turned off".}
 		IF (changeTo = "Toggle") OR (changeTo = "T") {SET SAS TO NOT SAS. RETURN "SAS toggled to " + SAS.}
-		IF changeTo = "" RETURN "RCS is currently " + RCS.
+		IF changeTo = "" RETURN "SAS is currently " + SAS.
 		RETURN "SAS - invalid argument".
 		})).
 	possibleCommands:ADD("stopTime", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
@@ -110,12 +110,12 @@ FUNCTION createCommandList {
 		SET STEERINGMANAGER:MAXSTOPPINGTIME TO newTime.
 		RETURN "Changed Max Stopping time to " + STEERINGMANAGER:MAXSTOPPINGTIME.
 		})).
-	possibleCommands:ADD("warp", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
-		PARAMETER newPermission.
+	possibleCommands:ADD("warp", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
+		PARAMETER newPermission IS "".
 		IF newPermission = "" RETURN "Physics Warp Perm is currently " + (physicsWarpPerm + 1).
 		IF ((newPermission = "Up") AND (physicsWarpPerm <> 3)) SET physicsWarpPerm TO physicsWarpPerm + 1.
 		ELSE IF ((newPermission = "Down") AND (physicsWarpPerm <> 0)) SET physicsWarpPerm TO physicsWarpPerm - 1.
-		ELSE SET physicsWarpPerm TO newPermission + 1.
+		ELSE SET physicsWarpPerm TO newPermission - 1.
 		RETURN "Changed Physics Warp Perm to " + (physicsWarpPerm + 1).
 		})).
 	possibleCommands:ADD("physicsWarp", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
@@ -253,8 +253,7 @@ FUNCTION createCommandList {
 		IF changeTo = "On" SET ISRU TO TRUE.
 		IF changeTo = "Off" SET ISRU TO FALSE.
 		IF (changeTo = "Toggle") OR (changeTo = "T") SET ISRU TO NOT ISRU.
-		IF changeTo = "" RETURN "ISRU is currently " + ISRU.
-		RETURN "ISRUs are currently " + ISRU.
+		RETURN "ISRU is currently " + ISRU.
 		})).
 	possibleCommands:ADD("CONVERTER", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
@@ -271,8 +270,7 @@ FUNCTION createCommandList {
 		IF changeTo = "On" SET FUELCELLS TO TRUE.
 		IF changeTo = "Off" SET FUELCELLS TO FALSE.
 		IF (changeTo = "Toggle") OR (changeTo = "T") SET FUELCELLS TO NOT FUELCELLS.
-		IF changeTo = "" RETURN "Fuelcells are currently " + FUELCELLS.
-		RETURN "Fuelcells are currently " + FUELCELLS.
+		RETURN "Fuelcell is currently " + FUELCELLS.
 		})).
 	possibleCommands:ADD("FUELCELLS", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
@@ -287,7 +285,7 @@ FUNCTION createCommandList {
 	possibleCommands:ADD("DISH", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
 		PARAMETER changeTo IS "On".
 		IF changeTo = "On" {activateDishAntennae(). RETURN "Dish antennae have been activated.".}
-		IF changeTo = "Off" {activateDishAntennae(). RETURN "Dish antennae have been deactivated.".}
+		IF changeTo = "Off" {deactivateDishAntennae(). RETURN "Dish antennae have been deactivated.".}
 		RETURN "Dish - invalid arguments".
 		})).
 	possibleCommands:ADD("Highlight", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
@@ -351,6 +349,7 @@ FUNCTION createCommandList {
 			IF arg1 = "pro" OR arg1 = "prograde" 			{SET autoSteer TO "target,prograde". 		RETURN "Steering locked to target prograde".}
 			IF arg1 = "facing" 												{SET autoSteer TO "target,facing".			RETURN "Steering locked to target facing".}
 			IF arg1 = "antifacing" 										{SET autoSteer TO "target,antifacing".	RETURN "Steering locked to target facing".}
+			RETURN "Target - invalid argument " + arg1.
 		} ELSE {RETURN "Must have a target set.".}
 		})).
 	possibleCommands:ADD("hold",        LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "hold". RETURN "Steering held at current".})).
@@ -491,7 +490,7 @@ FUNCTION createCommandList {
 			WAIT 5.
 			RETURN SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv has been created.".
 		}
-		RETURN "stageInfo - incorrect arguments".
+		RETURN "stageInfo - invalid arguments".
 		})).
 	possibleCommands:ADD("shipInfo", LEXICON("PossibleArgs", 2, "RequiredArgs", 0, "Delegate", {
 		PARAMETER includeResources IS FALSE.
@@ -508,7 +507,7 @@ FUNCTION createCommandList {
 	possibleCommands:ADD("log actions", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {RETURN possibleCommands["logActions"]["Delegate"]().})).
 	possibleCommands:ADD("actions", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {RETURN possibleCommands["logActions"]["Delegate"]().})).
 
-	possibleCommands:ADD("logParts", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {logAllActions(). RETURN "Part file created!".})).
+	possibleCommands:ADD("logParts", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {logAllParts(). RETURN "Part file created!".})).
 	possibleCommands:ADD("log parts", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {RETURN possibleCommands["logParts"]["Delegate"]().})).
 	possibleCommands:ADD("parts", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {RETURN possibleCommands["logParts"]["Delegate"]().})).
 

@@ -2188,8 +2188,8 @@ FUNCTION logPID
 		IF (initPIDLog:KEYS:EMPTY OR NOT initPIDLog:KEYS:CONTAINS(filename))
 		{
 			IF EXISTS(filename) DELETEPATH(filename).
-			IF detailed	{LOG "Time Since Launch,Last Sample Time,Input,Setpoint,Error,Output,P Term, I Term, D Term,Kp,Ki,Kd,Max Output,Min Output,Change Rate,Error Sum" TO filename. }
-			ELSE {LOG "Time Since Launch,Input,Setpoint,Error,Output" TO filename.}
+			IF detailed	{LOG "Timestamp,Last Sample Time,Input,Setpoint,Error,Output,P Term,I Term,D Term,Kp,Ki,Kd,Max Output,Min Output,Change Rate,Error Sum" TO filename. }
+			ELSE {LOG "Timestamp,Input,Setpoint,Error,Output" TO filename.}
 			initPIDLog:ADD(filename, TIME:SECONDS).
 		}
 		IF detailed {LOG (TIME:SECONDS - initPIDLog[filename]) + "," + PID:LastSampleTime + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output + "," + PID:PTerm + "," + PID:ITerm + "," + PID:DTerm + "," + PID:Kp + "," + PID:KI + "," + PID:Kd + "," + PID:MAXOUTPUT + "," + PID:MINOUTPUT + "," + PID:CHANGERATE + "," + PID:ERRORSUM TO filename.}
@@ -2849,9 +2849,6 @@ FUNCTION burnTime {
 	RETURN m_i/m_dot*(1 - CONSTANT:E^(-dV/v_e)).
 }
 
-//IF EXISTS("0:suicideBurnCalcs.csv") DELETEPATH("0:suicideBurnCalcs.csv").
-//IF connectionToKSC() LOG "burnTime,m_i,startVelocity,totalDVNeeded,v_e,m_dot,gravityDrag,g_avg,x_f,x_avg,totalDVNeeded,altitidue,heightAboveGround,iteration" TO "0:suicideBurnCalcs.csv".
-
 // function that calculates the time (in seconds) required before firing all engines at 100% for a suicide burn.
 // Assumes that updateShipInfoCurrent has been run recently.
 // Currently only partially assumes vertical drop
@@ -2885,21 +2882,6 @@ FUNCTION SuicideBurnInfo {
 		SET x_f TO v_e/m_dot*((m_i-m_dot*t)*LN((m_i-m_dot*t)/m_i)+m_dot*t) - 0.5*g_avg*t^2.
 		SET totalDVNeeded TO ABS(v_i) + gravityDrag.
 	}
-//	IF connectionToKSC() LOG t + "," + m_i + "," + v_i + "," + totalDVNeeded + "," + v_e + "," + m_dot + "," +
-//													 gravityDrag + "," + g_avg + "," + x_f + "," + x_avg + "," + totalDVNeeded + "," +
-//													 ALTITUDE + "," + heightAboveGround() + "," + iteration TO "0:suicideBurnCalcs.csv".
-//	PRINT "burnTime:            " + timeToString(t) + "      "                      AT (0,  0).
-//	PRINT "Current Mass:        " + ROUND(m_i, 2) + " kg      "                     AT (0,  1).
-//	PRINT "Start Velocity:      " + distanceToString(v_i, 2) + "/s      "           AT (0,  2).
-//	PRINT "Total DV Needed:     " + distanceToString(totalDVNeeded, 2) + "/s      " AT (0,  3).
-//	PRINT "Exhaust Velocity:    " + distanceToString(v_e, 2) + "/s      "           AT (0,  4).
-//	PRINT "Mass flow rate:      " + ROUND(m_dot, 4) + " kg/s      "                 AT (0,  5).
-//	PRINT "Gravity Drag:        " + distanceToString(gravityDrag, 2) + "/s      "   AT (0,  6).
-//	PRINT "Initial g:           " + distanceToString(g_i, 4) + "/s^2      "         AT (0,  7).
-//	PRINT "Average g:           " + distanceToString(g_avg, 4) + "/s^2      "       AT (0,  8).
-//	PRINT "Total distance:      " + distanceToString(x_f, 2) + "      "             AT (0,  9).
-//	PRINT "Height Above Ground: " + distanceToString(x_i, 2) + "      "             AT (0, 10).
-//	PRINT "Total dV needed:     " + distanceToString(totalDVNeeded, 2) + "/s      " AT (0, 11).
 	LOCAL returnMe IS LEXICON().
 	returnMe:ADD(   "distance",           x_f).
 	returnMe:ADD("distanceAvg",         x_avg).

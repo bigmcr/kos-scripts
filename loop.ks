@@ -1,3 +1,4 @@
+@LAZYGLOBAL OFF.
 GLOBAL autoSteer IS "".
 LOCAL autoSteerOld IS "".
 LOCAL previousCommandIndex IS 0.
@@ -12,7 +13,7 @@ IF runLocal {
 }
 
 GLOBAL loopMessage IS "".
-GLOBAL errorValue IS -1234.
+GLOBAL errorValue IS -123456789.
 GLOBAL globalSteer IS SHIP:FACING.
 GLOBAL globalThrottle IS 0.
 GLOBAL loopMode IS "Default".					// Global so the other loop scripts can access it.
@@ -31,7 +32,7 @@ FUNCTION functionCaller {
 		LOCAL boundArgs IS 0.
 		FOR arg IN args {
 				LOCAL localArg IS arg.
-				IF boundArgs < maxArguments SET func TO func@:BIND(localArg).
+				IF boundArgs < maxArguments SET func TO func:BIND(localArg).
 				ELSE BREAK.
 				SET boundArgs TO boundArgs + 1.
 		}
@@ -54,6 +55,9 @@ FUNCTION stageFunction {
 	PARAMETER waitTime IS 0.5.
 	PARAMETER forceLongWait IS SHIP:PARTS:LENGTH > 200.
 	PARAMETER manualStage IS FALSE.
+	LOCAL stageStartTime IS TIME:SECONDS.
+	LOCAL facingVect IS SHIP:FACING.
+
 	IF not manualStage {
 		LOCAL stageInAtm IS ((SHIP:BODY:ATM:EXISTS) AND
 												 (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) / SHIP:BODY:ATM:SEALEVELPRESSURE > 0.05) AND
@@ -61,8 +65,6 @@ FUNCTION stageFunction {
 		IF stageInAtm PRINT "Staging in atmosphere!".
 		IF forceLongWait SET waitTime TO 5.0.
 
-		LOCAL stageStartTime IS TIME:SECONDS.
-		LOCAL facingVect IS SHIP:FACING.
 
 		IF stageInAtm {
 			SET globalSteer TO SHIP:VELOCITY:SURFACE.
@@ -165,8 +167,8 @@ UNTIL done {
 //				CLEARSCREEN.
 				// for each argument, if the operator entered a non-string, make the conversion
 				FOR eachArg IN inputString:SPLIT(",") {
-					IF (eachArg = FALSE) OR (eachArg = "F") {argList:ADD(FALSE).}
-					ELSE IF (eachArg = TRUE) OR (eachArg = "T") {argList:ADD(TRUE).}
+					IF (eachArg = "false") OR (eachArg = "F") {argList:ADD(FALSE).}
+					ELSE IF (eachArg = "True") OR (eachArg = "T") {argList:ADD(TRUE).}
 					ELSE IF eachArg:TONUMBER(errorValue) = errorValue {argList:ADD(eachArg).}
 					ELSE {argList:ADD(eachArg:TONUMBER(errorValue)).}
 				}
@@ -186,10 +188,14 @@ UNTIL done {
 					IF (argList:LENGTH = 5) RUNPATH(argList[0], argList[1], argList[2], argList[3], argList[4]).
 					IF (argList:LENGTH = 6) RUNPATH(argList[0], argList[1], argList[2], argList[3], argList[4], argList[5]).
 					IF (argList:LENGTH = 7) RUNPATH(argList[0], argList[1], argList[2], argList[3], argList[4], argList[5], argList[6]).
-					IF NOT dontKillAfterScript endScript().
-					SET dontKillAfterScript TO FALSE.
-					SET commandValid TO TRUE.
-					debugString("LoopMessage from command: " + loopMessage).
+					IF (argList:LENGTH <= 7) {
+						IF NOT dontKillAfterScript endScript().
+						SET dontKillAfterScript TO FALSE.
+						SET commandValid TO TRUE.
+						debugString("LoopMessage from command: " + loopMessage).
+					} ELSE {
+						SET loopMessage TO "Too many arguments!".
+					}
 				}
 				// look up the first section to see if it is a valid command in the list.
 				IF (possibleCommands:KEYS:CONTAINS(argList[0])) {
@@ -202,7 +208,11 @@ UNTIL done {
 						SET commandValid TO TRUE.
 					}
 				}
-				IF argList[0] = "exit" OR argList[0] = "done" OR argList[0] = "quit" SET done TO TRUE.
+				IF argList[0] = "exit" OR argList[0] = "done" OR argList[0] = "quit" {
+					SET done TO TRUE.
+					SET commandValid TO TRUE.
+					SET loopMessage TO "Exiting terminal".
+				}
 			}
 			// after processing the command, record then delete the command.
 			IF (commandValid) {
@@ -268,7 +278,7 @@ UNTIL done {
 				ELSE IF autoSteer = "maneuverinverse" SET globalSteer TO -NEXTNODE:DELTAV.
 			}
 		} // maneuver
-		ELSE IF autoSteer:CONTAINS("TARGET") {
+		ELSE IF autoSteer:CONTAINS("target") {
 			IF NOT HASTARGET {
 				SET loopMessage TO "Target not assigned!".
 				SET autoSteer TO "".

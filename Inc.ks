@@ -3,8 +3,53 @@
 PARAMETER desiredRelativeInclination IS 0.
 // Chosen Node can be "Highest" (default), "nearest", "farthest", "Lowest", "AN" or "DN"
 PARAMETER chosenNode IS "Highest".
-PARAMETER useTargetPlane IS HASTARGET.
+// "Default" is a sentinel meaning "the caller didn't pass anything for this",
+// so it can be told apart from an explicit TRUE or FALSE from a caller. It
+// gets resolved down to the real default (HASTARGET) immediately below.
+PARAMETER useTargetPlane IS "Default".
 PARAMETER visualize IS TRUE.
+
+LOCAL useTargetPlaneWasExplicit IS NOT (useTargetPlane:TYPENAME = "String").
+IF NOT useTargetPlaneWasExplicit SET useTargetPlane TO HASTARGET.
+
+// Only auto-prompt when this script picked useTargetPlane by default (via
+// HASTARGET) AND visualize is TRUE rather than when a caller explicitly requested it one way or
+// the other. If a target is selected but it isn't within the same SOI as the
+// ship (it's orbiting a different body), its orbital plane doesn't mean quite
+// the same thing as it would for something in the same SOI. In that case, ask
+// the operator whether they still want to use it as the reference plane.
+IF useTargetPlane AND NOT useTargetPlaneWasExplicit {
+	IF HASTARGET {
+		IF TARGET:BODY:NAME <> SHIP:BODY:NAME {
+			LOCAL tempChar IS "".
+			IF visualize {
+				CLEARSCREEN.
+				PRINT "Target " + TARGET:NAME + " is orbiting " + TARGET:BODY:NAME + ", not " + SHIP:BODY:NAME + ".".
+				PRINT "It is not within the same sphere of influence as " + SHIP:NAME + ".".
+				PRINT " ".
+				PRINT "Ship inclination:   " + ROUND(SHIP:ORBIT:INCLINATION, 3) + " deg, relative to " + SHIP:BODY:NAME + "'s equator".
+				PRINT "Target inclination: " + ROUND(TARGET:ORBIT:INCLINATION, 3) + " deg, relative to " + TARGET:BODY:NAME + "'s equator".
+				PRINT "Desired relative inclination requested: " + ROUND(desiredRelativeInclination, 3) + " deg".
+				PRINT " ".
+				PRINT "Because these orbits are around different bodies, using the target's plane".
+				PRINT "as the reference won't mean what it normally would.".
+				PRINT " ".
+				PRINT "Press ENTER to use the target's orbital plane anyway.".
+				PRINT "Press BACKSPACE to use " + SHIP:BODY:NAME + "'s equator instead.".
+			} ELSE {
+				SET tempChar TO TERMINAL:INPUT:ENTER.
+			}
+
+			UNTIL (tempChar = TERMINAL:INPUT:ENTER OR tempChar = TERMINAL:INPUT:BACKSPACE) {
+				IF TERMINAL:INPUT:HASCHAR {
+					SET tempChar TO TERMINAL:INPUT:GETCHAR().
+				}
+				WAIT 0.
+			}
+			SET useTargetPlane TO (tempChar = TERMINAL:INPUT:ENTER).
+		}
+	}
+}
 
 IF visualize CLEARSCREEN.
 

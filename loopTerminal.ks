@@ -110,7 +110,7 @@ FUNCTION createScreenModes {
 	}
 	
 	SET tempDelegate TO {
-		LOCAL rowNumber IS + screenModes["Main"]["lineCount"] + 2.
+		LOCAL rowNumber IS screenModes["Main"]["lineCount"] + 2.
 		LOCAL tempString IS "".
 		LOCAL linesToPrintDynamic IS LIST().
 		FOR eachResource IN SHIP:RESOURCES {
@@ -181,7 +181,7 @@ FUNCTION createScreenModes {
 	tempMode:ADD("labels", LIST("Orbit", "OrbitNext", "OrbitTarget", "OrbitTargetNext", "OrbitNode")).
 	tempMode:ADD("staticText", staticText).
 	tempMode:ADD("delegate", {
-		LOCAL rowNumber IS + screenModes["Main"]["lineCount"].
+		LOCAL rowNumber IS screenModes["Main"]["lineCount"].
 		LOCAL linesToPrintDynamic IS LIST().
 		LOCAL localOrbit IS SHIP:ORBIT.
 		IF loopMode = "OrbitNext" AND ORBIT:HASNEXTPATCH {
@@ -262,7 +262,7 @@ FUNCTION createScreenModes {
 	tempMode:ADD("staticText", staticText).
 	tempMode:ADD("delegate", {
 		LOCAL linesToPrintDynamic IS LIST().
-		LOCAL rowNumber IS + screenModes["Main"]["lineCount"] + countCharacters(screenModes["Body"]["staticText"], CHAR(10)) - 1.
+		LOCAL rowNumber IS screenModes["Main"]["lineCount"] + countCharacters(screenModes["Body"]["staticText"], CHAR(10)) - 1.
 		linesToPrintDynamic:ADD(LEXICON("string", ROUND(SHIP:BODY:ROTATIONANGLE, 4) + " deg    ", "xCoord", 15, "yCoord", rowNumber)).
 		RETURN linesToPrintDynamic.
 	}).
@@ -329,7 +329,7 @@ FUNCTION createScreenModes {
 	tempMode:ADD("staticText", staticText).
 	tempMode:ADD("delegate", {
 		LOCAL linesToPrintDynamic IS LIST().
-		LOCAL rowNumber IS + screenModes["Main"]["lineCount"].
+		LOCAL rowNumber IS screenModes["Main"]["lineCount"].
 		linesToPrintDynamic:ADD(LEXICON("string", SHIP:PARTS:LENGTH:TOSTRING:PADLEFT(10), "xCoord", 19, "yCoord", rowNumber)). SET rowNumber TO rowNumber + 1.
 		linesToPrintDynamic:ADD(LEXICON("string", (ROUND(SHIP:DELTAV:CURRENT, 2) + " m/s"):PADLEFT(10), "xCoord", 19, "yCoord", rowNumber)). SET rowNumber TO rowNumber + 1.
 		linesToPrintDynamic:ADD(LEXICON("string", (ROUND(shipInfo["CurrentStage"]["DeltaV"], 2) + " m/s"):PADLEFT(10), "xCoord", 19, "yCoord", rowNumber)). SET rowNumber TO rowNumber + 1.
@@ -352,7 +352,7 @@ FUNCTION createScreenModes {
 	
 	SET staticText TO staticText + "Thruster       Enabled    Yaw  Pitch   Roll   Fore   Stbd    Top    ISP  " + CHAR(10).
 	FOR eachRCS IN shipInfo["CurrentStage"]["RCS"] {
-		SET staticText TO staticText + eachRCS:TITLE:SUBSTRING(0, eachRCS:TITLE:FIND(" ")):PADRIGHT(15) + CHAR(10).
+		SET staticText TO staticText + (CHOOSE eachRCS:TITLE:PADRIGHT(13) IF eachRCS:TITLE:FIND(" ") = -1 ELSE eachRCS:TITLE:SUBSTRING(0, eachRCS:TITLE:FIND(" "))):PADRIGHT(15) + CHAR(10).
 	}
 
 	tempMode:ADD("name", "RCS").
@@ -360,7 +360,7 @@ FUNCTION createScreenModes {
 	tempMode:ADD("staticText", staticText).
 	tempMode:ADD("delegate", {
 		LOCAL linesToPrintDynamic IS LIST().
-		LOCAL rowNumber IS + screenModes["Main"]["lineCount"] + 1.
+		LOCAL rowNumber IS screenModes["Main"]["lineCount"] + 1.
 		FOR eachRCS IN shipInfo["CurrentStage"]["RCS"] {
 			linesToPrintDynamic:ADD(LEXICON("string",
 				eachRCS:ENABLED:TOSTRING:PADLEFT(6) +
@@ -395,7 +395,7 @@ FUNCTION createScreenModes {
 	tempMode:ADD("staticText", staticText).
 	tempMode:ADD("delegate", {
 		LOCAL linesToPrintDynamic IS LIST().
-		LOCAL rowNumber IS + screenModes["Main"]["lineCount"] + 2.
+		LOCAL rowNumber IS screenModes["Main"]["lineCount"] + 2.
 		FOR eachEngine IN shipInfo["CurrentStage"]["Engines"] {
 			linesToPrintDynamic:ADD(LEXICON("string",
 				ROUND(eachEngine:MAXTHRUST * 1000):TOSTRING:PADLEFT(5) +
@@ -495,23 +495,22 @@ FUNCTION updateScreenStatic {
 }
 
 LOCAL oldScreenUpdateTime IS TIME:SECONDS.
-LOCAL firstScan IS TRUE.
+LOCAL refreshStaticText IS TRUE.
 LOCAL oldLoopMode IS loopMode.
 
 FUNCTION updateScreen {
 	PARAMETER inputString, previousCommands, forceUpdate IS FALSE.
-	IF firstScan OR oldLoopMode <> loopMode{
+	IF (TIME:SECONDS - oldScreenUpdateTime > 60) OR refreshStaticText OR forceUpdate {
+		SET oldScreenUpdateTime TO TIME:SECONDS.
+		SET refreshStaticText TO TRUE.
+		SET forceUpdate TO FALSE.
+	}
+	IF refreshStaticText OR oldLoopMode <> loopMode{
 		createScreenModes().
 		updateScreenStatic().
-		SET firstScan TO FALSE.
+		SET refreshStaticText TO FALSE.
 		SET oldLoopMode TO loopMode.
 	}
 	updateScreenDynamic(inputString, previousCommands).
-
-	IF (TIME:SECONDS - oldScreenUpdateTime > 60) OR firstScan OR forceUpdate {
-		SET oldScreenUpdateTime TO TIME:SECONDS.
-		SET firstScan TO TRUE.
-		SET forceUpdate TO FALSE.
-	}
 	RETURN.
 }

@@ -181,8 +181,9 @@ FUNCTION copyToLocal {
 			SWITCH TO 1.
 		} ELSE {
 			PRINT "Now checking to see if there is enough space for critical files".
-			CD("0:Boot"). LIST FILES IN fileList.
-			LOCAL usedSpaceCritical IS fileList[0]:SIZE.//PATH("0:boot/boot"):SIZE.	// this covers the boot file.
+			CD("0:boot").
+			LIST FILES IN fileList.
+			LOCAL usedSpaceCritical IS fileList[0]:SIZE. // this covers the boot file.
 			CD("0:Staging").
 			LIST FILES IN fileList.
 			LOCAL criticalFiles IS LIST("library", "loop", "loopCommands", "loopTerminal").
@@ -195,7 +196,7 @@ FUNCTION copyToLocal {
 				PRINT "There is enough room for solely critical files on the local volume.".
 				PRINT "Now deleting all files on the local volume.".
 				SET fileList TO CORE:VOLUME:FILES.
-				FOR f IN fileList:KEYS {IF DELETEPATH(f).}
+				FOR f IN fileList:KEYS {DELETEPATH(f).}
 
 				COMPILE "0:boot/boot.ks" TO "1:boot.ksm".
 				SET CORE:BOOTFILENAME    TO "/boot.ksm".
@@ -235,12 +236,12 @@ isStockWorld().
 isStockRockets().
 
 // default to running on the local drive, if all the files are loaded already
-IF EXISTS("1:/loop.ksm") AND EXISTS("1:/loopCommands.ksm") AND EXISTS("1:loopTerminal.ksm") AND EXISTS("1:Library.ksm") {
+IF EXISTS("1:loop") AND EXISTS("1:loopCommands") AND EXISTS("1:loopTerminal") AND EXISTS("1:library") {
 	SET loopFound TO TRUE.
 	PRINT "Found local loop with valid settings".
 }
 ELSE {
-	// if loop.ksm does not exist on the local drive, check to see if we can copy it from the archive
+	// if loop does not exist on the local drive, check to see if we can copy it from the archive
 	IF (connectionToKSC()) {
 		PRINT "Copying scripts to local hard drive".
 		IF copyToLocal(TRUE) {
