@@ -79,7 +79,6 @@ CLEARSCREEN.
 SAS OFF.
 RCS OFF.
 IF DEPLOYDRILLS DEPLOYDRILLS OFF.
-IF GEAR GEAR OFF.
 LADDERS OFF.
 ISRU OFF.
 
@@ -260,6 +259,7 @@ UNTIL mode > 6 {
 		// if the active engines have reached full thrust, stage and switch modes
 		SET globalSteer TO HEADING(0, pitchValue).
 		IF isLFFullThrust() {
+			IF GEAR GEAR OFF.
 			SET mode TO 2.
 			stageFunction().
 		}
