@@ -79,7 +79,7 @@ FUNCTION connectionToKSC {
 
 FUNCTION debugString {
 	PARAMETER message.
-	IF connectionToKSC() LOG SHIP:NAME + "," + message TO "0:Logfile.txt".
+	IF connectionToKSC() LOG KUNIVERSE:REALTIME +"," + SHIP:NAME + "," + message TO "0:Logfile.txt".
 }
 
 // copy the passed script to the given destination

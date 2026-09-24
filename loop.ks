@@ -164,7 +164,6 @@ UNTIL done {
 			// ignore the operator hitting the enter key if nothing is present in inputString
 			IF inputString <> "" {
 				LOCAL argList IS LIST().
-//				CLEARSCREEN.
 				// for each argument, if the operator entered a non-string, make the conversion
 				FOR eachArg IN inputString:SPLIT(",") {
 					IF (eachArg = "false") OR (eachArg = "F") {argList:ADD(FALSE).}
