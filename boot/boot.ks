@@ -8,8 +8,9 @@ LOCAL lastStockRockets IS FALSE.
 LOCAL fileList IS LIST().
 
 // The scripts that must be on the local drive for loop to run (without their file extensions).
-// The boot file is always required as well.
-LOCAL criticalFileNames IS LIST("library", "libraryTransfer", "loop", "loopCommands", "loopTerminal").
+// The boot file is always required as well. These are also the files that loop loads when it starts, so it is
+// global for loop.ks to use: loop refuses to run them again from the terminal.
+GLOBAL criticalFileNames IS LIST("library", "libraryTransfer", "loop", "loopCommands", "loopTerminal").
 
 // The name of the JSON file on the local drive that records which scripts were copied there, and how big
 // each one's source file on the archive was at that moment. Comparing those sizes to the archive's current

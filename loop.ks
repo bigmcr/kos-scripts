@@ -1,16 +1,15 @@
 @LAZYGLOBAL OFF.
 GLOBAL autoSteer IS "".
 LOCAL autoSteerOld IS "".
+// previousCommandIndex is the place in previousCommands that is being shown in the input. When it equals the length
+// of the list, the operator is typing a new command, and draftInput holds what was typed before browsing started.
 LOCAL previousCommandIndex IS 0.
+LOCAL draftInput IS "".
 LOCAL forceScreenUpdate IS FALSE.
 GLOBAL runLocal TO TRUE.
-IF runLocal {
-	PRINT "Boot script running locally".
-	SWITCH TO 1.
-} ELSE {
-	PRINT "Boot script running off the Archive".
-	SWITCH TO 0.
-}
+PRINT "Boot script running locally".
+SWITCH TO 1.
+
 
 GLOBAL loopMessage IS bootMessage.					// bootMessage is set in boot.ks, and may report that scripts are out of date.
 GLOBAL errorValue IS -123456789.
@@ -30,9 +29,6 @@ RUNPATH("loopTerminal").
 FUNCTION functionCaller {
 		PARAMETER func, minArguments, maxArguments, args.
 		IF args:LENGTH > maxArguments RETURN "Too many arguments".
-		FOR arg IN args {
-			PRINT "    " + arg.
-		}
 		LOCAL boundArgs IS 0.
 		FOR arg IN args {
 				LOCAL localArg IS arg.
@@ -40,16 +36,9 @@ FUNCTION functionCaller {
 				ELSE BREAK.
 				SET boundArgs TO boundArgs + 1.
 		}
-		IF boundArgs < minArguments {
-			RETURN "Minimum number of arguments not met".
-		}
+		IF boundArgs < minArguments RETURN "Not enough arguments".
 		RETURN func().
 }
-
-// Files that are already loaded and resident while loop is running. Running one of these again from the terminal
-// reloads its functions into the running program, which causes "label already exists" errors and long freezes.
-// "boot" is included because boot.ksm runs loop again (and reloads the library) if it is called from here.
-LOCAL residentScripts IS LIST("boot", "loop", "library", "libraryTransfer", "loopCommands", "loopTerminal").
 
 // Convert Argument
 // Converts an argument the operator typed into the type a script or command most likely expects.
@@ -67,6 +56,10 @@ FUNCTION convertArgument {
 }
 
 // Is Resident Script
+// The files that are already loaded while loop is running are the critical files that boot.ks keeps on the local
+// drive (criticalFileNames, set in boot.ks). Running one of them again from the terminal reloads its functions into
+// the running program, which causes "label already exists" errors and long freezes.
+// "boot" is refused as well, because boot.ksm runs loop again (and reloads the library) if it is called from here.
 // Passed the following:
 //			name (whatever the operator typed as the first argument)
 // Returns the following:
@@ -76,7 +69,7 @@ FUNCTION isResidentScript {
 	IF name:TYPENAME <> "String" RETURN FALSE.
 	IF name:ENDSWITH(".ksm") SET name TO name:SUBSTRING(0, name:LENGTH - 4).
 	ELSE IF name:ENDSWITH(".ks") SET name TO name:SUBSTRING(0, name:LENGTH - 3).
-	RETURN residentScripts:CONTAINS(name).
+	RETURN (name = "boot") OR criticalFileNames:CONTAINS(name).
 }
 
 // Stage Function
@@ -122,6 +115,41 @@ FUNCTION stageFunction {
 
 LOCAL inputString IS "".
 LOCAL previousCommands IS LIST().
+
+// The previous commands are kept in a JSON file on the local drive, so that they are still there after a reboot.
+LOCAL historyPath IS "1:history.json".
+LOCAL historyLoadingPath IS "1:history.loading".
+
+// Save History
+// Writes previousCommands to the local drive. If there is not room for it, the file is left out (the history
+// is only a convenience, and a failed write would end loop).
+// Passed the following:
+//			no arguments
+// Returns the following:
+//			nothing
+FUNCTION saveHistory {
+	IF EXISTS(historyPath) DELETEPATH(historyPath).
+	// the JSON file is larger than the text in it, so this is a generous estimate of its size
+	LOCAL estimatedSize IS 300.
+	FOR eachCommand IN previousCommands {
+		SET estimatedSize TO estimatedSize + eachCommand:LENGTH * 2 + 50.
+	}
+	IF estimatedSize < CORE:VOLUME:FREESPACE WRITEJSON(previousCommands, historyPath).
+}
+
+// Reading a damaged JSON file would end loop every time it starts. So a marker file is made before the history is
+// read and removed after, and if the marker is found at the start, the last read did not finish, and the history is
+// thrown away instead of being read again.
+IF EXISTS(historyLoadingPath) {
+	IF EXISTS(historyPath) DELETEPATH(historyPath).
+	DELETEPATH(historyLoadingPath).
+} ELSE IF EXISTS(historyPath) {
+	LOG "loading" TO historyLoadingPath.
+	LOCAL savedHistory IS READJSON(historyPath).
+	IF savedHistory:ISTYPE("List") SET previousCommands TO savedHistory.
+	DELETEPATH(historyLoadingPath).
+}
+SET previousCommandIndex TO previousCommands:LENGTH.
 
 LOCAL possibleCommands IS createCommandList().
 LOCAL done IS FALSE.
@@ -231,6 +259,8 @@ UNTIL done {
 					IF (argList:LENGTH <= 7) {
 						IF NOT dontKillAfterScript endScript().
 						SET dontKillAfterScript TO FALSE.
+						// the script may have printed on the screen, so lay it out again (endScript does this too)
+						SET forceScreenUpdate TO TRUE.
 						SET commandValid TO TRUE.
 						debugString("LoopMessage from command: " + loopMessage).
 					} ELSE {
@@ -248,7 +278,7 @@ UNTIL done {
 					debugString("Running command " + commandName + " with " + (argList:LENGTH - 1) + " arguments").
 					LOCAL returnMessage IS "".
 					SET returnMessage TO functionCaller(possibleCommands[commandName]["Delegate"], possibleCommands[commandName]["RequiredArgs"], possibleCommands[commandName]["PossibleArgs"], argList:SUBLIST(1, argList:LENGTH - 1)).
-					IF returnMessage:FIND("invalid argument") <> -1 OR returnMessage = "Minimum number of arguments not met" OR returnMessage = "Too many arguments" {
+					IF returnMessage:FIND("invalid argument") <> -1 OR returnMessage = "Not enough arguments" OR returnMessage = "Too many arguments" {
 						SET loopMessage TO returnMessage.
 					} ELSE IF returnMessage <> "" {
 						SET loopMessage TO returnMessage.
@@ -264,8 +294,18 @@ UNTIL done {
 			// after processing the command, record then delete the command.
 			IF (commandValid) {
 				debugString("Command " + inputString + " completed").
-				previousCommands:ADD(inputString).
-				SET previousCommandIndex TO previousCommands:LENGTH - 1.
+				// do not record the same command twice in a row, and keep only the most recent 50
+				LOCAL isRepeat IS FALSE.
+				IF previousCommands:LENGTH > 0 {
+					IF previousCommands[previousCommands:LENGTH - 1] = inputString SET isRepeat TO TRUE.
+				}
+				IF NOT isRepeat {
+					previousCommands:ADD(inputString).
+					IF previousCommands:LENGTH > 50 previousCommands:REMOVE(0).
+					saveHistory().
+				}
+				SET previousCommandIndex TO previousCommands:LENGTH.
+				SET draftInput TO "".
 				SET inputString TO "".
 			}
 			// if the command was not processed correctly, display an error message
@@ -277,32 +317,36 @@ UNTIL done {
 				SET inputString TO inputString:SUBSTRING(0, inputString:LENGTH - 1).
 			}
 		} ELSE
-		// if the operator entered the up arrow key, load the previous command
+		// if the operator entered the up arrow key, load the previous command. What was being typed is kept, to come back to.
 		IF tempChar = TERMINAL:INPUT:UPCURSORONE {
-			SET previousCommandIndex TO previousCommandIndex - 1.
-			IF previousCommandIndex > previousCommands:LENGTH - 1 SET previousCommandIndex TO previousCommands:LENGTH - 1.
-			IF previousCommandIndex < 0 SET previousCommandIndex TO 0.
-			IF (previousCommandIndex < previousCommands:LENGTH) SET inputString TO previousCommands[previousCommandIndex].
+			IF previousCommandIndex > 0 {
+				IF previousCommandIndex = previousCommands:LENGTH SET draftInput TO inputString.
+				SET previousCommandIndex TO previousCommandIndex - 1.
+				SET inputString TO previousCommands[previousCommandIndex].
+			}
 		} ELSE
+		// the down arrow key moves toward the newest command, and then back to what was being typed
 		IF tempChar = TERMINAL:INPUT:DOWNCURSORONE {
-			SET previousCommandIndex TO previousCommandIndex + 1.
-			IF previousCommandIndex > previousCommands:LENGTH - 1 SET previousCommandIndex TO previousCommands:LENGTH - 1.
-			IF previousCommandIndex < 0 SET previousCommandIndex TO 0.
-			IF (previousCommandIndex < previousCommands:LENGTH) SET inputString TO previousCommands[previousCommandIndex].
+			IF previousCommandIndex < previousCommands:LENGTH {
+				SET previousCommandIndex TO previousCommandIndex + 1.
+				IF previousCommandIndex = previousCommands:LENGTH SET inputString TO draftInput.
+				ELSE SET inputString TO previousCommands[previousCommandIndex].
+			}
 		} ELSE
 		IF tempChar = TERMINAL:INPUT:DELETERIGHT {
 			SET inputString TO "".
+			SET draftInput TO "".
+			SET previousCommandIndex TO previousCommands:LENGTH.
 		}
 		// otherwise, add the character to the input string. Only printable ASCII is kept, because the other
 		// special keys (left/right arrows, home, end, tab, etc.) would add invisible characters to the input.
 		ELSE {
 			IF UNCHAR(tempChar) >= 32 AND UNCHAR(tempChar) <= 126 SET inputString TO inputString + tempChar.
 		}
-		SET forceScreenUpdate TO TRUE.
 	}
 	IF autoSteer <> "" {
 		IF autoSteer <> autoSteerOld setLockedSteering(TRUE).
-		IF autoSteer = "hold" {LOCAL tempDirection IS SHIP:FACING. SET globalSteer TO tempDirection.}
+		IF autoSteer = "damp" {LOCAL tempDirection IS SHIP:FACING. SET globalSteer TO tempDirection.}
 		ELSE IF autoSteer = "up" SET globalSteer TO -SHIP:BODY:POSITION.
 		ELSE IF autoSteer = "down" SET globalSteer TO SHIP:BODY:POSITION.
 		ELSE IF autoSteer = "north" SET globalSteer TO SHIP:NORTH:VECTOR.

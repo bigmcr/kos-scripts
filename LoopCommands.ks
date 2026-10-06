@@ -365,7 +365,8 @@ FUNCTION createCommandList {
 			RETURN "Target - invalid argument " + arg1.
 		} ELSE {RETURN "Must have a target set.".}
 		})).
-	possibleCommands:ADD("hold",        LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "hold". RETURN "Steering held at current".})).
+	possibleCommands:ADD("hold",        LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET globalSteer TO SHIP:FACING. SET autoSteer TO "hold". RETURN "Steering held at current direction".})).
+	possibleCommands:ADD("damp",        LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "damp". RETURN "Damping rotation".})).
 	possibleCommands:ADD("up",          LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "up". RETURN "Steering locked to up".})).
 	possibleCommands:ADD("down", 				LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "down". RETURN "Steering locked to down".})).
 	possibleCommands:ADD("north", 			LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "north". RETURN "Steering locked to north".})).
