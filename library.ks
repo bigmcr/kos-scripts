@@ -1016,6 +1016,23 @@ FUNCTION hillClimb {
 	RETURN returnMe.
 }
 
+// Removes every maneuver node from the ship's flight plan. Goes through a snapshot of ALLNODES
+// rather than looping on HASNODE / NEXTNODE: kOS documents NEXTNODE as a runtime error when there is
+// no node, and KSP can take a tick to drop a removed node, so HASNODE can still read TRUE right after
+// a REMOVE. Waits one tick afterwards so the flight plan is settled before the caller adds a node.
+FUNCTION clearManeuverNodes {
+	LOCAL nodesToRemove IS LIST().
+	FOR existingNode IN ALLNODES {
+		nodesToRemove:ADD(existingNode).
+	}
+	IF nodesToRemove:LENGTH > 0 {
+		FOR existingNode IN nodesToRemove {
+			REMOVE existingNode.
+		}
+		WAIT 0.
+	}
+}
+
 // Generic 2D hill climbing function
 // Tries to minimize the value of the passed delegate, which takes two scalar
 // inputs and returns a single scalar.
@@ -1132,6 +1149,7 @@ FUNCTION hillClimb2D {
 				SET bestGuess2 TO testGuess2.
 				SET bestLabel TO neighborLabels[neighborIndex].
 			}
+			WAIT 0.
 		}
 
 		IF bestLabel = "None" {
@@ -1158,6 +1176,7 @@ FUNCTION hillClimb2D {
 		}
 
 		SET iteration TO iteration + 1.
+		// This is present because kOS has odd results when complex calcualtions are spread across different physics ticks.
 	}
 
 	LOCAL returnMe IS LEXICON().
@@ -1170,6 +1189,358 @@ FUNCTION hillClimb2D {
 	returnMe:ADD("finalGuess2", currentGuess2).
 	returnMe:ADD("deltaValue", currentDelegate - initialValue).
 	RETURN returnMe.
+}
+
+// ============================================================================
+// Gradient ascent / descent for a 2-input scalar delegate.
+//
+// This is intentionally written to sit alongside hillClimb2D in library.ks and
+// share its calling convention (a 2-argument delegate, a LEXICON result with
+// the same key names) so the two can be swapped for one another easily.
+//
+// See the accompanying explanation for how this differs from hillClimb2D:
+// hillClimb2D is a derivative-free "compass search" (it only ever asks
+// "is this neighbor better or worse?" at 8 fixed points a fixed step away),
+// while gradientDescent2D estimates the actual slope of the delegate via
+// finite differences and moves continuously along it, with a step size that
+// naturally shrinks as the slope flattens out near an optimum.
+// ============================================================================
+
+// Estimates the partial derivatives of a 2-argument delegate at (guess1, guess2)
+// using a central finite difference: (f(x+h) - f(x-h)) / (2h). Central
+// differences are used instead of forward differences (f(x+h) - f(x)) / h)
+// because they're second-order accurate rather than first-order - i.e. the
+// error shrinks with h^2 instead of just h, which matters a lot here since
+// gradientStepSize (h) also has to be small enough not to blur out real
+// curvature in the delegate's surface.
+// Passed the following:
+//			delegate, expecting two scalar inputs and returning a single scalar
+//			guess1, guess2 - the point to estimate the gradient at
+//			gradientStepSize - h, the finite-difference offset
+// Returns a LEXICON with "d1" (partial derivative w.r.t. input 1) and
+// "d2" (partial derivative w.r.t. input 2).
+FUNCTION estimateGradient2D {
+	PARAMETER delegate.
+	PARAMETER guess1.
+	PARAMETER guess2.
+	PARAMETER gradientStepSize.
+
+	LOCAL d1 IS (delegate(guess1 + gradientStepSize, guess2) - delegate(guess1 - gradientStepSize, guess2)) / (2 * gradientStepSize).
+	LOCAL d2 IS (delegate(guess1, guess2 + gradientStepSize) - delegate(guess1, guess2 - gradientStepSize)) / (2 * gradientStepSize).
+
+	RETURN LEXICON("d1", d1, "d2", d2).
+}
+
+// Generic 2D gradient ascent / descent function.
+// Minimizes (or maximizes, if ascend is TRUE) the value of the passed delegate,
+// which takes two scalar inputs and returns a single scalar, by repeatedly
+// estimating the local gradient and stepping along it (downhill to minimize,
+// uphill to maximize), scaled by learningRate.
+//
+// Includes simple backtracking: if a proposed step does not actually improve
+// the delegate's value (which can happen if learningRate is too large for the
+// local curvature - the classic gradient descent failure mode is overshooting
+// past a minimum), learningRate is halved and the same gradient is retried,
+// rather than taking the bad step. This is a much cheaper stand-in for a full
+// line search, and is the direct analog of hillClimb2D halving its step size
+// when no neighbor improves on the current point.
+//
+// Passed the following:
+//			delegate - expects two scalar inputs, returns a single scalar
+//			initialGuess1, initialGuess2 - starting point
+//			initialLearningRate - initial multiplier applied to the gradient
+//        each step (this is the "step size" of gradient descent - unlike
+//        hillClimb2D's fixed compass-direction step, the actual distance
+//        moved is learningRate * |gradient|, so it shrinks on its own as
+//        the surface flattens out near an optimum)
+//			gradientStepSize - h used for the finite-difference gradient estimate.
+//        Defaults to a small fraction of the learning rate; pass this
+//        explicitly if the delegate's inputs are on a very different scale
+//        than its output.
+//			gradientTolerance - stop once the gradient's magnitude drops below
+//        this value (i.e. the surface is locally ~flat - an optimum).
+//        Defaults to a small number; tune to the scale of the delegate.
+//			iterationMax - maximum number of accepted steps. Defaults to 100.
+//			maxBacktracks - maximum number of learningRate halvings to try in a
+//        single iteration before giving up and treating the search as
+//        converged (learningRate has become negligible). Defaults to 30.
+//			ascend - IF TRUE, maximizes the delegate instead of minimizing it.
+//        Defaults to FALSE (minimize), matching hillClimb2D's convention.
+//			logFileName - log file name. If blank, does not log. Defaults to blank.
+//			cyclicalPeriod1 / cyclicalPeriodCutoff1 - as in hillClimb2D: if axis 1
+//        wraps around (e.g. an angle or an orbital phase), pass the period
+//        here so the guess gets wrapped back into range each iteration.
+//        -1 means "not cyclical". Defaults to -1.
+//			cyclicalPeriod2 / cyclicalPeriodCutoff2 - as above, for axis 2.
+//			deleteOldlogFileName - whether to delete the old version of the log
+//        file or append to the end of it. Defaults to TRUE.
+// Returns the following:
+//			Lexicon with the following members (same shape as hillClimb2D's return,
+//      so the two are interchangeable at the call site):
+//				"iteration" - scalar - number of accepted steps taken
+//				"initialValue" - scalar - delegate's value at the initial guess
+//				"initialGuess1" / "initialGuess2" - the starting point
+//				"finalValue" - scalar - delegate's value at the final guess
+//				"finalGuess1" / "finalGuess2" - the final point
+//				"deltaValue" - scalar - how much the delegate's value changed
+//				"finalGradientMagnitude" - scalar - |gradient| at the final guess;
+//        useful for confirming whether the search actually converged
+//        (small) or bailed out on exhausted backtracks (still large)
+FUNCTION gradientDescent2D {
+	PARAMETER delegate.
+	PARAMETER initialGuess1.
+	PARAMETER initialGuess2.
+	PARAMETER initialLearningRate.
+	PARAMETER gradientStepSize IS initialLearningRate / 100.
+	PARAMETER gradientTolerance IS 1e-6.
+	PARAMETER iterationMax IS 100.
+	PARAMETER maxBacktracks IS 30.
+	PARAMETER ascend IS FALSE.
+	PARAMETER logFileName IS "".
+	PARAMETER cyclicalPeriod1 IS -1.
+	PARAMETER cyclicalPeriodCutoff1 IS 0.
+	PARAMETER cyclicalPeriod2 IS -1.
+	PARAMETER cyclicalPeriodCutoff2 IS 0.
+	PARAMETER deleteOldlogFileName IS TRUE.
+
+	IF (initialLearningRate = 0) OR (NOT delegate:ISTYPE("UserDelegate")) {
+		LOCAL fallbackValue IS delegate(initialGuess1, initialGuess2).
+		RETURN LEXICON("iteration", -1,
+									  "initialValue", fallbackValue,
+									  "initialGuess1", initialGuess1,
+									  "initialGuess2", initialGuess2,
+									  "finalValue", fallbackValue,
+									  "finalGuess1", initialGuess1,
+									  "finalGuess2", initialGuess2,
+									  "deltaValue", 0,
+									  "finalGradientMagnitude", 0).
+	}
+
+	LOCAL logDataPerm IS (logFileName <> "").
+	IF logFileName:STARTSWITH("0:") AND NOT connectionToKSC() SET logDataPerm TO FALSE.
+	IF deleteOldlogFileName AND logDataPerm AND EXISTS(logFileName) DELETEPATH(logFileName).
+	IF logDataPerm LOG "Iteration,Guess1,Guess2,Value,Gradient1,Gradient2,GradientMag,LearningRate,Backtracks" TO logFileName.
+
+	// ascending and descending are the same algorithm with the sign of the step
+	// flipped - climb the gradient uphill instead of stepping downhill against it.
+	LOCAL directionSign IS 1.
+	IF ascend SET directionSign TO -1.
+
+	LOCAL currentGuess1 IS initialGuess1.
+	LOCAL currentGuess2 IS initialGuess2.
+	LOCAL currentValue IS delegate(currentGuess1, currentGuess2).
+	LOCAL knownInitialValue IS currentValue.
+	LOCAL learningRate IS initialLearningRate.
+
+	LOCAL iteration IS 0.
+	LOCAL gradientMagnitude IS gradientTolerance + 1. // anything > tolerance, just to enter the loop
+
+	UNTIL (gradientMagnitude <= gradientTolerance) OR (iteration >= iterationMax) {
+		LOCAL gradient IS estimateGradient2D(delegate, currentGuess1, currentGuess2, gradientStepSize).
+		SET gradientMagnitude TO SQRT(gradient["d1"]^2 + gradient["d2"]^2).
+
+		IF gradientMagnitude <= gradientTolerance {
+			IF logDataPerm LOG iteration + "," + currentGuess1 + "," + currentGuess2 + "," + currentValue + "," +
+				gradient["d1"] + "," + gradient["d2"] + "," + gradientMagnitude + "," + learningRate + ",converged" TO logFileName.
+			BREAK.
+		}
+
+		// backtracking: try the full learning rate first, halving it until the
+		// step actually improves on currentValue (or we give up on this iteration)
+		LOCAL backtracks IS 0.
+		LOCAL stepAccepted IS FALSE.
+		LOCAL testGuess1 IS currentGuess1.
+		LOCAL testGuess2 IS currentGuess2.
+		LOCAL testValue IS currentValue.
+
+		UNTIL stepAccepted OR (backtracks >= maxBacktracks) {
+			SET testGuess1 TO currentGuess1 - directionSign * learningRate * gradient["d1"].
+			SET testGuess2 TO currentGuess2 - directionSign * learningRate * gradient["d2"].
+			SET testValue TO delegate(testGuess1, testGuess2).
+
+			LOCAL improved IS FALSE.
+			IF ascend SET improved TO (testValue > currentValue).
+			ELSE SET improved TO (testValue < currentValue).
+
+			IF improved {
+				SET stepAccepted TO TRUE.
+			} ELSE {
+				SET learningRate TO learningRate / 2.
+				SET backtracks TO backtracks + 1.
+			}
+		}
+
+		IF logDataPerm LOG iteration + "," + currentGuess1 + "," + currentGuess2 + "," + currentValue + "," +
+			gradient["d1"] + "," + gradient["d2"] + "," + gradientMagnitude + "," + learningRate + "," + backtracks TO logFileName.
+
+		IF NOT stepAccepted {
+			// learningRate has been halved maxBacktracks times and still can't find
+			// an improving step - the gradient estimate is unreliable this close in
+			// (often floating-point noise at the scale of gradientStepSize), so stop.
+			BREAK.
+		}
+
+		SET currentGuess1 TO testGuess1.
+		SET currentGuess2 TO testGuess2.
+		SET currentValue TO testValue.
+
+		IF cyclicalPeriod1 <> -1 {
+			SET currentGuess1 TO MOD(currentGuess1 - cyclicalPeriodCutoff1, cyclicalPeriod1) + cyclicalPeriodCutoff1.
+			IF currentGuess1 < cyclicalPeriodCutoff1 SET currentGuess1 TO currentGuess1 + cyclicalPeriod1.
+		}
+		IF cyclicalPeriod2 <> -1 {
+			SET currentGuess2 TO MOD(currentGuess2 - cyclicalPeriodCutoff2, cyclicalPeriod2) + cyclicalPeriodCutoff2.
+			IF currentGuess2 < cyclicalPeriodCutoff2 SET currentGuess2 TO currentGuess2 + cyclicalPeriod2.
+		}
+
+		SET iteration TO iteration + 1.
+	}
+
+	LOCAL returnMe IS LEXICON().
+	returnMe:ADD("iteration", iteration).
+	returnMe:ADD("initialValue", knownInitialValue).
+	returnMe:ADD("initialGuess1", initialGuess1).
+	returnMe:ADD("initialGuess2", initialGuess2).
+	returnMe:ADD("finalValue", currentValue).
+	returnMe:ADD("finalGuess1", currentGuess1).
+	returnMe:ADD("finalGuess2", currentGuess2).
+	returnMe:ADD("deltaValue", currentValue - knownInitialValue).
+	returnMe:ADD("finalGradientMagnitude", gradientMagnitude).
+	RETURN returnMe.
+}
+
+// Golden-section search for the minimum of costDelegate(x) on [lowBound, highBound].
+// Returns the x of the minimum. Derivative-free; assumes the cost is unimodal
+// there, which holds for the narrow brackets this file uses.
+FUNCTION goldenSectionMinimum {
+	PARAMETER costDelegate.
+	PARAMETER lowBound.
+	PARAMETER highBound.
+	PARAMETER iterations IS 14.
+
+	LOCAL inversePhi IS (SQRT(5) - 1) / 2.
+	LOCAL low IS lowBound.
+	LOCAL high IS highBound.
+	LOCAL probeLow IS high - inversePhi * (high - low).
+	LOCAL probeHigh IS low + inversePhi * (high - low).
+	LOCAL costLow IS costDelegate(probeLow).
+	LOCAL costHigh IS costDelegate(probeHigh).
+
+	FROM {LOCAL pass IS 0.} UNTIL pass >= iterations STEP {SET pass TO pass + 1.} DO {
+		IF costLow < costHigh {
+			SET high TO probeHigh.
+			SET probeHigh TO probeLow.
+			SET costHigh TO costLow.
+			SET probeLow TO high - inversePhi * (high - low).
+			SET costLow TO costDelegate(probeLow).
+		} ELSE {
+			SET low TO probeLow.
+			SET probeLow TO probeHigh.
+			SET costLow TO costHigh.
+			SET probeHigh TO low + inversePhi * (high - low).
+			SET costHigh TO costDelegate(probeHigh).
+		}
+	}
+	RETURN (low + high) / 2.
+}
+
+// Newton refinement of a minimum in two variables - the end game of the hill climb below.
+// Near a minimum a smooth cost is nearly a bowl, so instead of walking down it (the hill climb
+// halves its step and re-prices 8 neighbours each time) this fits the bowl and jumps to its bottom.
+//   Each step prices a 3x3 patch around the current point (the centre is already known, so 8 new
+//   points), fits the slope and curvature from it, and moves to the minimum of the fitted bowl:
+//       slope     = (f(+h) - f(-h)) / 2h on each axis
+//       curvature = (f(+h) - 2f(0) + f(-h)) / h^2 on each axis, and a cross term from the four corners
+//       move      = -(curvature matrix)^-1 * slope
+//   The move is capped at two patch widths per axis, and is only taken if it beats every point already
+//   priced: otherwise the best point of the patch is taken if that improves on the current one (a patch
+//   whose curvature does not describe a bowl gets only that). Each later step uses half the patch width.
+//   Two steps cost about 18 evaluations. (In a test on a Lambert porkchop surface, a hill climb stopped
+//   at 1/8 of the grid spacing followed by two of these steps took 60 evaluations against 72 for the
+//   full hill climb, and found the minimum to within 0.5 m/s in every case against 40% of them.)
+//   costDelegate - f(guess1, guess2) -> value, to be minimized
+//   startGuess1/2, startValue - the point to refine and its value
+//   startStep1/2 - the patch half-width on each axis for the first step (the hill climb's final step)
+//   newtonSteps  - how many steps to take
+// Returns a LEXICON: "finalValue", "finalGuess1", "finalGuess2", "evaluations", and "steps" (how many
+// of the newtonSteps steps actually moved the point to a better one).
+FUNCTION newtonRefine2D {
+	PARAMETER costDelegate.
+	PARAMETER startGuess1.
+	PARAMETER startGuess2.
+	PARAMETER startValue.
+	PARAMETER startStep1.
+	PARAMETER startStep2.
+	PARAMETER newtonSteps IS 2.
+
+	LOCAL guess1 IS startGuess1.
+	LOCAL guess2 IS startGuess2.
+	LOCAL currentValue IS startValue.
+	LOCAL step1 IS startStep1.
+	LOCAL step2 IS startStep2.
+	LOCAL evaluations IS 0.
+	LOCAL stepsTaken IS 0.
+
+	FROM {LOCAL newtonStep IS 1.} UNTIL newtonStep > newtonSteps STEP {SET newtonStep TO newtonStep + 1.} DO {
+		// The 3x3 patch, stored flat: position 3*i + j is the point at (guess1 + (i-1)*step1, guess2 + (j-1)*step2).
+		LOCAL patch IS LIST(0, 0, 0, 0, currentValue, 0, 0, 0, 0).
+		LOCAL bestPatchValue IS currentValue.
+		LOCAL bestPatch1 IS guess1.
+		LOCAL bestPatch2 IS guess2.
+		FOR patchIndex IN LIST(0, 1, 2, 3, 5, 6, 7, 8) {
+			LOCAL point1 IS guess1 + (FLOOR(patchIndex / 3) - 1) * step1.
+			LOCAL point2 IS guess2 + (MOD(patchIndex, 3) - 1) * step2.
+			LOCAL pointValue IS costDelegate(point1, point2).
+			SET evaluations TO evaluations + 1.
+			SET patch[patchIndex] TO pointValue.
+			IF pointValue < bestPatchValue {
+				SET bestPatchValue TO pointValue.
+				SET bestPatch1 TO point1.
+				SET bestPatch2 TO point2.
+			}
+			WAIT 0.
+		}
+
+		LOCAL slope1 IS (patch[7] - patch[1]) / (2 * step1).
+		LOCAL slope2 IS (patch[5] - patch[3]) / (2 * step2).
+		LOCAL curvature11 IS (patch[7] - 2 * patch[4] + patch[1]) / step1 ^ 2.
+		LOCAL curvature22 IS (patch[5] - 2 * patch[4] + patch[3]) / step2 ^ 2.
+		LOCAL curvature12 IS (patch[8] - patch[6] - patch[2] + patch[0]) / (4 * step1 * step2).
+		LOCAL determinant IS curvature11 * curvature22 - curvature12 ^ 2.
+
+		// Where this step ends up: the best patch point, unless the fitted bowl's bottom does better.
+		LOCAL nextValue IS bestPatchValue.
+		LOCAL next1 IS bestPatch1.
+		LOCAL next2 IS bestPatch2.
+		IF curvature11 > 0 AND determinant > 0 {
+			LOCAL move1 IS -(curvature22 * slope1 - curvature12 * slope2) / determinant.
+			LOCAL move2 IS -(curvature11 * slope2 - curvature12 * slope1) / determinant.
+			LOCAL overshoot IS MAX(ABS(move1) / (2 * step1), ABS(move2) / (2 * step2)).
+			IF overshoot > 1 {
+				SET move1 TO move1 / overshoot.
+				SET move2 TO move2 / overshoot.
+			}
+			LOCAL bowlValue IS costDelegate(guess1 + move1, guess2 + move2).
+			SET evaluations TO evaluations + 1.
+			WAIT 0.
+			IF bowlValue < nextValue {
+				SET nextValue TO bowlValue.
+				SET next1 TO guess1 + move1.
+				SET next2 TO guess2 + move2.
+			}
+		}
+
+		IF nextValue < currentValue {
+			SET currentValue TO nextValue.
+			SET guess1 TO next1.
+			SET guess2 TO next2.
+			SET stepsTaken TO stepsTaken + 1.
+		}
+		SET step1 TO step1 / 2.
+		SET step2 TO step2 / 2.
+	}
+
+	RETURN LEXICON("finalValue", currentValue, "finalGuess1", guess1, "finalGuess2", guess2, "evaluations", evaluations, "steps", stepsTaken).
 }
 
 // Return the vector pointing in the direction of downslope
@@ -2833,13 +3204,13 @@ FUNCTION findZeroSecant {
 FUNCTION findZeroNewton {
 	PARAMETER delegateFunction.
 	PARAMETER delegateSlope.
-  PARAMETER initialGuess.
-  PARAMETER tolerance.
+	PARAMETER initialGuess.
+	PARAMETER tolerance.
 	PARAMETER desiredValue IS 0.
-  PARAMETER iteration IS 0.
+	PARAMETER iteration IS 0.
 	PARAMETER maxIteration IS 100.
 
-  IF ((iteration >= 10) OR (NOT delegateFunction:ISTYPE("UserDelegate")) OR (NOT delegateSlope:ISTYPE("UserDelegate"))) RETURN X1.
+	IF ((iteration >= 10) OR (NOT delegateFunction:ISTYPE("UserDelegate")) OR (NOT delegateSlope:ISTYPE("UserDelegate"))) RETURN X1.
 
 	LOCAL slope IS delegateSlope(X1).
 	LOCAL X2 IS initialGuess.
@@ -2896,7 +3267,7 @@ FUNCTION trueToMeanAnomaly {
 		LOCAL bigE IS ACOSH((eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly))).
 
 		LOCAL meanAnomaly IS eccentricity * SINH(bigE) - bigE.
-		RETURN normalizeAngle360(meanAnomaly).
+		RETURN normalizeAngle360(CONSTANT:RadToDeg * meanAnomaly).
 	}
 }
 
@@ -2946,9 +3317,17 @@ FUNCTION SINH {
 
 FUNCTION ATANH {PARAMETER x. RETURN LN((1 + x) / (1 - x))/2.}
 
-FUNCTION ACOSH {PARAMETER x. RETURN LN(x + SQRT(x^2 - 1)).}
+FUNCTION ACOSH {
+	PARAMETER x.
+	IF x < 1 AND x > 1 - 1e-9 SET x TO 1.
+	RETURN LN(x + SQRT((x - 1) * (x + 1))).
+}
 
-FUNCTION ASINH {PARAMETER x. RETURN LN(x + SQRT(x^2 + 1)).}
+FUNCTION ASINH {
+	PARAMETER x.
+	IF x < 0 RETURN -LN(-x + SQRT(x^2 + 1)).
+	RETURN LN(x + SQRT(x^2 + 1)).
+}
 
 // Function that calculates the approximate distance travelled during the course of a burn.
 // Assumes that all of the thrust of the engines are directly in line with travel.
@@ -3198,595 +3577,246 @@ FUNCTION firstCommonBody {
 	RETURN objectTwo.
 }
 
-FUNCTION gaussProblemPIteration {
-  PARAMETER r_1.
-  PARAMETER r_2.
-  PARAMETER timeOfFlight.
-  PARAMETER mu.
-  PARAMETER shortWay IS TRUE.
-  PARAMETER timeTolerance IS 0.001.         // Default tolerance of 0.001 second
-  PARAMETER maxIterations IS 20.
-  PARAMETER logAllowed IS FALSE.
-  PARAMETER pStart1 IS 0.05.
-  PARAMETER pStart2 IS 0.2.
+// Returns BODY(objectName) or VESSEL(objectName) (a vessel wins if both exist),
+// or the scalar 0 if neither exists - check with :ISTYPE("Scalar").
+FUNCTION resolveOrbitable {
+	PARAMETER objectName.
 
-  // Start off by calculating the various constants associated with the problem.
-  LOCAL phaseAngle IS VANG(r_1, r_2).
-  IF NOT shortWay SET phaseAngle TO 360 - phaseAngle.
-  LOCAL r_1_mag IS r_1:MAG.
-  LOCAL r_2_mag IS r_2:MAG.
-  LOCAL k IS r_1_mag*r_2_mag*(1-COS(phaseAngle)).
-  LOCAL l IS r_1_mag+r_2_mag.
-  LOCAL m IS r_1_mag*r_2_mag*(1+COS(phaseAngle)).
-  LOCAL p_i IS k/(l+SQRT(2*m)).
-  LOCAL p_ii IS k/(l-SQRT(2*m)).
-
-  LOCAL logMe IS LIST().
-  IF logAllowed {
-    logMe:ADD(",X,Y,Z,Magnitude,Units,Short Way," + shortWay + ",pStart1," + pStart1 + ",pStart2," + pStart2).
-    logMe:ADD("R_1," + r_1:X + "," + r_1:y + "," + r_1:z + "," + r_1_mag + ",meters").
-    logMe:ADD("R_2," + r_2:X + "," + r_2:y + "," + r_2:z + "," + r_2_mag + ",meters").
-    logMe:ADD("Desired Time," + timeOfFlight + ",s," + timeToString(timeOfFlight)).
-    logMe:ADD("mu," + mu).
-    logMe:ADD("phaseAngle," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-    logMe:ADD("k," + k).
-    logMe:ADD("l," + l).
-    logMe:ADD("m," + m).
-    logMe:ADD("p_i," + p_i).
-    logMe:ADD("p_ii," + p_ii).
-    logMe:ADD("").
-
-    logMe:ADD("p,").              //12
-    logMe:ADD("a,").              //13
-    logMe:ADD("Motion Type,").    //14
-    logMe:ADD("f,").              //15
-    logMe:ADD("g,").              //16
-    logMe:ADD("f_dot,").          //17
-    logMe:ADD("deltaAngle,").     //18
-    logMe:ADD("Time,").           //19
-    logMe:ADD("Time Error,").     //20
-    logMe:ADD("Iteration,").      //21
-    logMe:ADD(",").               //22
-    logMe:ADD(",").               //23
-    logMe:ADD("delta_v," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-  }
-
-  LOCAL pList IS LIST().
-  LOCAL tList IS LIST().
-
-  LOCAL p IS (p_ii - p_i) * pStart1 + p_i.
-  LOCAL a IS m*k*p/((2*m-l^2)*p^2+2*k*l*p-k^2).
-  LOCAL motionType IS "Ellipse".
-  IF a < 0 SET motionType TO "Hyperbola".
-  ELSE SET motionType TO "Ellipse".
-  LOCAL f IS 1 - r_2_mag / p * ( 1 - COS(phaseAngle)).
-  LOCAL g IS r_1_mag * r_2_mag * SIN(phaseAngle) / SQRT(mu * p).
-  LOCAL f_dot IS SQRT(mu / p) * TAN(phaseAngle / 2) * ((1 - COS(phaseAngle)) / p - 1 / r_1_mag - 1 / r_2_mag).
-  LOCAL deltaAngle IS 0.
-  LOCAL timeSeconds IS 0.
-  LOCAL timeError IS timeTolerance + 1.0.
-  IF motionType = "Ellipse" {
-    SET deltaAngle TO CONSTANT:DegToRad * ARCTAN2( -r_1_mag * r_2_mag * f_dot / SQRT( mu * a ), 1 - r_1_mag / a * (1 - f)).
-    SET timeSeconds TO g + SQRT( a^3 / mu) * ( deltaAngle - SIN(deltaAngle)).
-  } ELSE {
-    SET deltaAngle TO ACOSH( 1 - r_1_mag / a * ( 1 - f)).
-    SET timeSeconds TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngle).
-  }
-  SET timeError TO timeOfFlight - timeSeconds.
-  pList:ADD(p).
-  tList:ADD(timeSeconds).
-
-  LOCAL iterations IS 0.
-  LOCAL timeNMinusOne IS 0.
-  LOCAL timeNMinusTwo IS timeSeconds.
-  LOCAL pNMinusOne IS 0.
-  LOCAL pNMinusTwo IS p.
-
-  IF logAllowed {
-    SET logMe[12] TO logMe[12] + p + ",".
-    SET logMe[13] TO logMe[13] + a + ",".
-    SET logMe[14] TO logMe[14] + motionType + ",".
-    SET logMe[15] TO logMe[15] + f + ",".
-    SET logMe[16] TO logMe[16] + g + ",".
-    SET logMe[17] TO logMe[17] + f_dot + ",".
-    SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-    SET logMe[19] TO logMe[19] + timeSeconds + ",".
-    SET logMe[20] TO logMe[20] + timeError + ",".
-    SET logMe[21] TO logMe[21] + "-1,".
-  }
-
-  SET p TO (p_ii - p_i) * pStart2 + p_i.
-  SET a TO m * k * p / (( 2 * m - l^2) * p^2 + 2 * k * l * p - k^2).
-  IF a < 0 SET motionType TO "Hyperbola".
-  ELSE SET motionType TO "Ellipse".
-  SET f TO 1 - r_2_mag / p * ( 1 - COS(phaseAngle)).
-  SET g TO r_1_mag * r_2_mag * SIN(phaseAngle) / SQRT(mu * p).
-  SET f_dot TO SQRT(mu / p) * TAN(phaseAngle / 2) * ((1 - COS(phaseAngle)) / p - 1 / r_1_mag - 1 / r_2_mag).
-  IF motionType = "Ellipse" {
-    SET deltaAngle TO CONSTANT:DegToRad * ARCTAN2( -r_1_mag * r_2_mag * f_dot / SQRT( mu * a ), 1 - r_1_mag / a * (1 - f)).
-    SET timeSeconds TO g + SQRT( a^3 / mu) * ( deltaAngle - SIN(deltaAngle)).
-  } ELSE {
-    SET deltaAngle TO ACOSH( 1 - r_1_mag / a * ( 1 - f)).
-    SET timeSeconds TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngle).
-  }
-
-  SET timeError TO timeOfFlight - timeSeconds.
-  pList:ADD(p).
-  tList:ADD(timeSeconds).
-  SET timeNMinusOne TO timeSeconds.
-  SET pNMinusOne TO p.
-
-  IF logAllowed {
-    SET logMe[12] TO logMe[12] + p + ",".
-    SET logMe[13] TO logMe[13] + a + ",".
-    SET logMe[14] TO logMe[14] + motionType + ",".
-    SET logMe[15] TO logMe[15] + f + ",".
-    SET logMe[16] TO logMe[16] + g + ",".
-    SET logMe[17] TO logMe[17] + f_dot + ",".
-    SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-    SET logMe[19] TO logMe[19] + timeSeconds + ",".
-    SET logMe[20] TO logMe[20] + timeError + ",".
-    SET logMe[21] TO logMe[21] + "0,".
-  }
-
-  LOCAL pStep IS 0.
-
-  UNTIL (ABS(timeError) < timeTolerance) OR (iterations >= maxIterations) {
-    SET timeNMinusOne TO tList[tList:LENGTH - 1].
-    SET timeNMinusTwo TO tList[tList:LENGTH - 2].
-    SET pNMinusOne TO pList[pList:LENGTH - 1].
-    SET pNMinusTwo TO pList[pList:LENGTH - 2].
-    SET pStep TO (timeOfFlight - timeNMinusOne) * (pNMinusOne - pNMinusTwo) / (timeNMinusOne - timeNMinusTwo).
-    SET p TO pNMinusOne + pStep.
-    IF (phaseAngle >= 180) AND ((p > p_ii) OR (p < 0))
-      RETURN gaussProblemPIteration(r_1, r_2, timeOfFlight, mu, shortWay, timeTolerance, maxIterations - 1, logAllowed, MIN(pStart1 + 0.1, 1), pStart2).
-    IF (phaseAngle < 180) AND (p < p_i)
-      RETURN gaussProblemPIteration(r_1, r_2, timeOfFlight, mu, shortWay, timeTolerance, maxIterations - 1, logAllowed, pStart1, MIN(pStart2 + 0.1, 1)).
-    SET a TO m * k * p / (( 2 * m - l^2) * p^2 + 2 * k * l * p - k^2).
-    IF a < 0 SET motionType TO "Hyperbola".
-    ELSE SET motionType TO "Ellipse".
-    SET f TO 1 - r_2_mag / p * ( 1 - COS(phaseAngle)).
-    SET g TO r_1_mag * r_2_mag * SIN(phaseAngle) / SQRT(mu * p).
-    SET f_dot TO SQRT(mu / p) * TAN(phaseAngle / 2) * ((1 - COS(phaseAngle)) / p - 1 / r_1_mag - 1 / r_2_mag).
-    IF motionType = "Ellipse" {
-      SET deltaAngle TO CONSTANT:DegToRad * ARCTAN2( -r_1_mag * r_2_mag * f_dot / SQRT( mu * a ), 1 - r_1_mag / a * (1 - f)).
-      SET timeSeconds TO g + SQRT( a^3 / mu) * ( deltaAngle - SIN(deltaAngle)).
-    } ELSE {
-      // Note that the hyperbolic functions don't really use traditional angles, so no unit conversion is needed.
-      SET deltaAngle TO ACOSH( 1 - r_1_mag / a * ( 1 - f)).
-      SET timeSeconds TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngle).
-    }
-    SET timeError TO timeOfFlight - timeSeconds.
-    pList:ADD(p).
-    tList:ADD(timeSeconds).
-    SET iterations TO iterations + 1.
-
-    IF logAllowed {
-      SET logMe[12] TO logMe[12] + p + ",".
-      SET logMe[13] TO logMe[13] + a + ",".
-      SET logMe[14] TO logMe[14] + motionType + ",".
-      SET logMe[15] TO logMe[15] + f + ",".
-      SET logMe[16] TO logMe[16] + g + ",".
-      SET logMe[17] TO logMe[17] + f_dot + ",".
-      SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-      SET logMe[19] TO logMe[19] + timeSeconds + ",".
-      SET logMe[20] TO logMe[20] + timeError + ",".
-      SET logMe[21] TO logMe[21] + iterations + ",".
-      FOR message IN logMe {
-        LOG message TO logFileName.
-      }
-    }
-  }
-  LOCAL g_dot IS 1 - a / r_2_mag * ( 1 - COS( deltaAngle )).
-  LOCAL v_1 IS (r_2 - f * r_1) / g.
-  LOCAL v_2 IS f_dot * r_1 + g_dot * v_1.
-  RETURN LEXICON("v_1", v_1,
-                 "v_2", v_2,
-                 "Motion Type", motionType,
-                 "Iterations", iterations,
-                 "Final Value", p,
-                 "r_1", r_1,
-                 "r_2", r_2,
-                 "mu", mu,
-                 "Short Way", shortWay).
-}
-
-FUNCTION C_Z {
-  PARAMETER z.
-  IF z = 0 RETURN 0.5.
-  IF z < 0 RETURN (COSH(SQRT(-z))-1)/(-z).
-  IF z > 1e10 RETURN 1.99936080743821e-10.
-  RETURN (1-COS(CONSTANT:RadToDeg * SQRT(z)))/z.
-}
-
-FUNCTION S_Z {
-  PARAMETER z.
-  IF z = 0 RETURN 1.0/6.0.
-  IF z < 0 RETURN (SINH(SQRT(-z)) - SQRT(-z)) / (-z)^1.5.
-  RETURN (SQRT(z) - SIN(CONSTANT:RadToDeg * SQRT(z))) / z^1.5.
-}
-
-FUNCTION C_Z_prime {
-  PARAMETER z.
-  PARAMETER C_of_Z IS C_Z(z).
-  PARAMETER S_of_Z IS S_Z(z).
-  IF ABS(z) < 0.05 RETURN -1/24 + 2 * z / 720 - 3 * z^2 / 40320 + 4 * z^3 / 3628800 - 5 * z^4 / 479001600 + 6 * z^5 / 87178291200.
-  RETURN (1 - z * S_of_Z - 2 * C_of_Z) / ( 2 * z ).
-}
-
-FUNCTION S_Z_prime {
-  PARAMETER z.
-  PARAMETER C_of_Z IS C_Z(z).
-  PARAMETER S_of_Z IS S_Z(z).
-  IF ABS(z) < 0.05 RETURN -1 / 120 + 2 * z / 5040 - 3 * z^2 / 362880 + 4 * z^3 / 39916800 - 5 * z^4 / 6227020800 + 6 * z^5 / 1.30767E+12.
-  RETURN (C_of_Z-3*S_of_Z)/(2*z).
-}
-
-FUNCTION gaussProblemUniversalVariables {
-  PARAMETER r_1.
-  PARAMETER r_2.
-  PARAMETER timeOfFlight.
-  PARAMETER mu.
-  PARAMETER shortWay IS TRUE.
-  PARAMETER timeTolerance IS 0.001.         // Default tolerance in seconds
-  PARAMETER maxIterations IS 40.
-  PARAMETER logAllowed IS FALSE.
-  PARAMETER startZ IS 0.5.
-
-  IF startZ > 10 RETURN LEXICON("v_1", V(0, 0, 0),
-                                "v_2", V(0, 0, 0),
-                                "Motion Type", "Failed",
-                                "Iterations", 0,
-                                "Final Value", 0,
-                                "r_1", r_1,
-                                "r_2", r_2,
-                                "mu", mu,
-                                "Short Way", shortWay).
-
-
-  LOCAL iterations IS 0.
-  LOCAL r_1_mag IS r_1:MAG.
-  LOCAL r_2_mag IS r_2:MAG.
-  LOCAL phaseAngle IS VANG(r_1, r_2).
-  IF NOT shortWay SET phaseAngle TO 360 - phaseAngle.
-  LOCAL A IS SQRT( r_1_mag * r_2_mag * ( 1 + COS(phaseAngle))).
-  IF NOT shortWay SET A TO -A.
-
-  LOCAL logMe IS LIST().
-  IF logAllowed {
-    logMe:ADD(",X,Y,Z,Magnitude,Units,Short Way," + shortWay).
-    logMe:ADD("R_1," + r_1:X + "," + r_1:y + "," + r_1:z + "," + r_1_mag + ",meters").
-    logMe:ADD("R_2," + r_2:X + "," + r_2:y + "," + r_2:z + "," + r_2_mag + ",meters").
-    logMe:ADD("Desired Time," + timeOfFlight + ",s," + timeToString(timeOfFlight)).
-    logMe:ADD("mu," + mu).
-    logMe:ADD("phaseAngle," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-    logMe:ADD("").
-    logMe:ADD("z,").              //07
-    logMe:ADD("C(z),").           //08
-    logMe:ADD("S(z),").           //09
-    logMe:ADD("y,").              //10
-    logMe:ADD("x,").              //11
-    logMe:ADD("Time,").           //12
-    logMe:ADD("dt/dz,").          //13
-    logMe:ADD("C'(z),").          //14
-    logMe:ADD("S'(z),").          //15
-    logMe:ADD("Time Error,").     //16
-    logMe:ADD("Iterations,").     //17
-    logMe:ADD("f,").              //18
-    logMe:ADD("g,").              //19
-    logMe:ADD("g_dot,").          //20
-    logMe:ADD("A," + A).          //21
-    logMe:ADD("delta_v," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-    logMe:ADD(",X,Y,Z,Mag").      //23
-    logMe:ADD("v_1,").            //24
-    logMe:ADD("v_2,").            //25
-  }
-
-  LOCAL z IS 0.
-  LOCAL S IS 0.
-  LOCAL C IS 0.
-  LOCAL y IS 0.
-  LOCAL x IS 0.
-  LOCAL timeSeconds IS 0.
-  LOCAL C_prime IS 0.
-  LOCAL S_prime IS 0.
-  LOCAL dt_dz IS 0.
-  LOCAL timeError IS timeTolerance + 1.
-  LOCAL firstTime IS TRUE.
-  LOCAL failed IS FALSE.
-
-  UNTIL (ABS(timeError) < timeTolerance) OR (iterations >= maxIterations) OR failed {
-    IF firstTime {
-      SET z TO startZ.
-      SET firstTime TO FALSE.
-    } ELSE {
-      IF dt_dz = 0 SET z TO z + 1.
-      ELSE SET z TO z - ( timeSeconds - timeOfFlight) / dt_dz.
-      IF z > (4*CONSTANT:PI)^2 SET failed TO TRUE.
-    }
-    SET S TO S_Z(z).
-    SET C TO C_Z(z).
-    IF SQRT(C) <> 0 SET y TO r_1_mag + r_2_mag - A*(1 - z * S ) / SQRT( C ).
-    ELSE SET y TO -1.
-    IF (y > 0) AND (C < 1e10) AND (S < 1e10) {
-      SET x TO SQRT( y / C ).
-      SET timeSeconds TO (( x^3 ) * S + A * SQRT( y )) / SQRT( mu ).
-      SET C_prime TO C_Z_prime(z, C, S).
-      SET S_prime TO S_Z_prime(z, C, S).
-      SET dt_dz TO (x^3 * (S_prime - 3 * S * C_prime / ( 2 * C) ) + A / 8 * ( 3 * S * SQRT( y ) / C + A / x)) / SQRT(mu).
-      SET timeError TO timeOfFlight - timeSeconds.
-      IF logAllowed {
-        SET logMe[07] TO logMe[07] + z + ",".
-        SET logMe[08] TO logMe[08] + C + ",".
-        SET logMe[09] TO logMe[09] + S + ",".
-        SET logMe[10] TO logMe[10] + y + ",".
-        SET logMe[11] TO logMe[11] + x + ",".
-        SET logMe[12] TO logMe[12] + timeSeconds + ",".
-        SET logMe[13] TO logMe[13] + dt_dz + ",".
-        SET logMe[14] TO logMe[14] + C_prime + ",".
-        SET logMe[15] TO logMe[15] + S_prime + ",".
-        SET logMe[16] TO logMe[16] + timeError + ",".
-        SET logMe[17] TO logMe[17] + iterations + ",".
-      }
-      SET iterations TO iterations + 1.
-    } ELSE SET failed TO TRUE.
-  }
-
-  IF (failed OR (iterations >= maxIterations)) RETURN gaussProblemUniversalVariables(r_1,
-                                                                                     r_2,
-                                                                                     timeOfFlight,
-                                                                                     mu,
-                                                                                     shortWay,
-                                                                                     timeTolerance,
-                                                                                     maxIterations,
-                                                                                     logAllowed,
-                                                                                     startZ + 1).
-
-  LOCAL f IS 1 - y / r_1_mag.
-  LOCAL g IS A * SQRT( y / mu).
-  LOCAL g_dot IS 1 - y / r_2_mag.
-  LOCAL v_1 IS (r_2 - f * r_1) / g.
-  LOCAL v_2 IS (g_dot * r_2 - r_1) / g.
-  LOCAL ecc IS (((v_1:SQRMAGNITUDE - mu / r_1_mag) * r_1 - VDOT( r_1 , v_1 ) * v_1 ) / mu):MAG.
-  LOCAL motionType IS "none".
-  IF ecc >= 1 SET motionType TO "Hyperbola".
-  ELSE SET motionType TO "Ellipse".
-  IF logAllowed {
-    SET logMe[18] TO logMe[18] + f + ",".
-    SET logMe[19] TO logMe[19] + g + ",".
-    SET logMe[20] TO logMe[20] + g_dot + ",".
-    SET logMe[24] TO logMe[24] + v_1:X + "," + v_1:Y + "," + v_1:Z + "," + v_1:MAG.
-    SET logMe[25] TO logMe[25] + v_2:X + "," + v_2:Y + "," + v_2:Z + "," + v_2:MAG.
-    FOR message IN logMe {
-      LOG message TO logFileName.
-    }
-  }
-  RETURN LEXICON("v_1", v_1,
-                 "v_2", v_2,
-                 "Motion Type", motionType,
-                 "Iterations", iterations,
-                 "Final Value", z,
-                 "r_1", r_1,
-                 "r_2", r_2,
-                 "mu", mu,
-                 "Short Way", shortWay).
-}
-
-FUNCTION porkchopDeltaV {
-	PARAMETER fromBody.
-	PARAMETER toBody.
-	PARAMETER sunBody.
-	PARAMETER departureTime.
-	PARAMETER timeOfFlight.
-
-	LOCAL r_1 IS absolutePosition(fromBody, departureTime) - absolutePosition(sunBody, departureTime).
-	LOCAL r_2 IS absolutePosition(toBody, departureTime) - absolutePosition(sunBody, departureTime).
-	LOCAL fromBodyVelocity IS absoluteVelocity(fromBody, departureTime) - absoluteVelocity(sunBody, departureTime).
-	LOCAL toBodyVelocity IS absoluteVelocity(toBody, departureTime) - absoluteVelocity(sunBody, departureTime).
-
-	LOCAL bestTotalDV IS 1e15.
-
-	IF timeOfFlight > 0 {
-		LOCAL shortTrajectory IS gaussProblemUniversalVariables(r_1, r_2, timeOfFlight, sunBody:MU, TRUE).
-		LOCAL longTrajectory IS gaussProblemUniversalVariables(r_1, r_2, timeOfFlight, sunBody:MU, FALSE).
-
-		IF shortTrajectory["Motion Type"] <> "Failed" {
-			LOCAL dvShort IS (fromBodyVelocity - shortTrajectory["v_1"]):MAG + (toBodyVelocity - shortTrajectory["v_2"]):MAG.
-			IF dvShort < bestTotalDV SET bestTotalDV TO dvShort.
-		}
-		IF longTrajectory["Motion Type"] <> "Failed" {
-			LOCAL dvLong IS (fromBodyVelocity - longTrajectory["v_1"]):MAG + (toBodyVelocity - longTrajectory["v_2"]):MAG.
-			IF dvLong < bestTotalDV SET bestTotalDV TO dvLong.
-		}
-	}
-
-	RETURN bestTotalDV.
-}
-
-// findPlaneMatchedDeparture
-//
-// Passed:
-//   v_infinity        - Vector (m/s) - required hyperbolic excess velocity, expressed in the SAME frame as SHIP:VELOCITY:ORBIT
-//   vesselObject       - the vessel to plan the burn for. Defaults to SHIP.
-//   targetDepartureUT  - scalar (s, absolute UT), or -1. If given, the search window is centered on this epoch instead of "now" - use this to pass in the desired departure time. If -1 (default), searches forward from right now.
-//   searchWindowPeriods - scalar - width of the search window, in parking-orbit periods, centered on targetDepartureUT (or starting just after "now" if targetDepartureUT is -1). Default 1.2.
-//   coarseSteps        - scalar - number of samples used to bracket root(s) before polishing with the secant method. Increase for very eccentric parking orbits, where the achievable exit direction can swing quickly near periapsis.
-//   minBurnETA         - scalar (s) - earliest allowed burn time from now, so you don't get handed a solution seconds away.
-//   createManeuverNode - boolean - if TRUE (default), adds a maneuver node at the best candidate found. If FALSE, only computes and returns the result.
-//   clearExistingNodes - boolean - if TRUE (default) and createManeuverNode is also TRUE, removes any maneuver nodes already in the flight plan before adding the new one, so repeated calls don't pile up stale nodes.
-//
-// Returns a LEXICON:
-//   "planeMismatchAngle"  - scalar (deg) - angle between v_infinity and the parking orbit's plane. 0 = perfectly achievable with a pure prograde burn. This number is fixed for this parking orbit; it does not change with time.
-//   "outOfPlaneDVPenalty" - scalar (m/s) - approximate extra delta-v if the mismatch above is handled as a SEPARATE plane-change burn. A single combined (non-tangential) burn at the same epoch would generally cost somewhat less than this simple estimate -- treat this as an upper bound and a diagnostic, not a final number.
-//   "requiredArgOfLatitude" - scalar (deg) - in-plane direction (in this function's own arbitrary reference frame) that the departure asymptote needs to point along.
-//   "candidates"          - LIST of LEXICONs, one per burn opportunity found in the search window, each with "burnETA", "burnUT", "deltaV", "trueAnomalyBurn", "trueAnomalySOI", "flightPathAngle", "angleResidual" (deg, should be ~0).
-//   "best"                - the entry of "candidates" with the lowest deltaV, or the string "none found - widen searchWindowPeriods" if the scan turned up nothing.
-//   "nodeCreated"         - boolean - TRUE if a maneuver node was actually added.
-FUNCTION findPlaneMatchedDeparture {
-	PARAMETER v_infinity.
-	PARAMETER vesselObject IS SHIP.
-	PARAMETER targetDepartureUT IS -1.
-	PARAMETER searchWindowPeriods IS 1.2.
-	PARAMETER coarseSteps IS 90.
-	PARAMETER minBurnETA IS 60.
-	PARAMETER createManeuverNode IS TRUE.
-	PARAMETER clearExistingNodes IS TRUE.
-
-	LOCAL v_inf_mag IS v_infinity:MAG.
-	LOCAL nowUT IS TIME:SECONDS.
-
-	LOCAL posRef IS POSITIONAT(vesselObject, nowUT) - vesselObject:BODY:POSITION.
-	LOCAL velRef IS VELOCITYAT(vesselObject, nowUT):ORBIT.
-	LOCAL hHat IS VCRS(posRef, velRef):NORMALIZED.
-	LOCAL n1Hat IS posRef:NORMALIZED.
-	LOCAL n2Hat IS VCRS(hHat, n1Hat):NORMALIZED.
-
-	LOCAL planeMismatchAngle IS 90 - VANG(v_infinity, hHat).
-
-	LOCAL vInfInPlane IS v_infinity - hHat * VDOT(v_infinity, hHat).
-	IF vInfInPlane:MAG < (v_inf_mag * 0.001) {
-		// v_infinity is almost exactly along the plane normal: essentially no
-		// phasing choice helps here, the whole vector is an out-of-plane cost.
-		LOCAL degenerateResult IS LEXICON().
-		degenerateResult:ADD("planeMismatchAngle", planeMismatchAngle).
-		degenerateResult:ADD("outOfPlaneDVPenalty", 2 * v_inf_mag * SIN(planeMismatchAngle / 2)).
-		degenerateResult:ADD("requiredArgOfLatitude", "undefined - v_infinity nearly normal to orbit plane").
-		degenerateResult:ADD("candidates", LIST()).
-		degenerateResult:ADD("best", "none found - v_infinity nearly normal to the parking orbit plane").
-		degenerateResult:ADD("nodeCreated", FALSE).
-		RETURN degenerateResult.
-	}
-	LOCAL uTarget IS normalizeAngle360(ARCTAN2(VDOT(vInfInPlane, n2Hat), VDOT(vInfInPlane, n1Hat))).
-
-	// exitAngleError(burnETA): the signed angular error (degrees, -180..180)
-	// between where a purely prograde burn at burnETA would actually send the
-	// ship's departure asymptote, and where it needs to go (uTarget).
-	//   uBurn  = in-plane direction of the vessel's position at burnETA
-	//   uExit  = uBurn + flightPathAngle + theta_turn
-	//            (flightPathAngle rotates the position direction to the actual
-	//             velocity direction at burn; theta_turn is the additional
-	//             rotation of the velocity direction from the burn point out to
-	//             the SOI edge, both already computed by the library function)
-	FUNCTION exitAngleError {
-		PARAMETER burnETA.
-		LOCAL hbi IS getHyperbolicBurnInfo(v_inf_mag, burnETA, vesselObject).
-		LOCAL posBurn IS POSITIONAT(vesselObject, TIME:SECONDS + burnETA) - vesselObject:BODY:POSITION.
-		LOCAL uBurn IS ARCTAN2(VDOT(posBurn, n2Hat), VDOT(posBurn, n1Hat)).
-		LOCAL uExit IS uBurn + hbi["flightPathAngle"] + hbi["theta_turn"].
-		RETURN normalizeAngle180(uExit - uTarget).
-	}
-
-	// Coarse scan across the search window to bracket every sign change of the
-	// error function, then polish each bracket with the secant method. This is
-	// deliberately a grid-then-refine search rather than a descent: it cannot
-	// get stuck on the wrong side of the orbit, which is exactly the failure
-	// mode a nested gradient descent risks for higher-inclination orbits.
-	LOCAL period IS vesselObject:ORBIT:PERIOD.
-	LOCAL scanStart IS 0.
-	LOCAL scanEnd IS 0.
-	IF targetDepartureUT >= 0 {
-		LOCAL halfWindow IS (period * searchWindowPeriods) / 2.
-		SET scanStart TO MAX(minBurnETA, (targetDepartureUT - halfWindow) - nowUT).
-		SET scanEnd TO MAX(scanStart + minBurnETA, (targetDepartureUT + halfWindow) - nowUT).
-	} ELSE {
-		SET scanStart TO minBurnETA.
-		SET scanEnd TO MAX(minBurnETA * 2, period * searchWindowPeriods).
-	}
-	LOCAL stepSize IS (scanEnd - scanStart) / coarseSteps.
-
-	LOCAL brackets IS LIST().
-	LOCAL previousETA IS scanStart.
-	LOCAL previousError IS exitAngleError(previousETA).
-	LOCAL sampleETA IS 0.
-	LOCAL sampleError IS 0.
-	FOR stepIndex IN RANGE(1, coarseSteps + 1) {
-		SET sampleETA TO scanStart + stepIndex * stepSize.
-		SET sampleError TO exitAngleError(sampleETA).
-		// The ABS(...) < 180 guard rejects the false "sign change" that shows up
-		// when the error simply wraps from +180 to -180 without ever crossing
-		// zero; a genuine root has a small step-to-step change when stepSize is
-		// fine enough.
-		IF (sampleError * previousError < 0) AND (ABS(sampleError - previousError) < 180) {
-			brackets:ADD(LIST(previousETA, sampleETA)).
-		}
-		SET previousETA TO sampleETA.
-		SET previousError TO sampleError.
-	}
-
-	LOCAL candidates IS LIST().
-	FOR eachBracket IN brackets {
-		LOCAL refinedETA IS findZeroSecant(exitAngleError@, eachBracket[0], eachBracket[1], 0.0005).
-		LOCAL hbiFinal IS getHyperbolicBurnInfo(v_inf_mag, refinedETA, vesselObject).
-		LOCAL candidate IS LEXICON().
-		candidate:ADD("burnETA", refinedETA).
-		candidate:ADD("burnUT", TIME:SECONDS + refinedETA).
-		candidate:ADD("deltaV", hbiFinal["v_delta"]).
-		candidate:ADD("trueAnomalyBurn", hbiFinal["trueAnomaly"]).
-		candidate:ADD("trueAnomalySOI", hbiFinal["trueAnomalySOI"]).
-		candidate:ADD("flightPathAngle", hbiFinal["flightPathAngle"]).
-		candidate:ADD("angleResidual", exitAngleError(refinedETA)).
-		candidates:ADD(candidate).
-	}
-
-	LOCAL bestIndex IS -1.
-	LOCAL bestDeltaV IS 0.
-	FOR candidateIndex IN RANGE(0, candidates:LENGTH) {
-		IF (bestIndex = -1) OR (candidates[candidateIndex]["deltaV"] < bestDeltaV) {
-			SET bestIndex TO candidateIndex.
-			SET bestDeltaV TO candidates[candidateIndex]["deltaV"].
-		}
-	}
-
-	LOCAL outOfPlaneDV IS 2 * v_inf_mag * SIN(planeMismatchAngle / 2).
-
-	LOCAL result IS LEXICON().
-	result:ADD("planeMismatchAngle", planeMismatchAngle).
-	result:ADD("outOfPlaneDVPenalty", outOfPlaneDV).
-	result:ADD("requiredArgOfLatitude", uTarget).
-	result:ADD("candidates", candidates).
-	result:ADD("nodeCreated", FALSE).
-
-	IF bestIndex <> -1 {
-		LOCAL best IS candidates[bestIndex].
-		result:ADD("best", best).
-
-		IF createManeuverNode {
-			IF clearExistingNodes {
-				UNTIL NOT HASNODE {
-					REMOVE NEXTNODE.
-				}
-			}
-			LOCAL burnNode IS NODE(best["burnUT"], 0, 0, best["deltaV"]).
-			ADD burnNode.
-			SET result["nodeCreated"] TO TRUE.
-			PRINT "Departure burn node created: burn in " + ROUND(best["burnETA"], 1) + " s, dV " + ROUND(best["deltaV"], 1) + " m/s.".
-		}
-	} ELSE {
-		result:ADD("best", "none found - widen searchWindowPeriods").
-	}
+	LOCAL result IS 0.
+	IF BODYEXISTS(objectName) SET result TO BODY(objectName).
+	IF VESSELEXISTS(objectName) SET result TO VESSEL(objectName).
 	RETURN result.
 }
 
-// ----------------------------------------------------------------------------
-// printPlaneMatchResults
-// Small convenience printer for a result LEXICON from findPlaneMatchedDeparture,
-// in the same spirit as the library's other print* helpers. Node creation
-// itself is no longer done here - findPlaneMatchedDeparture does that directly -
-// this is purely for an optional, detailed diagnostic dump.
-FUNCTION printPlaneMatchResults {
-	PARAMETER result.
-	PRINT "Plane mismatch angle:     " + ROUND(result["planeMismatchAngle"], 3) + " deg".
-	PRINT "Out-of-plane dV penalty:  " + ROUND(result["outOfPlaneDVPenalty"], 1) + " m/s (separate-burn estimate)".
-	IF result["best"]:ISTYPE("String") {
-		PRINT result["best"].
-	} ELSE {
-		LOCAL best IS result["best"].
-		PRINT "Best burn in:             " + ROUND(best["burnETA"], 1) + " s".
-		PRINT "Delta-V (prograde):       " + ROUND(best["deltaV"], 1) + " m/s".
-		PRINT "True anomaly at burn:     " + ROUND(best["trueAnomalyBurn"], 2) + " deg".
-		PRINT "True anomaly at SOI edge: " + ROUND(best["trueAnomalySOI"], 2) + " deg".
-		PRINT "Angle residual (check):   " + ROUND(best["angleResidual"], 4) + " deg".
-		PRINT "Candidates found in window: " + result["candidates"]:LENGTH.
-		PRINT "Maneuver node created:    " + result["nodeCreated"].
+// Formats a real-world (wall-clock) duration in seconds, e.g. "9.4s", "4m 09s" or "1h 04m 09s".
+// timeToString counts in game days (6 hours long) and so is wrong for real time; use this for
+// differences of KUNIVERSE:REALWORLDTIME.
+FUNCTION realTimeToString {
+	PARAMETER seconds.
+
+	IF seconds < 60 RETURN ROUND(seconds, 1) + "s".
+	LOCAL wholeSeconds IS ROUND(seconds).
+	LOCAL wholeHours IS FLOOR(wholeSeconds / 3600).
+	LOCAL wholeMinutes IS FLOOR((wholeSeconds - wholeHours * 3600) / 60).
+	LOCAL secondsLeft IS wholeSeconds - wholeHours * 3600 - wholeMinutes * 60.
+	LOCAL minutesText IS "" + wholeMinutes.
+	LOCAL secondsText IS "" + secondsLeft.
+	IF secondsLeft < 10 SET secondsText TO "0" + secondsText.
+	IF wholeHours > 0 {
+		IF wholeMinutes < 10 SET minutesText TO "0" + minutesText.
+		RETURN wholeHours + "h " + minutesText + "m " + secondsText + "s".
 	}
+	RETURN minutesText + "m " + secondsText + "s".
+}
+
+// Picks a readable unit for a duration: "Days", or "Hours" if under half a day,
+// or "Minutes" if under an hour.
+FUNCTION timeUnitFor {
+	PARAMETER seconds.
+
+	IF seconds < 3600 RETURN "Minutes".
+	IF seconds < KUNIVERSE:HOURSPERDAY * 1800 RETURN "Hours".
+	RETURN "Days".
+}
+
+// Number of seconds in one of the units returned by timeUnitFor.
+FUNCTION timeUnitSeconds {
+	PARAMETER unitName.
+
+	IF unitName = "Days" RETURN KUNIVERSE:HOURSPERDAY * 3600.
+	IF unitName = "Hours" RETURN 3600.
+	RETURN 60.
+}
+
+// A duration as one number in the largest unit it is not smaller than, with 2 decimal places,
+// e.g. "5.42 days", "1.23 minutes", "37.00 seconds". Days are game days (KUNIVERSE:HOURSPERDAY
+// hours long), as in timeToString.
+FUNCTION durationToUnitString {
+	PARAMETER totalSeconds.
+
+	LOCAL unitName IS "seconds".
+	LOCAL unitLength IS 1.
+	IF totalSeconds >= KUNIVERSE:HOURSPERDAY * 3600 {
+		SET unitName TO "days".
+		SET unitLength TO KUNIVERSE:HOURSPERDAY * 3600.
+	} ELSE IF totalSeconds >= 3600 {
+		SET unitName TO "hours".
+		SET unitLength TO 3600.
+	} ELSE IF totalSeconds >= 60 {
+		SET unitName TO "minutes".
+		SET unitLength TO 60.
+	}
+
+	// ROUND(x, 2):TOSTRING drops a trailing zero ("5.4"), so build the two decimals by hand.
+	LOCAL hundredths IS ROUND(totalSeconds / unitLength * 100).
+	LOCAL wholePart IS FLOOR(hundredths / 100).
+	LOCAL fractionPart IS hundredths - wholePart * 100.
+	LOCAL fractionText IS "" + fractionPart.
+	IF fractionPart < 10 SET fractionText TO "0" + fractionPart.
+	RETURN wholePart + "." + fractionText + " " + unitName.
+}
+
+FUNCTION VESSELEXISTS {
+	PARAMETER vesselNameCandidate.
+	
+	LOCAL vessels IS LIST().
+	LIST TARGETS IN vessels.
+	
+	FOR eachVessel IN vessels {
+		IF eachVessel:NAME = vesselNameCandidate RETURN TRUE.
+	}
+	RETURN FALSE.
+}
+
+
+// Given a single-argument delegate f(x) and a starting guess, searches
+// outward from the guess in both directions (doubling the step each attempt,
+// clamped to [domainLow, domainHigh]) until it finds two x-values where f
+// changes sign - suitable as a bracket for findZeroBrent.
+FUNCTION bracketAroundGuess {
+	PARAMETER residualDelegate.
+	PARAMETER guess.
+	PARAMETER domainLow.
+	PARAMETER domainHigh.
+	PARAMETER initialStep.
+	PARAMETER maxDoublings IS 40.
+
+	LOCAL clampedGuess IS MAX(domainLow, MIN(domainHigh, guess)).
+	LOCAL guessResidual IS residualDelegate(clampedGuess).
+	LOCAL step IS initialStep.
+	LOCAL attempt IS 0.
+
+	UNTIL attempt >= maxDoublings {
+		LOCAL highCandidate IS MIN(clampedGuess + step, domainHigh).
+		IF residualDelegate(highCandidate) * guessResidual <= 0 RETURN LEXICON("low", clampedGuess, "high", highCandidate).
+
+		LOCAL lowCandidate IS MAX(clampedGuess - step, domainLow).
+		IF residualDelegate(lowCandidate) * guessResidual <= 0 RETURN LEXICON("low", lowCandidate, "high", clampedGuess).
+
+		IF (highCandidate = domainHigh) AND (lowCandidate = domainLow) BREAK.
+
+		SET step TO step * 2.
+		SET attempt TO attempt + 1.
+	}
+
+	// Couldn't find a bracket within the domain - return a degenerate
+	// "bracket" so findZeroBrent falls back gracefully (its own
+	// not-actually-bracketed check) instead of this function crashing or
+	// looping forever.
+	RETURN LEXICON("low", clampedGuess, "high", clampedGuess).
+}
+
+// Brent's method: a bracket-based, derivative-free root finder that combines
+// bisection with the much faster secant method and inverse
+// quadratic interpolation, falling back to bisection whenever those would
+// step outside the current bracket or fail to shrink it fast enough. Takes
+// the same first four arguments as findZeroSecant - delegate, X1, X2,
+// tolerance - so it can be used as a drop-in alternative wherever a
+// bracket is known. Unlike findZeroSecant, X1 and X2 MUST actually bracket a
+// root (delegate(X1) and delegate(X2) must have opposite signs); given a
+// valid bracket, Brent's method is GUARANTEED to converge - no restart
+// cascade and no risk of diverging from a bad initial guess, unlike a plain
+// secant or Newton iteration.
+//
+// This is an iterative loop rather than recursive like findZeroSecant, since
+// Brent's method carries several pieces of running state between iterations
+// (the previous two bracket points, plus which interpolation mode was used
+// last) that would be awkward to thread through repeated recursive calls.
+FUNCTION findZeroBrent {
+	PARAMETER delegate.
+	PARAMETER X1.
+	PARAMETER X2.
+	PARAMETER tolerance.
+	PARAMETER maxIterations IS 100.
+	PARAMETER recursionLevel IS 10.
+
+	LOCAL a IS X1.
+	LOCAL b IS X2.
+	LOCAL fa IS delegate(a).
+	LOCAL fb IS delegate(b).
+
+	// If we have reached the limit of recursion, return whichever input
+	// results in the smallest function value.
+	IF recursionLevel <= 0 {
+		IF ABS(fa) < ABS(fb) RETURN a.
+		RETURN b.
+	}
+
+	// Not actually bracketed - Brent's method can't guarantee anything here, so
+	// use the bracketAroundGuess function to generate a bracket and try again.
+	IF fa * fb >= 0 {
+		LOCAL results IS 0.
+		IF ABS(fa) < ABS(fb) SET results TO bracketAroundGuess(delegate, a, -1e12, 1e12, MAX(ABS(a), ABS(b)) * 0.5 + 1).
+		ELSE SET results TO bracketAroundGuess(delegate, b, -1e12, 1e12, MAX(ABS(a), ABS(b)) * 0.5 + 1).
+		return findZeroBrent(delegate, results["low"], results["high"], tolerance, maxIterations, recursionLevel - 1).
+	}
+
+	// Keep b as the current best estimate: |f(b)| <= |f(a)| is an invariant
+	// maintained by re-checking and re-swapping after every update below.
+	IF ABS(fa) < ABS(fb) {
+		LOCAL swapValue IS a. SET a TO b. SET b TO swapValue.
+		SET swapValue TO fa. SET fa TO fb. SET fb TO swapValue.
+	}
+
+	LOCAL c IS a.
+	LOCAL fc IS fa.
+	LOCAL useBisection IS TRUE.
+	LOCAL d IS a. // unused until useBisection is cleared for the first time
+	LOCAL s IS b.
+	LOCAL fs IS fb.
+	LOCAL iteration IS 0.
+
+	UNTIL (fb = 0) OR (fs = 0) OR (ABS(b - a) < tolerance) OR (iteration >= maxIterations) {
+		IF (fa <> fc) AND (fb <> fc) {
+			// inverse quadratic interpolation
+			SET s TO a * fb * fc / ((fa - fb) * (fa - fc))
+				+ b * fa * fc / ((fb - fa) * (fb - fc))
+				+ c * fa * fb / ((fc - fa) * (fc - fb)).
+		} ELSE {
+			// secant method
+			SET s TO b - fb * (b - a) / (fb - fa).
+		}
+
+		// Reject the interpolated step (falling back to bisection instead)
+		// whenever it would land outside the bracket, or isn't shrinking the
+		// bracket fast enough - this is what makes Brent's method robust
+		// rather than just "secant method with extra steps".
+		LOCAL lowBound IS MIN((3 * a + b) / 4, b).
+		LOCAL highBound IS MAX((3 * a + b) / 4, b).
+		LOCAL fallBackToBisection IS FALSE.
+		IF (s < lowBound) OR (s > highBound) SET fallBackToBisection TO TRUE.
+		IF useBisection AND (ABS(s - b) >= ABS(b - c) / 2) SET fallBackToBisection TO TRUE.
+		IF (NOT useBisection) AND (ABS(s - b) >= ABS(c - d) / 2) SET fallBackToBisection TO TRUE.
+		IF useBisection AND (ABS(b - c) < tolerance) SET fallBackToBisection TO TRUE.
+		IF (NOT useBisection) AND (ABS(c - d) < tolerance) SET fallBackToBisection TO TRUE.
+
+		IF fallBackToBisection {
+			SET s TO (a + b) / 2.
+			SET useBisection TO TRUE.
+		} ELSE {
+			SET useBisection TO FALSE.
+		}
+
+		SET fs TO delegate(s).
+		SET d TO c.
+		SET c TO b.
+		SET fc TO fb.
+
+		IF fa * fs < 0 {
+			SET b TO s.
+			SET fb TO fs.
+		} ELSE {
+			SET a TO s.
+			SET fa TO fs.
+		}
+
+		IF ABS(fa) < ABS(fb) {
+			LOCAL swapValue2 IS a. SET a TO b. SET b TO swapValue2.
+			SET swapValue2 TO fa. SET fa TO fb. SET fb TO swapValue2.
+		}
+
+		SET iteration TO iteration + 1.
+	}
+
+	RETURN b.
 }

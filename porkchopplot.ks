@@ -1,100 +1,118 @@
 @LAZYGLOBAL OFF.
 
-PARAMETER fromBodyName IS "Mun".
-PARAMETER toBodyName IS "Minmus".
+// ============================================================================
+// porkchopplot.ks - writes a porkchop plot CSV (one per Lambert solver) for transfers to a
+// destination: a fine search over one or more departure windows. Takes the same parameters, in
+// the same order, as transferCalc.ks, which picks the cheapest transfer in the same window and
+// makes the node. The plot prices the bare transfer: between bodies, a point-mass departure
+// and arrival (no parking orbit); in the same SOI, the real burn from the ship's orbit.
+//
+// Only the destination is needed: resolveTransferEndpoints works out the source from where the
+// ship is (see transferCalc.ks). A destination in the ship's own SOI is a same-SOI transfer from
+// the ship; one that orbits the ship's body's parent is a transfer from the ship's body.
+//
+// PARAMETERs:
+//   destinationName  - the destination: a body, or a vessel (a vessel wins a name clash)
+//   startOffset      - s from now to the start of the plotted window (>= 30)
+//   departureWindows - how many departure windows to plot (a synodic period each between bodies;
+//                      in the same SOI a synodic period or four ship orbits, whichever is shorter)
+//   samplesPerWindow - departure times sampled in each window. -1 (the default) chooses:
+//                      40 between bodies, 24 per ship orbit in the same SOI
+//   tofSamples       - flight times sampled (1 to 4 times the Hohmann time). -1 (the default) chooses:
+//                      41 between bodies, 31 in the same SOI
+//   sourceName       - "" (the default) takes the source from where the ship is. Otherwise the source
+//                      to use instead: it must orbit the same body as the destination
+//   parkingAltitude  - accepted so the parameters match transferCalc.ks; not used (no parking orbit is priced)
+//   captureAltitude  - m above the destination's surface to capture into a circular orbit, for a
+//                      destination body in the same SOI. -1 (the default) prices matching the arrival
+//                      excess speed. Between bodies the arrival is always the bare relative speed.
+// ============================================================================
+
+PARAMETER destinationName IS "Comm Sat - Active Ship".
 PARAMETER startOffset IS 120.
+PARAMETER departureWindows IS 1.
+PARAMETER samplesPerWindow IS -1.
+PARAMETER tofSamples IS -1.
+PARAMETER sourceName IS "".
+PARAMETER parkingAltitude IS -1.
+PARAMETER captureAltitude IS -1.
 
-LOCAL errorCode IS "None".
+// Wall-clock stopwatch (KUNIVERSE:REALWORLDTIME is real-world UNIX time, so it ignores time warp).
+LOCAL scriptStartRealTime IS KUNIVERSE:REALWORLDTIME.
 
-IF NOT BODYEXISTS(fromBodyName) SET errorCode TO fromBodyName + " does not exist!".
-IF NOT BODYEXISTS(toBodyName) SET errorCode TO toBodyName + " does not exist!".
-IF startOffset < 0 SET errorCode TO "negative start offset not allowed!".
+LOCAL endpoints IS resolveTransferEndpoints(destinationName, sourceName).
+LOCAL errorCode IS endpoints["error"].
+LOCAL fromOrbitable IS endpoints["from"].
+LOCAL toOrbitable IS endpoints["to"].
+LOCAL sameSOI IS endpoints["sameSOI"].
 
-IF errorCode = "None" {IF BODY(fromBodyName):BODY:NAME <> BODY(toBodyName):BODY:NAME SET errorCode TO "Bodies must have the same parent!".}
+// Inside one SOI the ship (if it is the source) has to be in orbit to have an orbit to burn from.
+IF errorCode = "None" AND sameSOI {
+	IF fromOrbitable:NAME = SHIP:NAME AND (SHIP:STATUS = "PRELAUNCH" OR SHIP:STATUS = "LANDED" OR SHIP:STATUS = "SPLASHED" OR SHIP:STATUS = "SUB_ORBITAL") {
+		SET errorCode TO "A transfer to " + toOrbitable:NAME + " inside " + SHIP:BODY:NAME + "'s sphere of influence needs the ship in orbit!".
+	}
+}
+
+LOCAL window IS 0.
+IF errorCode = "None" {
+	SET window TO buildTransferWindow(endpoints, startOffset, departureWindows, samplesPerWindow, tofSamples, FALSE).
+	SET errorCode TO window["error"].
+}
 
 IF errorCode = "None" {
-	LOCAL fromBody IS BODY(fromBodyName).
-	LOCAL toBody IS BODY(toBodyName).
-	LOCAL sunBody IS firstCommonBody(fromBody, toBody).
+	LOCAL startTime IS window["startTime"].
+	LOCAL captureRadius IS 0.
+	IF captureAltitude >= 0 AND toOrbitable:ISTYPE("Body") SET captureRadius TO toOrbitable:RADIUS + captureAltitude.
 
-	LOCAL logFileName IS "0:gaussProblem.csv".
-	IF EXISTS(logFileName) DELETEPATH(logFileName).
-
-	LOCAL synodicPeriod IS 1 / ABS((1 / fromBody:ORBIT:PERIOD) - (1 / toBody:ORBIT:PERIOD)).
-
-	LOCAL departureTime IS 0.
-	LOCAL startTime IS TIME:SECONDS + startOffset.
-
-	LOCAL timeOfFlight IS 0.
-	LOCAL minDeltaV IS LEXICON("value", 1e15).
-
-	LOCAL dvGridRows IS LIST().        // one entry per timeOffset; each entry is a LIST of dV values across all TOFs
-	LOCAL departureLabels IS LIST().   // row headers - departure time, in days from now
-	LOCAL tofLabels IS LIST().         // column headers - time of flight, in days
-	LOCAL tofLabelsBuilt IS FALSE.     // only need to build the column headers once
-	
-	// Bind this run's bodies into porkchopDeltaV. BIND fills in parameters
-	// left-to-right, one per call, so porkchopDeltaV's parameter list was
-	// ordered (fromBody, toBody, sunBody, departureTime, timeOfFlight)
-	// specifically so these three binds land in the right slots, leaving
-	// (departureTime, timeOfFlight) as the only two arguments the resulting
-	// delegate still needs - both are absolute values (UT seconds / duration
-	// in seconds), so synodicPeriod and startTime never need to be bound at
-	// all; they're only used locally below to build the grid of departure/TOF
-	// times to test, exactly as they always were for the rest of the loop.
-	LOCAL porkchopDeltaVBound IS porkchopDeltaV@.
-	SET porkchopDeltaVBound TO porkchopDeltaVBound:BIND(fromBody).
-	SET porkchopDeltaVBound TO porkchopDeltaVBound:BIND(toBody).
-	SET porkchopDeltaVBound TO porkchopDeltaVBound:BIND(sunBody).
-
-	// timeOffset is departure time in hundredths of the synodic period
-	FOR timeOffset IN RANGE(0, 299, 5) {
-		LOCAL currentDvRow IS LIST(). // this departure time's row of dV values, one per TOF
-		SET departureTime TO startTime + (timeOffset / 100) * synodicPeriod.
-		// Number is time of flight in hundredths of the synodic period
-		FOR number IN RANGE(30, 151, 5) {
-			SET timeOfFlight TO synodicPeriod * ((number) / 100).
-			PRINT "Calculating departure " + (timeOffset / 100) + " periods, flight time " + ((number) / 100) + " periods.".
-			LOCAL dv IS porkchopDeltaVBound(departureTime, timeOfFlight). // both absolute: UT in seconds, duration in seconds
-			
-			IF minDeltaV["value"] > dv {
-				SET minDeltaV["value"] TO dv.
-				SET minDeltaV["departureTime"] TO departureTime.
-				SET minDeltaV["timeOfFlight"] TO timeOfFlight.
-			}
-			currentDvRow:ADD(dv).
-
-			// build the column headers (time of flight, in days) only on the first departure-time pass
-			IF NOT tofLabelsBuilt tofLabels:ADD(ROUND(timeOfFlight / (KUNIVERSE:HOURSPERDAY * 3600), 2)).
-		} // closes "FOR number IN RANGE" - the time-of-flight loop
-
-		// this departure time's row is now complete (currentDvRow has one cell per
-		// TOF value) - store it and record its row header. This must happen here,
-		// after the TOF loop closes, NOT inside it - otherwise a partial row gets
-		// pushed on every single TOF iteration instead of one full row per
-		// departure time.
-		dvGridRows:ADD(currentDvRow).
-		departureLabels:ADD(ROUND((timeOffset / 100) * synodicPeriod / (KUNIVERSE:HOURSPERDAY * 3600), 2)).
-		SET tofLabelsBuilt TO TRUE.
-	} // closes "FOR timeOffset IN RANGE" - the departure-time loop
-
-	// --- Write the classic porkchop plot grid: departure time down the rows, TOF across the columns ---
-	LOCAL gridHeaderRow IS "Departure (days) \ TOF (days)".
-	FOR tofLabel IN tofLabels {
-		SET gridHeaderRow TO gridHeaderRow + "," + tofLabel.
+	IF sameSOI {
+		PRINT fromOrbitable:NAME + " -> " + toOrbitable:NAME + " (same SOI).".
+		PRINT "Window " + timeToString(window["windowLength"]) + ", " + window["samplesPerWindow"] + " departures each.".
+	} ELSE {
+		PRINT fromOrbitable:NAME + " -> " + toOrbitable:NAME + " (around " + window["sunBody"]:NAME + ").".
 	}
-	LOG gridHeaderRow TO logFileName.
 
-	FOR rowIndex IN RANGE(0, dvGridRows:LENGTH) {
-		LOCAL gridRowString IS departureLabels[rowIndex]:TOSTRING.
-		FOR cellValue IN dvGridRows[rowIndex] {
-			SET gridRowString TO gridRowString + "," + cellValue.
+	// Run the exact same search once per solver, so their results can be
+	// compared directly - same geometry, same grid, same warm-starting; the
+	// only thing that differs between the two passes is which Lambert solver
+	// the cost function dispatches to. Each pass gets its own CSV (named after the
+	// solver) so neither run overwrites the other's output.
+	LOCAL solverTypesToTest IS LIST("Gauss", "Gooding").
+	LOCAL minDeltaV IS LEXICON("value", invalidDeltaV, "departureTime", startTime, "timeOfFlight", 0).
+	LOCAL solverRealTimes IS LEXICON().
+
+	FOR solverType IN solverTypesToTest {
+		PRINT "".
+		PRINT "=== Solver: " + solverType + " ===".
+
+		LOCAL logFileName IS "0:porkchopPlot " + solverType + ".csv".
+
+		LOCAL dvDelegate IS 0.
+		IF sameSOI {
+			SET dvDelegate TO bindSameSOIDeltaV(fromOrbitable, toOrbitable, solverType, captureRadius, startTime).
+		} ELSE {
+			SET dvDelegate TO bindPorkchopDeltaV(fromOrbitable, toOrbitable, window["sunBody"], solverType).
 		}
-		LOG gridRowString TO logFileName.
-	}
+		LOCAL grid IS porkchopGrid(dvDelegate, window, solverType).
+		SET minDeltaV TO grid["minDeltaV"].
+		SET solverRealTimes[solverType] TO grid["realDuration"].
 
+		writePorkchopCsv(grid, window, logFileName, solverType, fromOrbitable, toOrbitable).
+
+		PRINT "[" + solverType + "] " + grid["totalCells"] + " cells in " + realTimeToString(grid["realDuration"]) + ".".
+		PRINT "[" + solverType + "] " + motionTypeSummary(grid, TRUE).
+		PRINT "[" + solverType + "] Min dV " + distanceToString(minDeltaV["value"]) + "/s.".
+		PRINT "  Depart +" + timeToString(minDeltaV["departureTime"] - startTime) + ", TOF " + timeToString(minDeltaV["timeOfFlight"]) + ".".
+		PRINT "  Saved: porkchopPlot " + solverType + ".csv".
+	} // closes "FOR solverType IN solverTypesToTest" - the per-solver comparison loop
+
+	PRINT "".
 	PRINT "Complete".
-	WAIT 0.5.
-	SET loopMessage TO "Min dV between " + toBody:NAME + " and " + fromBody:NAME + " is " + distanceToString(minDeltaV["value"]) + "/s" +
-		" at departure " + timeToString(minDeltaV["departureTime"] - startTime) + ", TOF " + timeToString(minDeltaV["timeOfFlight"]).
+	// Where the wall-clock time went.
+	LOCAL timeSummary IS "Run time:".
+	FOR solverName IN solverRealTimes:KEYS {
+		SET timeSummary TO timeSummary + " " + solverName + " " + realTimeToString(solverRealTimes[solverName]) + ",".
+	}
+	PRINT timeSummary + " total " + realTimeToString(KUNIVERSE:REALWORLDTIME - scriptStartRealTime) + ".".
+	WAIT 5.
+	SET loopMessage TO "Min dV: " + distanceToString(minDeltaV["value"]) + "/s at " + durationToUnitString(minDeltaV["departureTime"] - startTime).
 } ELSE SET loopMessage TO "Error: " + errorCode.
