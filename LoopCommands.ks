@@ -397,8 +397,7 @@ FUNCTION createCommandList {
 
 	possibleCommands:ADD("update", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
 		IF (connectionToKSC()) {
-			copyToLocal().
-			RETURN "Updated all scripts from the archive".
+			RETURN updateFromArchive().
 		}
 		RETURN "Not connected to KSC - cannot update scripts".
 		})).
@@ -450,10 +449,12 @@ FUNCTION createCommandList {
 	possibleCommands:ADD("local", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER forcedUpdate IS FALSE.
 		IF connectionToKSC() {
-			LOCAL filesCopied IS copyToLocal(forcedUpdate).
+			LOCAL message IS "".
+			IF forcedUpdate SET message TO "Copied " + copyToLocal() + " files, running locally".
+			ELSE SET message TO updateFromArchive().
 			SWITCH TO 1.
 			SET runLocal TO TRUE.
-			RETURN "Updated " + filesCopied + " scripts, running locally".
+			RETURN message.
 		}
 		RETURN "Already running locally".
 		})).
