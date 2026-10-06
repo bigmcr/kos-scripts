@@ -12,11 +12,14 @@ IF runLocal {
 	SWITCH TO 0.
 }
 
-GLOBAL loopMessage IS "".
+GLOBAL loopMessage IS bootMessage.					// bootMessage is set in boot.ks, and may report that scripts are out of date.
 GLOBAL errorValue IS -123456789.
 GLOBAL globalSteer IS SHIP:FACING.
 GLOBAL globalThrottle IS 0.
 GLOBAL loopMode IS "Default".					// Global so the other loop scripts can access it.
+// Names of the commands whose arguments are passed exactly as typed. Their "T" argument means "Toggle", so it must not
+// be converted to the boolean TRUE the way arguments for scripts and the other commands are.
+GLOBAL rawArgumentCommands IS LIST().
 GLOBAL bodList IS LIST().
 LIST BODIES IN bodList.
 // avoiding the use of a file extension allows RUNPATH to determine the file extension
@@ -26,6 +29,7 @@ RUNPATH("loopTerminal").
 
 FUNCTION functionCaller {
 		PARAMETER func, minArguments, maxArguments, args.
+		IF args:LENGTH > maxArguments RETURN "Too many arguments".
 		FOR arg IN args {
 			PRINT "    " + arg.
 		}
@@ -40,6 +44,39 @@ FUNCTION functionCaller {
 			RETURN "Minimum number of arguments not met".
 		}
 		RETURN func().
+}
+
+// Files that are already loaded and resident while loop is running. Running one of these again from the terminal
+// reloads its functions into the running program, which causes "label already exists" errors and long freezes.
+// "boot" is included because boot.ksm runs loop again (and reloads the library) if it is called from here.
+LOCAL residentScripts IS LIST("boot", "loop", "library", "libraryTransfer", "loopCommands", "loopTerminal").
+
+// Convert Argument
+// Converts an argument the operator typed into the type a script or command most likely expects.
+// Passed the following:
+//			arg (string, one trimmed argument)
+// Returns the following:
+//			FALSE for "false" or "F", TRUE for "True" or "T", a scalar if arg is a number, otherwise arg unchanged.
+FUNCTION convertArgument {
+	PARAMETER arg.
+	IF (arg = "false") OR (arg = "F") RETURN FALSE.
+	IF (arg = "True") OR (arg = "T") RETURN TRUE.
+	LOCAL number IS arg:TONUMBER(errorValue).
+	IF number = errorValue RETURN arg.
+	RETURN number.
+}
+
+// Is Resident Script
+// Passed the following:
+//			name (whatever the operator typed as the first argument)
+// Returns the following:
+//			TRUE if name refers to one of the automatically loaded files (bool)
+FUNCTION isResidentScript {
+	PARAMETER name.
+	IF name:TYPENAME <> "String" RETURN FALSE.
+	IF name:ENDSWITH(".ksm") SET name TO name:SUBSTRING(0, name:LENGTH - 4).
+	ELSE IF name:ENDSWITH(".ks") SET name TO name:SUBSTRING(0, name:LENGTH - 3).
+	RETURN residentScripts:CONTAINS(name).
 }
 
 // Stage Function
@@ -163,19 +200,23 @@ UNTIL done {
 
 			// ignore the operator hitting the enter key if nothing is present in inputString
 			IF inputString <> "" {
-				LOCAL argList IS LIST().
-				// for each argument, if the operator entered a non-string, make the conversion
-				FOR eachArg IN inputString:SPLIT(",") {
-					IF (eachArg = "false") OR (eachArg = "F") {argList:ADD(FALSE).}
-					ELSE IF (eachArg = "True") OR (eachArg = "T") {argList:ADD(TRUE).}
-					ELSE IF eachArg:TONUMBER(errorValue) = errorValue {argList:ADD(eachArg).}
-					ELSE {argList:ADD(eachArg:TONUMBER(errorValue)).}
-				}
-				// otherwise, leave the argument as a string
+				// the previous message is stale once a new command is entered
+				SET loopMessage TO "".
+				// split the input into trimmed, unconverted strings. The first one is the script or command name.
+				LOCAL rawArgs IS LIST().
+				FOR eachArg IN inputString:SPLIT(",") {rawArgs:ADD(eachArg:TRIM).}
+				LOCAL commandName IS rawArgs[0].
+				// argList holds the name followed by the arguments after type conversion
+				LOCAL argList IS LIST(commandName).
 				debugString(inputString).
 
+				// refuse to re-run files that loop has already loaded
+				IF isResidentScript(commandName) {
+					SET loopMessage TO commandName + " is already loaded!".
+				}
 				// if there is a valid script, process the arguments for it
-				IF EXISTS(argList[0]) {
+				ELSE IF commandName <> "" AND EXISTS(commandName) {
+					FOR index IN RANGE(1, rawArgs:LENGTH) {argList:ADD(convertArgument(rawArgs[index])).}
 					FOR arg IN RANGE(0, argList:LENGTH) {
 						debugString("Argument " + (arg) + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME).
 					}
@@ -197,17 +238,24 @@ UNTIL done {
 					}
 				}
 				// look up the first section to see if it is a valid command in the list.
-				IF (possibleCommands:KEYS:CONTAINS(argList[0])) {
-					debugString("Running command " + argList[0] + " with " + (argList:LENGTH - 1) + " arguments").
+				ELSE IF (possibleCommands:KEYS:CONTAINS(commandName)) {
+					// the toggle commands get the arguments as typed, everything else gets converted arguments
+					LOCAL convertArgs IS NOT rawArgumentCommands:CONTAINS(commandName).
+					FOR index IN RANGE(1, rawArgs:LENGTH) {
+						IF convertArgs argList:ADD(convertArgument(rawArgs[index])).
+						ELSE argList:ADD(rawArgs[index]).
+					}
+					debugString("Running command " + commandName + " with " + (argList:LENGTH - 1) + " arguments").
 					LOCAL returnMessage IS "".
-					SET returnMessage TO functionCaller(possibleCommands[argList[0]]["Delegate"], possibleCommands[argList[0]]["RequiredArgs"], possibleCommands[argList[0]]["PossibleArgs"], argList:SUBLIST(1, argList:LENGTH - 1)).
-					IF returnMessage:FIND("invalid argument") <> -1 SET loopMessage TO returnMessage.
-					ELSE IF returnMessage <> "" AND returnMessage <> "Minimum number of arguments not met" {
+					SET returnMessage TO functionCaller(possibleCommands[commandName]["Delegate"], possibleCommands[commandName]["RequiredArgs"], possibleCommands[commandName]["PossibleArgs"], argList:SUBLIST(1, argList:LENGTH - 1)).
+					IF returnMessage:FIND("invalid argument") <> -1 OR returnMessage = "Minimum number of arguments not met" OR returnMessage = "Too many arguments" {
+						SET loopMessage TO returnMessage.
+					} ELSE IF returnMessage <> "" {
 						SET loopMessage TO returnMessage.
 						SET commandValid TO TRUE.
 					}
 				}
-				IF argList[0] = "exit" OR argList[0] = "done" OR argList[0] = "quit" {
+				IF commandName = "exit" OR commandName = "done" OR commandName = "quit" {
 					SET done TO TRUE.
 					SET commandValid TO TRUE.
 					SET loopMessage TO "Exiting terminal".
@@ -221,7 +269,7 @@ UNTIL done {
 				SET inputString TO "".
 			}
 			// if the command was not processed correctly, display an error message
-			ELSE IF loopMessage = "" SET loopMessage TO "Did not understand input!".
+			ELSE IF inputString <> "" AND loopMessage = "" SET loopMessage TO "Did not understand input!".
 		} ELSE
 		// if the operator entered the backspace key, delete one letter from the input string
 		IF tempChar = TERMINAL:INPUT:BACKSPACE {
@@ -245,9 +293,10 @@ UNTIL done {
 		IF tempChar = TERMINAL:INPUT:DELETERIGHT {
 			SET inputString TO "".
 		}
-		// otherwise, add the character to the input string
+		// otherwise, add the character to the input string. Only printable ASCII is kept, because the other
+		// special keys (left/right arrows, home, end, tab, etc.) would add invisible characters to the input.
 		ELSE {
-			SET inputString TO inputString + tempChar.
+			IF UNCHAR(tempChar) >= 32 AND UNCHAR(tempChar) <= 126 SET inputString TO inputString + tempChar.
 		}
 		SET forceScreenUpdate TO TRUE.
 	}

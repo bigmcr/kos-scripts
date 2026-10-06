@@ -16,6 +16,7 @@ FUNCTION createCommandList {
 		IF (changeTo = "Toggle") OR (changeTo = "T") SET debug TO NOT debug.
 		RETURN "Debug is currently " + debug.
 		})).
+	rawArgumentCommands:ADD("debug").
 	possibleCommands:ADD("mode", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Default".
 		IF (changeTo = "Default") OR (changeTo = "") SET loopMode TO "Default".
@@ -31,10 +32,12 @@ FUNCTION createCommandList {
 		IF changeTo = "" RETURN "Panels are currently " + PANELS.
 		RETURN "Panels - invalid argument".
 		})).
+	rawArgumentCommands:ADD("solar").
 	possibleCommands:ADD("panels", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
 		RETURN possibleCommands["solar"]["Delegate"](changeTo).
 		})).
+	rawArgumentCommands:ADD("panels").
 	possibleCommands:ADD("RCS", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
 		IF changeTo = "On"  {SET RCS TO  TRUE. RETURN  "RCS turned on".}
@@ -43,6 +46,7 @@ FUNCTION createCommandList {
 		IF changeTo = "" RETURN "RCS is currently " + RCS.
 		RETURN "RCS - invalid argument".
 		})).
+	rawArgumentCommands:ADD("RCS").
 	// This toggles the permissions for each of the relevant RCS thrusters on the craft.
 	// Helpful when you don't want RCS wasted on roll/yaw/pitch
 	possibleCommands:ADD("RCSThrusters", LEXICON("PossibleArgs", 2, "RequiredArgs", 1, "Delegate", {
@@ -104,6 +108,7 @@ FUNCTION createCommandList {
 		IF changeTo = "" RETURN "SAS is currently " + SAS.
 		RETURN "SAS - invalid argument".
 		})).
+	rawArgumentCommands:ADD("SAS").
 	possibleCommands:ADD("stopTime", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
 		PARAMETER newTime.
 		IF newTime = "" RETURN "Max Stopping time is " + STEERINGMANAGER:MAXSTOPPINGTIME.
@@ -130,6 +135,7 @@ FUNCTION createCommandList {
 		IF changeTo = "" RETURN "Gear are currently " + GEAR.
 		RETURN "Gear - invalid argument".
 		})).
+	rawArgumentCommands:ADD("GEAR").
 	possibleCommands:ADD("LIGHTS", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
 		IF changeTo = "On"  {SET LIGHTS TO  TRUE. RETURN  "Lights turned on".}
@@ -138,6 +144,7 @@ FUNCTION createCommandList {
 		IF changeTo = "" RETURN "Lights are currently " + LIGHTS.
 		RETURN "Lights - invalid argument".
 		})).
+	rawArgumentCommands:ADD("LIGHTS").
 	possibleCommands:ADD("RADIATORS", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
 		IF changeTo = "On"  {SET RADIATORS TO  TRUE. RETURN  "Radiators turned on".}
@@ -146,6 +153,7 @@ FUNCTION createCommandList {
 		IF changeTo = "" RETURN "Radiators are currently " + RADIATORS.
 		RETURN "Radiators - invalid argument".
 		})).
+	rawArgumentCommands:ADD("RADIATORS").
 	possibleCommands:ADD("DRILL", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
 		PARAMETER desiredState.
 		IF desiredState = "On" 			{DRILLS  ON. RETURN "Drills started".}
@@ -255,10 +263,12 @@ FUNCTION createCommandList {
 		IF (changeTo = "Toggle") OR (changeTo = "T") SET ISRU TO NOT ISRU.
 		RETURN "ISRU is currently " + ISRU.
 		})).
+	rawArgumentCommands:ADD("ISRU").
 	possibleCommands:ADD("CONVERTER", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
 		RETURN possibleCommands["ISRU"]["Delegate"](changeTo).
 		})).
+	rawArgumentCommands:ADD("CONVERTER").
 	possibleCommands:ADD("mining", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
 		PARAMETER changeTo.
 		IF changeTo = "On" {ISRU ON. RADIATORS ON. FUELCELLS ON. DEPLOYDRILLS ON. WAIT 0.5. DRILLS ON. RETURN "Surface mining started".}
@@ -272,10 +282,12 @@ FUNCTION createCommandList {
 		IF (changeTo = "Toggle") OR (changeTo = "T") SET FUELCELLS TO NOT FUELCELLS.
 		RETURN "Fuelcell is currently " + FUELCELLS.
 		})).
+	rawArgumentCommands:ADD("FUELCELL").
 	possibleCommands:ADD("FUELCELLS", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
 		RETURN possibleCommands["FUELCELL"]["Delegate"](changeTo).
 		})).
+	rawArgumentCommands:ADD("FUELCELLS").
 	possibleCommands:ADD("OMNI", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
 		PARAMETER changeTo IS "On".
 		IF changeTo = "On" {activateOmniAntennae(). RETURN "Omni antennae have been activated.".}
@@ -296,6 +308,7 @@ FUNCTION createCommandList {
 		IF changeTo = "" RETURN "Highlighting is currently " + coreHighlight:ENABLED.
 		RETURN "Highlight - invalid argument".
 		})).
+	rawArgumentCommands:ADD("Highlight").
 	possibleCommands:ADD("rename", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
 		PARAMETER newName.
 		SET SHIP:NAME TO newName.
@@ -384,7 +397,8 @@ FUNCTION createCommandList {
 		RETURN "No maneuver node to point to!".
 		})).
 	possibleCommands:ADD("distTgtPlane", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
-		RETURN ROUND(distanceToTargetOrbitalPlane(), 4) + " km to target's orbital plane".
+		IF NOT HASTARGET RETURN distanceToString(distanceFromPlane(0, FALSE), 4) + " to equatorial plane".
+		RETURN distanceToString(distanceToTargetOrbitalPlane(), 4) + " to target's orbital plane".
 		})).
 	possibleCommands:ADD("reboot", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
 		debugString("Reboot").
@@ -472,6 +486,11 @@ FUNCTION createCommandList {
 	possibleCommands:ADD("hide", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
 		CORE:PART:GETMODULE("kOSProcessor"):DOEVENT("Close Terminal").
 		RETURN "Terminal Hidden".
+		})).
+
+	possibleCommands:ADD("terminalSize", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
+		setTerminalSize().
+		RETURN "Terminal size reset".
 		})).
 
 	possibleCommands:ADD("stageUpdate", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
