@@ -279,6 +279,8 @@ UNTIL done {
 					debugString("Running command " + commandName + " with " + (argList:LENGTH - 1) + " arguments").
 					LOCAL returnMessage IS "".
 					SET returnMessage TO functionCaller(possibleCommands[commandName]["Delegate"], possibleCommands[commandName]["RequiredArgs"], possibleCommands[commandName]["PossibleArgs"], argList:SUBLIST(1, argList:LENGTH - 1)).
+					// a command can print on the terminal (local, update, listFiles and so on), so lay the screen out again
+					SET forceScreenUpdate TO TRUE.
 					IF returnMessage:FIND("invalid argument") <> -1 OR returnMessage = "Not enough arguments" OR returnMessage = "Too many arguments" {
 						SET loopMessage TO returnMessage.
 					} ELSE IF returnMessage <> "" {
