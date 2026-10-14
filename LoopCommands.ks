@@ -109,8 +109,8 @@ FUNCTION createCommandList {
 		RETURN "SAS - invalid argument".
 		})).
 	rawArgumentCommands:ADD("SAS").
-	possibleCommands:ADD("stopTime", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
-		PARAMETER newTime.
+	possibleCommands:ADD("stopTime", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
+		PARAMETER newTime IS "".
 		IF newTime = "" RETURN "Max Stopping time is " + STEERINGMANAGER:MAXSTOPPINGTIME.
 		SET STEERINGMANAGER:MAXSTOPPINGTIME TO newTime.
 		RETURN "Changed Max Stopping time to " + STEERINGMANAGER:MAXSTOPPINGTIME.
@@ -172,8 +172,8 @@ FUNCTION createCommandList {
 		PARAMETER desiredState.
 		RETURN possibleCommands["DRILL"]["Delegate"](desiredState).
 		})).
-	possibleCommands:ADD("AUGER", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
-		PARAMETER changeTo IS "Toggle".
+	possibleCommands:ADD("AUGER", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
+		PARAMETER changeTo IS "Default".
 		IF changeTo = "On" {
 			FOR auger IN augerList auger:getModule("ELExtractor"):DOACTION("start auger",TRUE).
 			RETURN "Augers have been turned ON".
@@ -184,8 +184,8 @@ FUNCTION createCommandList {
 		}
 		RETURN "Augers - invalid arguments".
 		})).
-	possibleCommands:ADD("AUGERS", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
-		PARAMETER changeTo IS "Toggle".
+	possibleCommands:ADD("AUGERS", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
+		PARAMETER changeTo IS "Default".
 		RETURN possibleCommands["AUGER"]["Delegate"](changeTo).
 		})).
 	possibleCommands:ADD("smelter", LEXICON("PossibleArgs", 2, "RequiredArgs", 1, "Delegate", {
@@ -322,8 +322,10 @@ FUNCTION createCommandList {
 		PARAMETER desiredAltitude IS 10000.
 		IF (processScalarParameter(desiredAltitude, errorValue) <> errorValue) {
 			LOCAL warpAltitude IS processScalarParameter(desiredAltitude).
-			IF (SHIP:BODY:ATM:EXISTS) SET warpAltitude TO MAX(SHIP:BODY:ATM:HEIGHT + 10000, warpAltitude).
-			warpToTime(TIME:SECONDS + timeToAltitude(warpAltitude)).
+			IF (SHIP:BODY:ATM:EXISTS) SET warpAltitude TO MAX(SHIP:BODY:ATM:HEIGHT + 1000, warpAltitude).
+			LOCAL timeToAlt IS timeToAltitude(warpAltitude).
+			IF timeToAlt < 0 RETURN "Already passed " + distanceToString(warpAltitude) + " altitude!".
+			warpToTime(TIME:SECONDS + MAX(0, timeToAlt)).
 			RETURN "Warped to altitude of " + distanceToString(warpAltitude).
 		}
 		RETURN "warpToAltitude - invalid argument".
@@ -361,7 +363,7 @@ FUNCTION createCommandList {
 			IF arg1 = "retro" OR arg1 = "retrograde" 	{SET autoSteer TO "target,retrograde".	RETURN "Steering locked to target retrograde".}
 			IF arg1 = "pro" OR arg1 = "prograde" 			{SET autoSteer TO "target,prograde". 		RETURN "Steering locked to target prograde".}
 			IF arg1 = "facing" 												{SET autoSteer TO "target,facing".			RETURN "Steering locked to target facing".}
-			IF arg1 = "antifacing" 										{SET autoSteer TO "target,antifacing".	RETURN "Steering locked to target facing".}
+			IF arg1 = "antifacing" 										{SET autoSteer TO "target,antifacing".	RETURN "Steering locked to target anti facing".}
 			RETURN "Target - invalid argument " + arg1.
 		} ELSE {RETURN "Must have a target set.".}
 		})).
@@ -399,7 +401,7 @@ FUNCTION createCommandList {
 		})).
 	possibleCommands:ADD("distTgtPlane", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
 		IF NOT HASTARGET RETURN distanceToString(distanceFromPlane(0, FALSE), 4) + " to equatorial plane".
-		RETURN distanceToString(distanceToTargetOrbitalPlane(), 4) + " to target's orbital plane".
+		RETURN distanceToString(distanceToTargetOrbitalPlane()*1000, 4) + " to target's orbital plane".
 		})).
 	possibleCommands:ADD("reboot", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
 		debugString("Reboot").
@@ -507,9 +509,11 @@ FUNCTION createCommandList {
 		PARAMETER logFileName IS "0:" + SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv".
 		IF includeResources:TYPENAME = "Boolean" AND logFileName:TYPENAME = "STRING" {
 			updateShipInfo().
-			logShipInfo(includeResources, logFileName).
-			WAIT 5.
-			RETURN SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv has been created.".
+			IF connectionToKSC() {
+				logShipInfo(includeResources, logFileName).
+				WAIT 5.
+				RETURN SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv has been created.".
+			} ELSE RETURN "No connection to home - no CSV file created".
 		}
 		RETURN "stageInfo - invalid arguments".
 		})).

@@ -28,6 +28,19 @@ LOCAL decouplerList IS LIST().
 
 updateShipInfo().
 
+// Density of a resource in kg per unit. Refreshes densityLookUp from SHIP:RESOURCES on a miss, so
+// resources that arrive after the library loaded (docking, new parts) are found. A resource that is
+// not on the ship at all still raises a missing-key error.
+FUNCTION resourceDensity {
+	PARAMETER resourceName.
+	IF NOT densityLookUp:HASKEY(resourceName) {
+		FOR eachResource IN SHIP:RESOURCES {
+			IF NOT densityLookUp:HASKEY(eachResource:NAME) densityLookUp:ADD(eachResource:NAME, eachResource:DENSITY * 1000).
+		}
+	}
+	RETURN densityLookUp[resourceName].
+}
+
 FUNCTION updateFacingVectors {
 	SET facingVector:SHOW TO NOT MAPVIEW.
 	SET guidanceVector:SHOW TO NOT MAPVIEW AND STEERINGMANAGER:ENABLED.
@@ -302,10 +315,10 @@ FUNCTION updateShipInfo {
 	resourceList:CLEAR.
 	FOR eachResource IN SHIP:RESOURCES {
 		resourceList:ADD(eachResource:NAME, LEXICON(    "Quantity", eachResource:AMOUNT,
-																								        "Mass", eachResource:AMOUNT * densityLookUp[eachResource:NAME] * 1000,
-																								     "Density", densityLookUp[eachResource:NAME],
-																								"Quantity Use", 0,
-																								    "Mass Use", 0)).
+												        "Mass", eachResource:AMOUNT * resourceDensity(eachResource:NAME),
+													    "Density", resourceDensity(eachResource:NAME),
+														"Quantity Use", 0,
+														"Mass Use", 0)).
 	}
 	SET shipBounds TO SHIP:BOUNDS.
 }
@@ -473,8 +486,8 @@ FUNCTION logShipInfo {
 							eachResource:NAME + "," +
 							eachResource:AMOUNT + "," +
 							eachResource:CAPACITY + "," +
-							(eachResource:AMOUNT*densityLookUp[eachResource:NAME]) + "," +
-							densityLookUp[eachResource:NAME] TO fileName.
+							(eachResource:AMOUNT*resourceDensity(eachResource:NAME)) + "," +
+							resourceDensity(eachResource:NAME) TO fileName.
 				}
 			}
 		}
@@ -527,7 +540,6 @@ FUNCTION rebalanceFuelMassPerRatio {
 		lowestRestraintFuelCombo:ADD("Ratio", 1).
 		lowestRestraintFuelCombo:ADD("examinedFuel", "").
 		lowestRestraintFuelCombo:ADD("constraintFuel", "").
-	//	LOG "engineType,examinedFuel,constraintFuel,requiredToPresentRatio,lowestRestraintFuelCombo[Ratio],lowestRestraintFuelCombo[examinedFuel],lowestRestraintFuelCombo[constraintFuel]," TO "0:fuels.csv".
 		FOR engineType IN fuelList:KEYS {
 			SET lowestRestraintFuelCombo["Ratio"] TO 1.
 			SET lowestRestraintFuelCombo["examinedFuel"] TO "".
@@ -541,20 +553,22 @@ FUNCTION rebalanceFuelMassPerRatio {
 			FOR examinedFuel IN fuelList[engineType]:KEYS {
 				FOR constraintFuel IN fuelList[engineType]:KEYS {
 					IF constraintFuel <> examinedFuel {
-						SET requiredToPresentRatio TO (fuelList[engineType][constraintFuel]["Mass"] /
-																					fuelList[engineType][constraintFuel]["Ratio"] *
-																					fuelList[engineType][examinedFuel]["Ratio"]) /
-																					fuelList[engineType][examinedFuel]["Mass"].
-						IF requiredToPresentRatio < lowestRestraintFuelCombo["Ratio"] {
-							SET lowestRestraintFuelCombo["Ratio"] TO requiredToPresentRatio.
-							SET lowestRestraintFuelCombo["examinedFuel"] TO examinedFuel.
-							SET lowestRestraintFuelCombo["constraintFuel"] TO constraintFuel.
-						}
-						IF loggingAllowed {
-							LOG "For engine," + engineType + ",there is," + fuelList[engineType][examinedFuel]["Mass"] + ",kg of " + examinedFuel +
-							",and according to," + constraintFuel + ",there should be," +
-							(fuelList[engineType][constraintFuel]["Mass"] / fuelList[engineType][constraintFuel]["Ratio"] * fuelList[engineType][examinedFuel]["Ratio"]) +
-							",kg,which is a ratio of," + requiredToPresentRatio + "," + lowestRestraintFuelCombo["Ratio"] + "," + lowestRestraintFuelCombo["examinedFuel"] + "," + lowestRestraintFuelCombo["constraintFuel"] TO "0:fuels.csv".
+						IF fuelList[engineType][constraintFuel]["Ratio"] <> 0 AND fuelList[engineType][constraintFuel]["Mass"] <> 0 AND fuelList[engineType][examinedFuel]["Ratio"] <> 0 AND fuelList[engineType][examinedFuel]["Mass"] <> 0 {
+							SET requiredToPresentRatio TO (fuelList[engineType][constraintFuel]["Mass"] /
+																						fuelList[engineType][constraintFuel]["Ratio"] *
+																						fuelList[engineType][examinedFuel]["Ratio"]) /
+																						fuelList[engineType][examinedFuel]["Mass"].
+							IF requiredToPresentRatio < lowestRestraintFuelCombo["Ratio"] {
+								SET lowestRestraintFuelCombo["Ratio"] TO requiredToPresentRatio.
+								SET lowestRestraintFuelCombo["examinedFuel"] TO examinedFuel.
+								SET lowestRestraintFuelCombo["constraintFuel"] TO constraintFuel.
+							}
+							IF loggingAllowed {
+								LOG "For engine," + engineType + ",there is," + fuelList[engineType][examinedFuel]["Mass"] + ",kg of " + examinedFuel +
+								",and according to," + constraintFuel + ",there should be," +
+								(fuelList[engineType][constraintFuel]["Mass"] / fuelList[engineType][constraintFuel]["Ratio"] * fuelList[engineType][examinedFuel]["Ratio"]) +
+								",kg,which is a ratio of," + requiredToPresentRatio + "," + lowestRestraintFuelCombo["Ratio"] + "," + lowestRestraintFuelCombo["examinedFuel"] + "," + lowestRestraintFuelCombo["constraintFuel"] TO "0:fuels.csv".
+							}
 						}
 					}
 				}
@@ -622,15 +636,13 @@ FUNCTION updateShipInfoResources {
 				SET stageInfo["Fuels"][eachEngineType][eachFuel]["Mass"] TO 0.
 				// If the called out fuel is in this stage, you are good to go
 				IF (stageInfo["Resources"]:HASKEY(eachFuel)) {
-//					LOG "Stage " + stageNumber + ",has,"+ shipInfo["Stage " + stageNumber]["Resources"][eachFuel] + ",kg of " + eachFuel + "" TO "0:Fuels.csv".
 					SET stageInfo["Fuels"][eachEngineType][eachFuel]["Mass"] TO
 							stageInfo["Fuels"][eachEngineType][eachFuel]["Mass"] +
 							stageInfo["Resources"][eachFuel].
 				} ELSE IF stageNumber <> 0 {
 				// If the called out fuel isn't in this stage, search for it in a later stage
-					FOR subStageNumber IN RANGE(stageNumber - 1, 0) {
+					FOR subStageNumber IN RANGE(stageNumber - 1, -1) {
 						IF shipInfo["Stage " + subStageNumber]["Resources"]:KEYS:CONTAINS(eachFuel) {
-//							LOG "Stage " + stageNumber + ",is borrowing,"+ shipInfo["Stage " + subStageNumber]["Resources"][eachFuel] + ",kg of " + eachFuel + ",from Stage " + subStageNumber TO "0:Fuels.csv".
 							SET stageInfo["Fuels"][eachEngineType][eachFuel]["Mass"] TO
 									stageInfo["Fuels"][eachEngineType][eachFuel]["Mass"] +
 									shipInfo["Stage " + subStageNumber]["Resources"][eachFuel].
@@ -660,15 +672,13 @@ FUNCTION updateShipInfoResources {
 				SET stageInfo["FuelsRCS"][eachEngineType][eachFuel]["Mass"] TO 0.
 				// If the called out fuel is in this stage, you are good to go
 				IF (stageInfo["Resources"]:HASKEY(eachFuel)) {
-//					LOG "Stage " + stageNumber + ",has,"+ shipInfo["Stage " + stageNumber]["Resources"][eachFuel] + ",kg of " + eachFuel + "" TO "0:Fuels.csv".
 					SET stageInfo["FuelsRCS"][eachEngineType][eachFuel]["Mass"] TO
 							stageInfo["FuelsRCS"][eachEngineType][eachFuel]["Mass"] +
 							stageInfo["Resources"][eachFuel].
 				} ELSE IF stageNumber <> 0 {
 				// If the called out fuel isn't in this stage, search for it in a later stage
-					FOR subStageNumber IN RANGE(stageNumber - 1, 0) {
+					FOR subStageNumber IN RANGE(stageNumber - 1, -1) {
 						IF shipInfo["Stage " + subStageNumber]["Resources"]:KEYS:CONTAINS(eachFuel) {
-//							LOG "Stage " + stageNumber + ",is borrowing,"+ shipInfo["Stage " + subStageNumber]["Resources"][eachFuel] + ",kg of " + eachFuel + ",from Stage " + subStageNumber TO "0:Fuels.csv".
 							SET stageInfo["FuelsRCS"][eachEngineType][eachFuel]["Mass"] TO
 									stageInfo["FuelsRCS"][eachEngineType][eachFuel]["Mass"] +
 									shipInfo["Stage " + subStageNumber]["Resources"][eachFuel].
@@ -681,7 +691,6 @@ FUNCTION updateShipInfoResources {
 		LOCAL fuelRCSMass IS 0.
 		LOCAL fuelRCSMassUnused IS 0.
 		LOCAL rebalancedFuels IS rebalanceFuelMassPerRatio(stageInfo["FuelsRCS"]).
-		LOCAL fuelMass IS 0.
 		FOR eachEngineType IN rebalancedFuels:KEYS {
 			FOR eachFuel IN rebalancedFuels[eachEngineType]:KEYS {
 				SET stageInfo["FuelsRCS"][eachEngineType][eachFuel]["Mass"] TO rebalancedFuels[eachEngineType][eachFuel]["Mass"].
@@ -713,7 +722,7 @@ FUNCTION updateShipInfoResources {
 
 		LOCAL message IS TIME:SECONDS:TOSTRING() + "," + KUNIVERSE:TIMEWARP:RATE.
 		FOR eachResource IN SHIP:RESOURCES {
-			IF loggedResources:CONTAINS(eachResource:NAME) SET message TO message + "," + eachResource:AMOUNT + "," + eachResource:AMOUNT * densityLookUp[eachResource:NAME].
+			IF loggedResources:CONTAINS(eachResource:NAME) SET message TO message + "," + eachResource:AMOUNT + "," + eachResource:AMOUNT * resourceDensity(eachResource:NAME).
 		}
 		LOG message TO fileName.
 	}
@@ -823,6 +832,9 @@ FUNCTION getCurrentFuels {
 		IF fuelName = "Liquid Fuel" SET fuelName TO "LiquidFuel".
 		IF fuelName = "LOX" SET fuelName TO "LqdOxygen".
 		IF fuelName = "Solid Fuel" SET fuelName TO "SolidFuel".
+		IF fuelName = "Xenon Gas" SET fuelName TO "XenonGas".
+		IF fuelName = "Electric Charge" SET fuelName TO "ElectricCharge".
+		IF fuelName = "Intake Air" SET fuelName TO "IntakeAir".
 		RETURN fuelName.
 	}
 
@@ -842,7 +854,7 @@ FUNCTION getCurrentFuels {
 				lexOfFuels[engineTitle]:ADD(fuelName,
 // Note that the RATIO suffix is the volumetric flow ratio, so it needs to be converted to mass flow ratio by multiplying by the density
 											 LEXICON("Ratio", eachEngine:CONSUMEDRESOURCES[eachFuel]:RATIO *
-											 densityLookUp[fuelName],
+											 resourceDensity(fuelName),
 											 "Mass", 0,
 											 "MassUnused", 0)).
 			}
@@ -915,12 +927,12 @@ FUNCTION heightPrediction {
 	}
 	SET averageHeight TO averageHeight / heightList:LENGTH.
 	IF (createlogFileName) {
-		LOG "Time,Longitude,Latitude,Terrain Height" TO "Terrain Heights.csv".
+		LOG "Time,Latitude,Longitude,Terrain Height" TO "Terrain Heights.csv".
 		FOR smallList IN heightList {
 			LOG smallList[0] + "," + smallList[1] + "," + smallList[2] + "," + smallList[3] TO "Terrain Heights.csv".
 		}
 	}
-	RETURN LEXICON("min",minHeight,"max",averageHeight,"avg",averageHeight).
+	RETURN LEXICON("min",minHeight,"max",maxHeight,"avg",averageHeight).
 }
 
 // Generic hill climbing function
@@ -930,7 +942,7 @@ FUNCTION heightPrediction {
 //			initialGuess - initial guess of the final value
 //			initialStepSize - how much to start moving the initial guess by
 //			logFileName - log file name. If blank, does not log. Defaults to blank.
-//			iterationMax - maximum iteration number. Defaults to 1000.
+//			iterationMax - maximum iteration number. Defaults to 100.
 //			smallestStepRatio - Ratio of smallest step size to initial step size
 //        (negative power of 2). Defaults to 15, so the smallest step size
 //        would be initialStepSize / (2^15).
@@ -962,7 +974,7 @@ FUNCTION hillClimb {
 	PARAMETER cyclicalPeriodCutoff IS 0.
 	PARAMETER deleteOldlogFileName IS TRUE.
 	
-	IF initialStepSize = 0 OR delegate:TYPENAME <> "KOSDelegate" {
+	IF initialStepSize = 0 OR delegate:TYPENAME <> "UserDelegate" {
 		RETURN LEXICON("iteration", -1,
 										  "initialValue", delegate(initialGuess),
 										  "initialGuess", initialGuess,
@@ -986,8 +998,10 @@ FUNCTION hillClimb {
 	LOCAL knownInitialValue IS currentDelegate.
 
 	UNTIL (stepSize <= smallestStep) OR (iteration > iterationMax) {
-		LOCAL currentPlusDelegate IS delegate(currentGuess + stepSize).
-		LOCAL currentMinusDelegate IS delegate(currentGuess - stepSize).
+		SET currentPlusDelegate TO delegate(currentGuess + stepSize).
+		SET currentMinusDelegate TO delegate(currentGuess - stepSize).
+
+		IF logDataPerm LOG iteration + "," + (LN(stepSize/initialStepSize)/LN(2)) + "," + currentGuess + "," + stepSize + "," + currentDelegate + "," + currentPlusDelegate + "," + currentMinusDelegate TO logFileName.
 
 		IF currentPlusDelegate < currentDelegate {
 			SET currentGuess TO currentGuess + stepSize.
@@ -1149,6 +1163,7 @@ FUNCTION hillClimb2D {
 				SET bestGuess2 TO testGuess2.
 				SET bestLabel TO neighborLabels[neighborIndex].
 			}
+			// This is present because kOS has odd results when complex calcualtions are spread across different physics ticks.
 			WAIT 0.
 		}
 
@@ -1176,7 +1191,6 @@ FUNCTION hillClimb2D {
 		}
 
 		SET iteration TO iteration + 1.
-		// This is present because kOS has odd results when complex calcualtions are spread across different physics ticks.
 	}
 
 	LOCAL returnMe IS LEXICON().
@@ -1543,11 +1557,11 @@ FUNCTION newtonRefine2D {
 	RETURN LEXICON("finalValue", currentValue, "finalGuess1", guess1, "finalGuess2", guess2, "evaluations", evaluations, "steps", stepsTaken).
 }
 
-// Return the vector pointing in the direction of downslope
+// Return the vector pointing in the direction of upslope
 // Returns a Lexicon of several items related to the geometry of the ground below the ship.
-//     LEXICON[heading] - scalar - compass heading of downhill, in degrees
+//     LEXICON[heading] - scalar - compass heading of uphill, in degrees
 //     LEXICON[slope] - scalar - slope of the ground, in degrees
-//     LEXICON[vector] - Vector - direction of downhill in a vector with length of 1 meter.
+//     LEXICON[vector] - Vector - direction of uphill in a vector with length of 1 meter.
 // Like all directional functions, north is taken as the Y axis and east is the X axis
 FUNCTION findUpSlopeInfo {
 	PARAMETER northOffset IS 0.0.
@@ -1560,7 +1574,7 @@ FUNCTION findUpSlopeInfo {
 	LOCAL returnMe IS LEXICON().
 	returnMe:ADD("heading", ARCTAN2(heightEast, heightNorth)).
 	returnMe:ADD("slope", ARCTAN2(SQRT(heightNorth * heightNorth + heightEast * heightEast), distance)).
-  returnMe:ADD("vector", ((SHIP:NORTH:VECTOR*ANGLEAXIS(-returnMe["slope"], eastVector))*ANGLEAXIS(returnMe["heading"], SHIP:UP:VECTOR))).
+	returnMe:ADD("vector", ((SHIP:NORTH:VECTOR*ANGLEAXIS(-returnMe["slope"], eastVector))*ANGLEAXIS(returnMe["heading"], SHIP:UP:VECTOR))).
 	returnMe:ADD("vectorFlat", VXCL(SHIP:UP:VECTOR,returnMe["vector"]):NORMALIZED).
 	returnMe:ADD("terrainHeight", terrainHeight).
 	returnMe:ADD("heightNorth", heightNorth).
@@ -1568,15 +1582,15 @@ FUNCTION findUpSlopeInfo {
 	RETURN returnMe.
 }
 
-// Return the vector pointing in the direction of upslope
+// Return the vector pointing in the direction of downslope
 // Returns a Lexicon of several items related to the geometry of the ground below the ship.
-//     LEXICON[heading] - scalar - compass heading of uphill, in degrees
+//     LEXICON[heading] - scalar - compass heading of downhill, in degrees
 //     LEXICON[slope] - scalar - slope of the ground, in degrees
-//     LEXICON[vector] - Vector - direction of uphill in a vector with length of 1 meter.
+//     LEXICON[vector] - Vector - direction of downhill in a vector with length of 1 meter.
 FUNCTION findDownSlopeInfo {
 	PARAMETER northOffset IS 0.0.
 	PARAMETER eastOffset IS 0.0.
-	PARAMETER distance IS 5.0.
+	PARAMETER distance IS 0.5.
 	LOCAL data IS findUpSlopeInfo(northOffset, eastOffset, distance).
 	LOCAL returnMe IS LEXICON().
 	returnMe:ADD("heading", data["heading"] + 180).
@@ -1641,11 +1655,11 @@ FUNCTION waitUntilFinishedRotating {
 	LOCAL previousRoll IS roll_for(SHIP).
 	LOCAL previousTime IS 0.
 	LOCAL rollRate IS 0.
-	UNTIL (VANG(SHIP:FACING:VECTOR, STEERINGMANAGER:TARGET:VECTOR) < 0.1 AND STEERINGMANAGER:ROLLERROR < 0.1 AND rollRate < 0.01) {
-		IF (previousTime <> 0) SET rollRate TO (roll_for(SHIP) - previousRoll)/(previousTime - TIME:SECONDS).
+	UNTIL (VANG(SHIP:FACING:VECTOR, STEERINGMANAGER:TARGET:VECTOR) < 0.1 AND STEERINGMANAGER:ROLLERROR < 0.1 AND ABS(rollRate) < 0.01) {
+		IF (previousTime <> 0) SET rollRate TO normalizeAngle180(roll_for(SHIP) - previousRoll)/(TIME:SECONDS - previousTime).
 		SET previousRoll TO roll_for(SHIP).
 		SET previousTime TO TIME:SECONDS.
-		WAIT 0.1.
+		WAIT 0.0.
 	}
 	RETURN.
 }
@@ -1714,8 +1728,8 @@ FUNCTION findMinSlope {
 		FOR j IN RANGE(0, dataOriginal:LENGTH - 2) {
 			SET derivative TO (SQRT((dataOriginal[i][j] - dataShiftedNorth[i][j])^2 + (dataOriginal[i][j] - dataShiftedEast[i][j])^2 ) / delta).
 			IF derivative < currentMin {
-				SET metersNorth TO ((i - dataOriginal:LENGTH/2) * delta).
-				SET metersEast TO ((j - dataOriginal:LENGTH/2) * delta).
+				SET metersNorth TO ((i - (dataOriginal:LENGTH - 1)/2) * delta).
+				SET metersEast TO ((j - (dataOriginal:LENGTH - 1)/2) * delta).
 				SET currentMin TO derivative.
 			}
 		}
@@ -1775,18 +1789,18 @@ FUNCTION engineStats {
 // It assumes that all engines are fired in current atmospheric conditions.
 // Passed the following
 //			list of RCS engines (list containing type "part", unitless)
-// Returns a list of the following:
-//			effective Isp (scalar, s)
-//			maximum thrust (scalar, Newtons)
-//			maximum mDot (scalar, kg/s)
+// Returns a lexicon of the following:
+//			"Isp" (scalar, s)
+//			"thrustMax" (scalar, Newtons)
+//			"mDotMax" (scalar, kg/s)
 FUNCTION engineStatsRCS {
 	PARAMETER engineList.
 	IF (engineList:LENGTH = 0) RETURN LEXICON("Isp", 0,
-																				 "thrustMax", 0,
-																				 "mDotMax", 0).
+											 "thrustMax", 0,
+											 "mDotMax", 0).
 
-	LOCAL mDot_max IS 0.												// Rate of change of mass for the primary engine, with throttle at 100% (kg/s)
-	LOCAL F_max IS 0.														// Full thrust (N)
+	LOCAL mDot_max IS 0.
+	LOCAL F_max IS 0.
 
 	IF NOT engineList:EMPTY {
 		FOR eng IN engineList {
@@ -1817,30 +1831,33 @@ FUNCTION east_for {
 
 // Yaw For
 // This function recieves a vessel, vector or direction and returns the yaw (compass heading) that the input is pointing toward
+// If the input is a vector, or direction, calculate the yaw based on SHIP. If passed a VESSEL, calcualte it based on the passed VESSEL.
 // Passed the following
 //			input (vessel, vector or direction)
 // Returns the following:
 //			heading of input (scalar, degrees from north)
 FUNCTION yaw_for {
-  PARAMETER input.
+	PARAMETER input.
 	LOCAL pointing IS V(0,0,0).
-	     IF input:TYPENAME = "vessel" 		SET pointing TO input:FACING:FOREVECTOR.
-	ELSE IF input:TYPENAME = "vector"     SET pointing TO input.
-	ELSE IF input:TYPENAME = "direction"  SET pointing TO input:VECTOR.
+	LOCAL ves IS SHIP.
+	IF input:TYPENAME = "vessel"			{SET pointing TO input:FACING:FOREVECTOR. SET ves TO input.}
+	ELSE IF input:TYPENAME = "vector"		SET pointing TO input.
+	ELSE IF input:TYPENAME = "direction"	SET pointing TO input:VECTOR.
 
-  LOCAL east IS east_for(SHIP).
+	LOCAL east IS east_for(ves).
 
-  LOCAL trig_x IS VDOT(SHIP:NORTH:VECTOR, pointing).
-  LOCAL trig_y IS VDOT(east, pointing).
+	LOCAL trig_x IS VDOT(ves:NORTH:VECTOR, pointing).
+	LOCAL trig_y IS VDOT(east, pointing).
 
-  LOCAL result IS ARCTAN2(trig_y, trig_x).
+	LOCAL result IS ARCTAN2(trig_y, trig_x).
 
-  IF result < 0 RETURN 360 + result.
-  RETURN result.
+	IF result < 0 RETURN 360 + result.
+	RETURN result.
 }
 
 // Pitch For
 // This function recieves a vessel, vector or direction and returns the pitch (degrees above horizon) that the input is pointing toward
+// If the input is a vector, or direction, calculate the yaw based on SHIP. If passed a VESSEL, calcualte it based on the passed VESSEL.
 // Passed the following
 //			input (vessel, vector or direction)
 // Returns the following:
@@ -1848,11 +1865,12 @@ FUNCTION yaw_for {
 FUNCTION pitch_for {
   PARAMETER input.
 	LOCAL pointing IS V(0,0,0).
-	     IF input:TYPENAME = "vessel" 		SET pointing TO input:FACING:FOREVECTOR.
-	ELSE IF input:TYPENAME = "vector"     SET pointing TO input.
-	ELSE IF input:TYPENAME = "direction"  SET pointing TO input:VECTOR.
+	LOCAL ves IS SHIP.
+		 IF input:TYPENAME = "vessel"		{SET pointing TO input:FACING:FOREVECTOR. SET ves TO input.}
+	ELSE IF input:TYPENAME = "vector"		SET pointing TO input.
+	ELSE IF input:TYPENAME = "direction"	SET pointing TO input:VECTOR.
 
-  RETURN 90 - VANG(SHIP:UP:vector, pointing).
+  RETURN 90 - VANG(ves:UP:vector, pointing).
 }
 
 // Roll For
@@ -1861,24 +1879,24 @@ FUNCTION pitch_for {
 //			vessel to be looked at (vessel)
 // Returns the following:
 //			roll of vector (scalar, degrees off of horizontal)
-function roll_for {
-  parameter ves.
-
-  if vang(ship:facing:vector,ship:up:vector) < 0.2 { //this is the dead zone for roll when the ship is vertical
-    return 0.
-  } else {
-    local raw is vang(vxcl(ship:facing:vector,ship:up:vector), ves:facing:starvector).
-    if vang(ves:up:vector, ves:facing:topvector) > 90 {
-      if raw > 90 {
-        return 270 - raw.
-      } else {
-        return -90 - raw.
-      }
-    } else {
-      return raw - 90.
-    }
-  }
-}.
+FUNCTION roll_for {
+	PARAMETER ves.
+	
+	//this is the dead zone for roll when the ship is vertical
+	IF VANG(ves:FACING:VECTOR,ves:UP:VECTOR) < 0.2 {RETURN 0.}
+	ELSE {
+		LOCAL raw IS VANG(VXCL(ves:FACING:VECTOR, ves:UP:VECTOR), ves:FACING:STARVECTOR).
+		IF VANG(ves:UP:VECTOR, ves:FACING:TOPVECTOR) > 90 {
+			IF raw > 90 {
+				RETURN 270 - raw.
+			} ELSE {
+				RETURN -90 - raw.
+			}
+		} ELSE {
+			RETURN raw - 90.
+		}
+	}
+}
 
 // Create Node
 // This function creates a node on the current vessel from the given parameters
@@ -1947,7 +1965,7 @@ FUNCTION countCharacters {
 //			vector to be rounded (vector, any units)
 //			number of digits to round to (scalar, should be integer)
 // Returns the following:
-//			the rounded vector
+//			the rounded vector (string)
 FUNCTION ROUNDV {
 	PARAMETER vec.
 	PARAMETER digits IS 0.
@@ -2022,13 +2040,13 @@ FUNCTION activateOmniAntennae
 		FOR eachPart IN allParts {
 			SET mods TO eachPart:MODULES.
 			SET isAntenna TO FALSE.
-			FOR mod IN MODS {
-				IF (mod="ModuleRTAntenna") {
+			FOR eachModule IN MODS {
+				IF (eachModule="ModuleRTAntenna") {
 					IF NOT (eachPart:GETMODULE("ModuleRTAntenna"):HASFIELD("dish range")) {
 						SET isAntenna TO TRUE.
 					}
 				}
-				IF (mod="ModuleDeployableAntenna") {
+				IF (eachModule="ModuleDeployableAntenna") {
 					IF NOT (eachPart:GETMODULE("ModuleDeployableAntenna"):HASFIELD("dish range")) {
 						SET isAntenna TO TRUE.
 					}
@@ -2059,13 +2077,13 @@ FUNCTION deactivateOmniAntennae
 		FOR eachPart IN allParts {
 			SET mods TO eachPart:MODULES.
 			SET isAntenna TO FALSE.
-			FOR mod IN MODS {
-				IF (mod="ModuleRTAntenna") {
+			FOR eachModule IN MODS {
+				IF (eachModule="ModuleRTAntenna") {
 					IF NOT (eachPart:GETMODULE("ModuleRTAntenna"):HASFIELD("dish range")) {
 						SET isAntenna TO TRUE.
 					}
 				}
-				IF (mod="ModuleDeployableAntenna") {
+				IF (eachModule="ModuleDeployableAntenna") {
 					IF NOT (eachPart:GETMODULE("ModuleDeployableAntenna"):HASFIELD("dish range")) {
 						SET isAntenna TO TRUE.
 					}
@@ -2095,8 +2113,8 @@ FUNCTION activateDishAntennae
 	FOR eachPart IN allParts {
 		SET mods TO eachPart:MODULES.
 		SET isAntenna TO FALSE.
-		FOR mod IN MODS {
-			IF (mod="ModuleRTAntenna") {
+		FOR eachModule IN MODS {
+			IF (eachModule="ModuleRTAntenna") {
 				IF (eachPart:GETMODULE("ModuleRTAntenna"):HASFIELD("dish range")) {
 					SET isAntenna TO TRUE.
 				}
@@ -2122,8 +2140,8 @@ FUNCTION deactivateDishAntennae
 	FOR eachPart IN allParts {
 		SET mods TO eachPart:MODULES.
 		SET isAntenna TO FALSE.
-		FOR mod IN MODS {
-			IF (mod="ModuleRTAntenna") {
+		FOR eachModule IN MODS {
+			IF (eachModule="ModuleRTAntenna") {
 				IF (eachPart:GETMODULE("ModuleRTAntenna"):HASFIELD("dish range")) {
 					SET isAntenna TO TRUE.
 				}
@@ -2203,7 +2221,8 @@ FUNCTION engineInfo {
 			SET message TO message + engineData[engType]["EngineList"][0]:ALLOWSHUTDOWN:TOSTRING:PADLEFT(5) + "         ".
 			PRINT message AT (X + 2 , Y + 2 + COUNT).
 		} ELSE {
-			PRINT engType:TOSTRING:PADLEFT(maxLength) + " " + ROUND(engineStat["Thrust"] / engineStat["thrustMax"] * 100) + "%" AT (X + 1 , Y + 1 + COUNT).
+			IF engineStat["thrustMax"] <> 0 PRINT engType:TOSTRING:PADLEFT(maxLength) + " " + ROUND(engineStat["Thrust"] / engineStat["thrustMax"] * 100) + "%" AT (X + 1 , Y + 1 + COUNT).
+			ELSE 							 PRINT engType:TOSTRING:PADLEFT(maxLength) + " N/A%" AT (X + 1 , Y + 1 + COUNT).
 		}
 		SET count TO count + 1.
 	}
@@ -2245,11 +2264,11 @@ FUNCTION resourcesInParts {
 				// if the resource is already in the list
 				IF (resourceList:KEYS:CONTAINS(eachResource:NAME) ) {
 					// add the amount to the existing entry in the list
-					SET resourceList[eachResource:NAME] TO resourceList[eachResource:NAME] + eachResource:AMOUNT*densityLookUp[eachResource:NAME].
+					SET resourceList[eachResource:NAME] TO resourceList[eachResource:NAME] + eachResource:AMOUNT*resourceDensity(eachResource:NAME).
 				}
 				// if the resource is not already in the resource list, add the resource to the list
 				ELSE {
-					resourceList:ADD(eachResource:NAME, eachResource:AMOUNT*densityLookUp[eachResource:NAME]).
+					resourceList:ADD(eachResource:NAME, eachResource:AMOUNT*resourceDensity(eachResource:NAME)).
 				}
 			}
 		}
@@ -2306,8 +2325,8 @@ FUNCTION timeToString
 	SET days TO FLOOR ( T / (hoursPerDay*60*60) ).
 	SET hours TO FLOOR ( MOD ( T, hoursPerDay*60*60) / (60*60) ).
 	SET minutes TO FLOOR ( MOD ( T, 60*60) / 60 ).
-	IF digits > 0 SET seconds TO ROUND( MOD( T, 60), digits).
-	ELSE SET seconds TO ROUND( MOD( T, 60), 0).
+	IF digits > 0 SET seconds TO FLOOR( MOD(T, 60)*(10^digits))/(10^digits).
+	ELSE SET seconds TO FLOOR( MOD(T,60)).
 
 	LOCAL secondsString IS seconds:TOSTRING.
 	IF digits > 0 AND (secondsString:FINDLAST(".") <> -1) {
@@ -2329,7 +2348,7 @@ FUNCTION timeToString
 	RETURN message.
 }
 
-// given a number, returns a string of the number broken down to Tm, Gm, Mm, km, meters or centimeters.
+// given a number, returns a string of the number broken down to Tm, Gm, Mm, km, meters or millimeters.
 // example: given 90090.124 (meters), and 1 decimal place, the function will return "90.1 km"
 FUNCTION distanceToString
 {
@@ -2585,17 +2604,17 @@ FUNCTION logOrbit
 
 	SET message TO "Velocity X,".
 	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:VELOCITY:ORBIT:X + ",".}
-	SET message TO message + "m".
+	SET message TO message + "m/s".
 	LOG message TO fileName.
 
 	SET message TO "Velocity Y,".
 	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:VELOCITY:ORBIT:Y + ",".}
-	SET message TO message + "m".
+	SET message TO message + "m/s".
 	LOG message TO fileName.
 
 	SET message TO "Velocity Z,".
 	FOR eachOrbit IN orbs {SET message TO message + eachOrbit:VELOCITY:ORBIT:Z + ",".}
-	SET message TO message + "m".
+	SET message TO message + "m/s".
 	LOG message TO fileName.
 
 	// Add a blank line to the end - it helps to differentiate between runs
@@ -2606,22 +2625,23 @@ FUNCTION logOrbit
 FUNCTION desiredAzimuth
 {
 	PARAMETER targetAltitude.
-	PARAMETER targetInclination.
+	PARAMETER targetInclination.	// signed: a negative value means launch to the south (descending-node ascent)
 
+	LOCAL launchNorth IS targetInclination >= 0.
+	LOCAL inc IS ABS(targetInclination).
+	LOCAL lat IS SHIP:LATITUDE.
 	LOCAL targetFinalVelocity IS SQRT(SHIP:BODY:MU / (SHIP:BODY:RADIUS + targetAltitude)).
 
-	// this is cheating a little bit - I just take the current orbital speed instead of calculating it based on longitude
-	LOCAL launchSiteSpeed IS SHIP:VELOCITY:ORBIT:MAG.
-	LOCAL desiredEWVelocity IS COS(targetInclination) * targetFinalVelocity - launchSiteSpeed.
-	LOCAL desiredNSVelocity IS SIN(targetInclination) * targetFinalVelocity.
-	LOCAL launchAzimuth IS 90 - ARCTAN2(desiredNSVelocity, desiredEWVelocity).
-	RETURN launchAzimuth.
-}
+	// Inertial azimuth. A ratio beyond +/-1 means the inclination is below the site latitude, so clamp to due east/west.
+	LOCAL inertialAzimuth IS ARCSIN(MAX(-1, MIN(1, COS(inc) / COS(lat)))).
+	IF NOT launchNorth SET inertialAzimuth TO 180 - inertialAzimuth.
 
-FUNCTION naiveAzimuth {
-  PARAMETER inclination.
-  PARAMETER lat.
-	RETURN ARCSIN(COS(inclination)/COS(lat)).
+	// Speed the pad is already moving east because of the body's rotation.
+	LOCAL rotationSpeed IS 2 * CONSTANT:PI * (SHIP:BODY:RADIUS + ALTITUDE) * COS(lat) / SHIP:BODY:ROTATIONPERIOD.
+
+	LOCAL desiredEastVelocity IS targetFinalVelocity * SIN(inertialAzimuth) - rotationSpeed.
+	LOCAL desiredNorthVelocity IS targetFinalVelocity * COS(inertialAzimuth).
+	RETURN normalizeAngle360(ARCTAN2(desiredEastVelocity, desiredNorthVelocity)).
 }
 
 // global list of initialized PID logs.
@@ -2658,7 +2678,7 @@ FUNCTION logPIDMultiple
 	LOCAL useAdditional IS additionalData:LENGTH = 3 AND additionalData:KEYS:CONTAINS("rowData") AND additionalData:KEYS:CONTAINS("labelRow") AND additionalData:KEYS:CONTAINS("valueRow").
 	LOCAL recordsToArchive IS filename:SUBSTRING(0, 1) = "0".
 	IF NOT recordsToArchive OR (recordsToArchive AND connectionToKSC()) {
-		IF (initPIDLog:KEYS:EMPTY OR NOT initPIDLog:KEYS:CONTAINS(filename))
+		IF (initPIDLogMultiple:KEYS:EMPTY OR NOT initPIDLogMultiple:KEYS:CONTAINS(filename))
 		{
 			IF EXISTS(filename) DELETEPATH(filename).
 			LOCAL labelRow IS "Time,".
@@ -2677,9 +2697,9 @@ FUNCTION logPIDMultiple
 			}
 			LOG labelRow TO fileName.
 			LOG valueRow TO fileName.
-			initPIDLog:ADD(filename, TIME:SECONDS).
+			initPIDLogMultiple:ADD(filename, TIME:SECONDS).
 		}
-		LOCAL rowData IS (TIME:SECONDS - initPIDLog[filename]) + ",".
+		LOCAL rowData IS (TIME:SECONDS - initPIDLogMultiple[filename]) + ",".
 		FOR eachPID in PIDLexicon:KEYS {
 			SET rowData TO rowData + PIDLexicon[eachPID]:Input + "," + PIDLexicon[eachPID]:Setpoint + "," + PIDLexicon[eachPID]:Error + "," + PIDLexicon[eachPID]:Output + ",".
 			IF detailed {
@@ -2845,9 +2865,8 @@ FUNCTION warpToTime
 
 	IF recursionLevel > 5 RETURN 0.
 
-// 	waitUntilFinishedRotating().
 	LOCAL startTime IS TIME:SECONDS.
-	LOCAL timeLeft IS targetTime - TIME:SECONDS.
+	LOCAL timeLeft IS (targetTime - TIME:SECONDS) / KUNIVERSE:TIMEWARP:RATE.
 
 	SET KUNIVERSE:TIMEWARP:RATE TO 0.
 	WAIT 0.1.
@@ -2901,33 +2920,33 @@ FUNCTION warpToTime
 }
 
 // Time to Longitude
-// This function returns the time it will take to rotate to a specific longitude.
+// This function returns the UT time it will take to rotate to a specific longitude.
 // It assumes that the ship is not in motion relative to the body it is on.
 // This function is meant to be used in conjunction with the warpToTime function.
 // Passed the following:
 //			desired longitude (scalar, degrees)
 // Returns the following:
-//			time to reach that longitude (scalar, seconds)
+//			UT time at which the rocket will be at that longitude (scalar, UT seconds)
 FUNCTION timeToLongitude
 {
 	PARAMETER desiredLongitude.
-	RETURN TIME:SECONDS + normalizeAngle180(SHIP:GEOPOSITION:LNG, desiredLongitude) / 360 * SHIP:BODY:ROTATIONPERIOD.
+	RETURN TIME:SECONDS + normalizeAngle360(SHIP:GEOPOSITION:LNG - desiredLongitude) / 360 * SHIP:BODY:ROTATIONPERIOD.
 }
 
 // Returns time in seconds to the next time SHIP crosses the input altitude or -1 if input altitude is never crossed
 FUNCTION timeToAltitude
 {
-  PARAMETER desiredAltitude.
+	PARAMETER desiredAltitude.
 
-  // return 0 if never reach altitude
-  IF desiredAltitude < SHIP:PERIAPSIS OR desiredAltitude > SHIP:APOAPSIS RETURN -1.
+	// return -1 if never reach altitude
+	IF desiredAltitude < SHIP:PERIAPSIS OR desiredAltitude > SHIP:APOAPSIS RETURN -1.
 
-  // query constants
-  LOCAL ecc IS SHIP:ORBIT:ECCENTRICITY.
-  IF ecc = 0 SET ecc TO 0.00001. // ensure no divide by 0
-  LOCAL sma IS SHIP:ORBIT:SEMIMAJORAXIS.
-  LOCAL desiredRadius IS desiredAltitude + SHIP:BODY:RADIUS.
-  LOCAL currentRadius IS SHIP:ALTITUDE + SHIP:BODY:RADIUS.
+	// query constants
+	LOCAL ecc IS SHIP:ORBIT:ECCENTRICITY.
+	IF ecc = 0 SET ecc TO 0.00001. // ensure no divide by 0
+	LOCAL sma IS SHIP:ORBIT:SEMIMAJORAXIS.
+	LOCAL desiredRadius IS desiredAltitude + SHIP:BODY:RADIUS.
+	LOCAL currentRadius IS SHIP:ALTITUDE + SHIP:BODY:RADIUS.
 
   // Step 1: get true anomaly (bounds required for numerical errors near apsides)
   LOCAL desiredTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / desiredRadius) - 1) / ecc)).
@@ -2960,7 +2979,7 @@ FUNCTION greatCircleDistance
 {
 	PARAMETER toPosition.
 	PARAMETER fromPosition IS SHIP:GEOPOSITION.
-	RETURN SHIP:BODY:RADIUS * Constant:DegToRad * ARCCOS(SIN(fromPosition:LAT) * SIN(toPosition:LAT) + COS(fromPosition:LAT) * COS(toPosition:LAT) * COS(ABS(fromPosition:LNG - toPosition:LNG))).
+	RETURN SHIP:BODY:RADIUS * Constant:DegToRad * ARCCOS(MAX(MIN(SIN(fromPosition:LAT) * SIN(toPosition:LAT) + COS(fromPosition:LAT) * COS(toPosition:LAT) * COS(ABS(fromPosition:LNG - toPosition:LNG))), 1), -1).
 }
 
 // Function that returns the unit vectors showing the direction of prograde,
@@ -2994,7 +3013,7 @@ FUNCTION angleFromPlane {
   LOCAL normalVector IS SHIP:BODY:ANGULARVEL:NORMALIZED.
 
   // Normal vector is cross product of the target's position and velocity
-  IF useTarget SET normalVector TO VCRS(TARGET:POSITION - TARGET:BODY:POSITION, TARGET:VELOCITY:ORBIT).
+  IF useTarget SET normalVector TO VCRS(TARGET:POSITION - TARGET:BODY:POSITION, VELOCITYAT(TARGET, TIME:SECONDS):ORBIT).
 
   RETURN VANG(VCRS( - SHIP:BODY:POSITION, SHIP:VELOCITY:ORBIT), normalVector).
 }
@@ -3076,7 +3095,6 @@ FUNCTION exploreOrbits {
 		PRINT distanceToString(orb:APOAPSIS)  AT (22 + orbitNumber * 10, 3).
 		PRINT distanceToString(orb:PERIAPSIS) AT (22 + orbitNumber * 10, 4).
 		PRINT ROUND(orb:INCLINATION, 4)       AT (22 + orbitNumber * 10, 5).
-		PRINT ROUND(orb:INCLINATION, 4)       AT (22 + orbitNumber * 10, 5).
 		PRINT orb:TRANSITION              AT (22 + orbitNumber * 10, 6).
     PRINT orb:HASNEXTPATCH            AT (22 + orbitNumber * 10, 7).
     SET printCurrentOrbit TO orb:HASNEXTPATCH.
@@ -3139,13 +3157,13 @@ FUNCTION weightedAverage {
 	PARAMETER valueList IS LIST().
 	PARAMETER weightList IS LIST().
 	LOCAL totalTop IS 0.
-	LOCAL totalBottom IS 1.
+	LOCAL totalBottom IS 0.
 	IF valueList:LENGTH = weightList:LENGTH AND valueList:LENGTH > 0 {
 		IF valueList:LENGTH = 1 {
 			RETURN valueList[0].
 		}
 		IF valueList:LENGTH > 1 {
-			FOR eachIndex IN RANGE(0, valueList:LENGTH - 1, 1) {
+			FOR eachIndex IN RANGE(0, valueList:LENGTH, 1) {
 				SET totalTop TO totalTop + valueList[eachIndex] * weightList[eachIndex].
 				SET totalBottom TO totalBottom + weightList[eachIndex].
 			}
@@ -3191,6 +3209,7 @@ FUNCTION findZeroSecant {
 
   LOCAL F1 IS delegate(X1).
   LOCAL F2 IS delegate(X2).
+  IF F1 = F2 RETURN X1.
   LOCAL X3 IS 0.
   IF (F1 <> 0) OR (F2 <> 0) SET X3 TO (X2 * F1 - X1 * F2) / (F1 - F2).
   LOCAL F3 IS delegate(X3).
@@ -3210,12 +3229,12 @@ FUNCTION findZeroNewton {
 	PARAMETER iteration IS 0.
 	PARAMETER maxIteration IS 100.
 
-	IF ((iteration >= 10) OR (NOT delegateFunction:ISTYPE("UserDelegate")) OR (NOT delegateSlope:ISTYPE("UserDelegate"))) RETURN X1.
+	IF ((iteration >= maxIteration) OR (NOT delegateFunction:ISTYPE("UserDelegate")) OR (NOT delegateSlope:ISTYPE("UserDelegate"))) RETURN initialGuess.
 
-	LOCAL slope IS delegateSlope(X1).
+	LOCAL slope IS delegateSlope(initialGuess).
 	LOCAL X2 IS initialGuess.
-	IF slope <> 0 SET X2 TO initialGuess - delegateFunction(initialGuess)/slope.
-	IF ABS(delegateFunction(initialGuess) - desiredValue) < tolerance RETURN X2.
+	IF slope <> 0 SET X2 TO initialGuess - (delegateFunction(initialGuess) - desiredValue)/slope.
+	IF ABS(delegateFunction(X2) - desiredValue) < tolerance RETURN X2.
 	RETURN findZeroNewton(delegateFunction, delegateSlope, X2, tolerance, desiredValue, iteration + 1, maxIteration).
 }
 
@@ -3259,15 +3278,16 @@ FUNCTION trueToMeanAnomaly {
 	//	LOCAL cosE IS (eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly)).
 	//	LOCAL sinE IS SQRT(1 - eccentricity^2) * SIN(trueAnomaly)/(1 + eccentricity * COS(trueAnomaly)).
 	//  LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCTAN2(sinE, cosE).
-	  LOCAL meanAnomaly IS CONSTANT:RadToDeg * (eccentricAnomaly - eccentricity * SIN(eccentricAnomaly * CONSTANT:RadToDeg)).
+		LOCAL meanAnomaly IS CONSTANT:RadToDeg * (eccentricAnomaly - eccentricity * SIN(eccentricAnomaly * CONSTANT:RadToDeg)).
 		RETURN normalizeAngle360(meanAnomaly).
 	} ELSE { // hyperbolic case
 		// Note: equations taken from https://en.wikipedia.org/wiki/Hyperbolic_trajectory, section "Equations of Motion"
 		// Hyperbolic Eccentric Anomaly
 		LOCAL bigE IS ACOSH((eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly))).
+		IF trueAnomaly < 0 SET bigE TO -bigE.
 
 		LOCAL meanAnomaly IS eccentricity * SINH(bigE) - bigE.
-		RETURN normalizeAngle360(CONSTANT:RadToDeg * meanAnomaly).
+		RETURN CONSTANT:RadToDeg * meanAnomaly.
 	}
 }
 
@@ -3300,8 +3320,14 @@ FUNCTION normalizeAngle180 {
 }
 
 LOCAL maxHyperbolicVariable IS 709.78.
+LOCAL maxHyperbolicVariableTANH IS 354.0.
+
 // A variety of hyperbolic trig functions and their inverses
-FUNCTION TANH {PARAMETER x. RETURN (CONSTANT:E ^ (2*x) - 1) / (CONSTANT:E ^ (2*x) + 1).}
+FUNCTION TANH {
+	PARAMETER x.
+	SET X TO MIN(maxHyperbolicVariableTANH, MAX(-maxHyperbolicVariableTANH, x)).
+	RETURN (CONSTANT:E ^ (2*x) - 1) / (CONSTANT:E ^ (2*x) + 1).
+}
 
 FUNCTION COSH {
 	PARAMETER x.
@@ -3404,9 +3430,9 @@ FUNCTION SuicideBurnInfo {
 // Returns the following:
 //   Lexicon of the following data points:
 //     "a" - scalar - semimajor axis of the hyperbola. Negative.
-//     "b" - scalar - semiminor axis of the hyperbola. Negative.
+//     "b" - scalar - semiminor axis of the hyperbola.
 //     "e" - scalar - eccentricity of the hyperbola. Greater than 1.0.
-//     "l" - scalar - semimajor axis of the hyperbola. Negative.
+//     "l" - scalar - semi-latus rectum of the hyperbola. Negative.
 //     "theta_turn" - scalar - turning angle from the burn to SOI edge.
 //     "v_delta" - scalar - delta V (m/s) required for the burn to transition from elliptical orbit to hyperbolic orbit.
 //     "flightPathAngle" - scalar - flight path angle (degrees) of both orbits at the burn.
@@ -3464,7 +3490,7 @@ FUNCTION absolutePosition {
   }
   SET finalPosition TO finalPosition - POSITIONAT(BODY("Sun"), timeStampNew).
   IF removals = 2 RETURN finalPosition - originalThing:BODY:POSITION.
-  IF removals = 3 {PRINT "3 Removals". RETURN finalPosition - originalThing:BODY:BODY:POSITION.}
+  IF removals = 3 RETURN finalPosition - originalThing:BODY:POSITION - originalThing:BODY:BODY:POSITION.
   RETURN finalPosition.
 }
 
@@ -3502,7 +3528,7 @@ FUNCTION solveQuadratic {
 FUNCTION getNormalVector {
   PARAMETER orbitableObject IS "Equator".
   IF orbitableObject = "Equator" RETURN SHIP:BODY:ANGULARVEL:NORMALIZED.
-  RETURN VCRS((orbitableObject:POSITION - orbitableObject:BODY:POSITION):NORMALIZED, orbitableObject:VELOCITY:ORBIT:NORMALIZED).
+  RETURN VCRS(orbitableObject:POSITION - orbitableObject:BODY:POSITION, VELOCITYAT(orbitableObject, TIME:SECONDS):ORBIT):NORMALIZED.
 }
 
 // take the current orbit and a desired final true anomaly and return the time
@@ -3513,17 +3539,17 @@ FUNCTION getNormalVector {
 //     In the elliptical case, it just adds the period to the true anomaly.
 //     In the hyperbolic case, it returns 0 seconds.
 FUNCTION trueAnomalyDeltaToTime {
-  PARAMETER orbitObject.
+	PARAMETER orbitObject.
 	PARAMETER startingTrueAnomaly.
-  PARAMETER finalTrueAnomaly.
-  IF orbitObject:ECCENTRICITY < 1 {
-    // for elliptical orbits, this is fairly easy
-    IF finalTrueAnomaly < startingTrueAnomaly SET finalTrueAnomaly TO finalTrueAnomaly + 360.
-    LOCAL trueAnomalyDelta IS normalizeAngle360(trueToMeanAnomaly(finalTrueAnomaly) - trueToMeanAnomaly(startingTrueAnomaly)).
-    RETURN trueAnomalyDelta / 360 * orbitObject:PERIOD.
-  } ELSE {
-    // For hyperbolic orbits, true anomaly to time is more complicated.
-    IF finalTrueAnomaly < startingTrueAnomaly RETURN 0.
+	PARAMETER finalTrueAnomaly.
+	IF orbitObject:ECCENTRICITY < 1 {
+		// for elliptical orbits, this is fairly easy
+		IF finalTrueAnomaly < startingTrueAnomaly SET finalTrueAnomaly TO finalTrueAnomaly + 360.
+		LOCAL trueAnomalyDelta IS normalizeAngle360(trueToMeanAnomaly(finalTrueAnomaly) - trueToMeanAnomaly(startingTrueAnomaly)).
+		RETURN trueAnomalyDelta / 360 * orbitObject:PERIOD.
+	} ELSE {
+		// For hyperbolic orbits, true anomaly to time is more complicated.
+		IF finalTrueAnomaly < startingTrueAnomaly RETURN 0.
 		// The time of flight equations only work for positive true anomalies.
 		// Because of this, if the starting true anomaly is less than zero, split
 		// up the equation into two portions - the time to go from the starting true
@@ -3535,20 +3561,20 @@ FUNCTION trueAnomalyDeltaToTime {
 			RETURN secondPortionTime + orbitObject:ETA:PERIAPSIS.
 		} ELSE {
 			LOCAL ecc IS orbitObject:ECCENTRICITY.
-	    LOCAL a IS orbitObject:SEMIMAJORAXIS.
-	    LOCAL GM IS orbitObject:BODY:MU.
-	    LOCAL v_0 IS startingTrueAnomaly.
-	    LOCAL v_1 IS finalTrueAnomaly.
+			LOCAL a IS orbitObject:SEMIMAJORAXIS.
+			LOCAL GM IS orbitObject:BODY:MU.
+			LOCAL v_0 IS startingTrueAnomaly.
+			LOCAL v_1 IS finalTrueAnomaly.
 
-	    // Equation taken from http://www.braeunig.us/space/index.htm, section "Orbital Mechanics", equation 4.87.
-	    LOCAL F_0 IS ACOSH((ecc + COS(v_0))/(1 + ecc * COS(V_0))).
-	    LOCAL F_1 IS ACOSH((ecc + COS(v_1))/(1 + ecc * COS(V_1))).
+			// Equation taken from http://www.braeunig.us/space/index.htm, section "Orbital Mechanics", equation 4.87.
+			LOCAL F_0 IS ACOSH((ecc + COS(v_0))/(1 + ecc * COS(V_0))).
+			LOCAL F_1 IS ACOSH((ecc + COS(v_1))/(1 + ecc * COS(V_1))).
 
-	    // This equation only uses the hyperbolic eccentric anomaly, not the mean anomaly.
-	    // Equation taken from http://www.braeunig.us/space/index.htm, section "Orbital Mechanics", equation 4.86.
+			// This equation only uses the hyperbolic eccentric anomaly, not the mean anomaly.
+			// Equation taken from http://www.braeunig.us/space/index.htm, section "Orbital Mechanics", equation 4.86.
 			RETURN SQRT((-a)^3/GM)*((ecc*SINH(F_1)-F_1)-(ecc*SINH(F_0)-F_0)).
 		}
-  }
+	}
 }
 
 // Returns the angle from the first vector to the second vector in the direction
@@ -3562,9 +3588,10 @@ FUNCTION VANGSigned {
   RETURN 360 - VANG(vector1, vector2).
 }
 
-// Given two bodies, return the first body that they both orbit around.
-// For planets, this will be the Sun. For moons of the same body, this will be that body.
+// Given two bodies, return the first body that is in both of their chains of parent bodies, counting the
+// objects themselves. For planets, this will be the Sun. For moons of the same body, this will be that body.
 // For moons of different bodies, this will be the same as if it ran with those two different bodies.
+// If one object is an ancestor of the other (for example Mun and Kerbin), that ancestor itself is returned.
 FUNCTION firstCommonBody {
 	PARAMETER objectOne.
 	PARAMETER objectTwo.
@@ -3744,7 +3771,7 @@ FUNCTION findZeroBrent {
 
 	// Not actually bracketed - Brent's method can't guarantee anything here, so
 	// use the bracketAroundGuess function to generate a bracket and try again.
-	IF fa * fb >= 0 {
+	IF fa * fb > 0 {
 		LOCAL results IS 0.
 		IF ABS(fa) < ABS(fb) SET results TO bracketAroundGuess(delegate, a, -1e12, 1e12, MAX(ABS(a), ABS(b)) * 0.5 + 1).
 		ELSE SET results TO bracketAroundGuess(delegate, b, -1e12, 1e12, MAX(ABS(a), ABS(b)) * 0.5 + 1).

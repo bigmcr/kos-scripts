@@ -12,17 +12,22 @@ LOCAL fileList IS LIST().
 // global for loop.ks to use: loop refuses to run them again from the terminal.
 GLOBAL criticalFileNames IS LIST("library", "libraryTransfer", "loop", "loopCommands", "loopTerminal").
 
-// The name of the JSON file on the local drive that records which scripts were copied there, and how big
-// each one's source file on the archive was at that moment. Comparing those sizes to the archive's current
-// sizes is how scripts that have changed since the last copy are found.
+// The name of the JSON file on the local drive that records which scripts were copied there, and the
+// fingerprint (size and a hash of the text, see fileFingerprint) of each one's source file on the archive at
+// that moment. Comparing those to the archive's current fingerprints is how scripts that have changed since
+// the last copy are found.
 LOCAL manifestName IS "manifest.json".
 
 // A short message from the boot process that loop shows as its first message.
 GLOBAL bootMessage IS "".
 
+// The names (without extensions) of the scripts the operator has run from loop since the last reboot. Scripts that
+// have already run are loaded in memory, so a change to one of them is not noticed until the next reboot.
+GLOBAL ranScripts IS LIST().
+
 // Is Stock Universe
 // This function returns TRUE if the ship is operating in the stock KSP universe.
-// This is determined by reading the .settings file
+// This is determined by seeing if a body is called "Kerbin" or "Minmus".
 // Passed the following:
 //			no arguments
 // Returns the following:
@@ -77,7 +82,7 @@ FUNCTION isStockRockets {
 // Passed the following:
 //			no arguments
 // Returns the following:
-//			whether or not the ship uses only stock parts (bool)
+//			whether or not there is a connection to the archive back on Kerbin/Earth.
 FUNCTION connectionToKSC {
 	RETURN HOMECONNECTION:ISCONNECTED.
 }
@@ -126,26 +131,61 @@ FUNCTION localManifestPath {
 	RETURN "1:" + manifestName.
 }
 
-// Archive Script Sizes
+// The characters whose counts make up a script's fingerprint (see fileFingerprint). The double quote, tab,
+// line feed and carriage return are added in fileFingerprint, because they cannot be typed in this string.
+LOCAL fingerprintCharacters IS "0123456789abcdefghijklmnopqrstuvwxyz <>=+-*/()[]{},.:_@'#%&|!?;\".
+
+// File Fingerprint
+// A number that changes when the source of a script changes, even if its length does not (swapping "<" for ">",
+// or one digit for another). The number of times each character in fingerprintCharacters appears is counted
+// with SPLIT, which kOS does natively without looping over the text, and the counts are combined into a number
+// below 1e9 with a rolling hash. That is stored together with the size in bytes in one number, size * 1e9 + hash,
+// which is at most 15 digits, so a double holds it exactly and it adds only about 10 bytes to the manifest.
+// It does not detect an edit that only moves characters around without adding or removing any, such as swapping
+// two letters. The text is not read from the local drive, so it does not matter if the local copy is .ks or .ksm.
+// Passed the following:
+//			text (string, the source of the script)
+//			size (scalar, the size of the source file in bytes)
+// Returns the following:
+//			the fingerprint (scalar)
+FUNCTION fileFingerprint {
+	PARAMETER text, size.
+	LOCAL hashModulus IS 999999937.
+	LOCAL hash IS 0.
+	LOCAL characterList IS LIST(CHAR(34), CHAR(9), CHAR(10), CHAR(13)).
+	FROM {LOCAL index IS 0.} UNTIL index >= fingerprintCharacters:LENGTH STEP {SET index TO index + 1.} DO {
+		characterList:ADD(fingerprintCharacters:SUBSTRING(index, 1)).
+	}
+	FOR eachCharacter IN characterList {
+		SET hash TO MOD(hash * 1000003.0 + (text:SPLIT(eachCharacter):LENGTH - 1), hashModulus).
+	}
+	RETURN size * 1e9 + hash.
+}
+
+// Archive Script Fingerprints
 // Passed the following:
 //			no arguments
 // Returns the following:
 //			a lexicon, with an entry for each script on the archive. The key is the script name without an
-//			extension, and the value is the size in bytes of the source file. The boot file is included as "boot".
-FUNCTION archiveScriptSizes {
-	LOCAL sizes IS LEXICON().
+//			extension, and the value is the fingerprint of the source file (see fileFingerprint, which also
+//			contains the size in bytes). The boot file is included as "boot".
+FUNCTION archiveScriptFingerprints {
+	LOCAL fingerprints IS LEXICON().
 	FOR item IN ARCHIVE:FILES:VALUES {
 		IF item:ISFILE {
-			IF item:EXTENSION = "ks" SET sizes[baseName(item:NAME)] TO item:SIZE.
+			IF item:EXTENSION = "ks" SET fingerprints[baseName(item:NAME)] TO fileFingerprint(OPEN("0:" + item:NAME):READALL:STRING, item:SIZE).
 		}
 	}
-	IF EXISTS("0:boot/boot.ks") SET sizes["boot"] TO OPEN("0:boot/boot.ks"):SIZE.
-	RETURN sizes.
+	IF EXISTS("0:boot/boot.ks") {
+		LOCAL bootFile IS OPEN("0:boot/boot.ks").
+		SET fingerprints["boot"] TO fileFingerprint(bootFile:READALL:STRING, bootFile:SIZE).
+	}
+	RETURN fingerprints.
 }
 
 // Critical Sizes
 // Passed the following:
-//			sizes (lexicon in the format of archiveScriptSizes)
+//			sizes (lexicon in the format of archiveScriptFingerprints)
 // Returns the following:
 //			only the entries of sizes that are for critical files (lexicon)
 FUNCTION criticalSizes {
@@ -160,7 +200,7 @@ FUNCTION criticalSizes {
 // Write Manifest
 // Records what has been copied to the local drive. The manifest is saved on the local drive.
 // Passed the following:
-//			sizes (lexicon, script name to source size in bytes, of the scripts now on the local drive)
+//			sizes (lexicon, script name to source fingerprint, of the scripts now on the local drive)
 //			criticalOnly (bool, whether only the critical files could fit on the local drive)
 // Returns the following:
 //			nothing
@@ -241,10 +281,10 @@ FUNCTION installScript {
 // Returns the following:
 //			a lexicon with
 //			"connected" (bool), "hasManifest" (bool), "criticalOnly" (bool, the local drive holds only critical files),
-//			"changed" (list of script names whose size on the archive is different),
+//			"changed" (list of script names whose fingerprint on the archive is different),
 //			"new" (list of script names on the archive that were never copied),
 //			"removed" (list of script names that were copied, but are no longer on the archive),
-//			"archiveSizes" (lexicon from archiveScriptSizes)
+//			"archiveSizes" (lexicon from archiveScriptFingerprints)
 FUNCTION compareWithArchive {
 	LOCAL result IS LEXICON("connected", connectionToKSC(), "hasManifest", FALSE, "criticalOnly", FALSE,
 		"changed", LIST(), "new", LIST(), "removed", LIST(), "archiveSizes", LEXICON()).
@@ -253,7 +293,7 @@ FUNCTION compareWithArchive {
 
 	LOCAL manifest IS READJSON(localManifestPath()).
 	LOCAL localSizes IS manifest["files"].
-	LOCAL archiveSizes IS archiveScriptSizes().
+	LOCAL archiveSizes IS archiveScriptFingerprints().
 	SET result["hasManifest"] TO TRUE.
 	SET result["criticalOnly"] TO manifest["criticalOnly"].
 	SET result["archiveSizes"] TO archiveSizes.
@@ -278,6 +318,8 @@ FUNCTION compareWithArchive {
 // Returns the following:
 //			nothing
 FUNCTION reportArchiveDifferences {
+	// fingerprinting every script on the archive takes a moment
+	IF connectionToKSC() PRINT "Checking script versions...".
 	LOCAL comparison IS compareWithArchive().
 	IF NOT comparison["connected"] {
 		PRINT "No connection to the archive, so script versions were not checked.".
@@ -303,10 +345,107 @@ FUNCTION reportArchiveDifferences {
 	WAIT 3.
 }
 
+// Plain Script Name
+// Passed the following:
+//			rawName (string, a script as it was typed or written in a RUNPATH, such as "1:/exec", "Exec.ks" or "exec")
+// Returns the following:
+//			the name without a volume, folder or extension (string, such as "exec")
+FUNCTION plainScriptName {
+	PARAMETER rawName.
+	LOCAL result IS rawName.
+	LOCAL separator IS result:FINDLAST(":").
+	IF separator <> -1 SET result TO result:SUBSTRING(separator + 1, result:LENGTH - separator - 1).
+	SET separator TO result:FINDLAST("/").
+	IF separator <> -1 SET result TO result:SUBSTRING(separator + 1, result:LENGTH - separator - 1).
+	RETURN baseName(result).
+}
+
+// Mark Script Run
+// Remembers that the operator has run a script, for updateFromArchive. Called by loop before it runs a script.
+// Passed the following:
+//			scriptName (string, as typed)
+FUNCTION markScriptRun {
+	PARAMETER scriptName.
+	LOCAL plainName IS plainScriptName(scriptName).
+	IF NOT ranScripts:CONTAINS(plainName) ranScripts:ADD(plainName).
+}
+
+// Scripts Called By
+// Looks through the source of a script on the archive for the scripts it runs, with RUNPATH, RUNONCEPATH or
+// RUN ONCE followed by a name in quotes. A script that is run by a name held in a variable cannot be found, and
+// a call that has been commented out is found anyway.
+// Passed the following:
+//			scriptName (string, without an extension)
+// Returns the following:
+//			a list of the names (without extensions) of the scripts it runs
+FUNCTION scriptsCalledBy {
+	PARAMETER scriptName.
+	LOCAL called IS LIST().
+	LOCAL sourcePath IS "0:" + scriptName + ".ks".
+	IF NOT EXISTS(sourcePath) RETURN called.
+	LOCAL source IS OPEN(sourcePath):READALL:STRING.
+	LOCAL upperSource IS source:TOUPPER.
+	FOR keyword IN LIST("RUNPATH(", "RUNONCEPATH(", "RUN ONCE") {
+		LOCAL position IS upperSource:FIND(keyword).
+		UNTIL position = -1 {
+			LOCAL afterKeyword IS position + keyword:LENGTH.
+			// the name must be a string in quotes right after the keyword
+			LOCAL quoteStart IS source:FINDAT(CHAR(34), afterKeyword).
+			IF quoteStart <> -1 {
+				IF source:SUBSTRING(afterKeyword, quoteStart - afterKeyword):TRIM = "" {
+					LOCAL quoteEnd IS source:FINDAT(CHAR(34), quoteStart + 1).
+					IF quoteEnd <> -1 called:ADD(plainScriptName(source:SUBSTRING(quoteStart + 1, quoteEnd - quoteStart - 1))).
+				}
+			}
+			SET position TO upperSource:FINDAT(keyword, afterKeyword).
+		}
+	}
+	RETURN called.
+}
+
+// Scripts Run This Session
+// A script that has already been run is loaded in memory, so changing it needs a reboot to be noticed. A script
+// that has not been run yet is read when it is first run, so it picks up a change by itself.
+// The scripts that count as already run are
+//			boot, and the files that it runs, which are the various critical files,
+//			the scripts the operator ran from loop (ranScripts), and
+//			the scripts that those scripts run, and so on.
+// Passed the following:
+//			archiveSizes (lexicon in the format of archiveScriptFingerprints, to ignore names that are not scripts)
+// Returns the following:
+//			a lexicon whose keys are the names of the scripts that have been run
+FUNCTION scriptsRunThisSession {
+	PARAMETER archiveSizes.
+	LOCAL runSet IS LEXICON().
+	SET runSet["boot"] TO TRUE.
+	FOR eachName IN criticalFileNames {
+		SET runSet[eachName] TO TRUE.
+	}
+	LOCAL scriptsToScan IS LIST().
+	FOR eachName IN ranScripts {
+		IF NOT runSet:HASKEY(eachName) {
+			SET runSet[eachName] TO TRUE.
+			scriptsToScan:ADD(eachName).
+		}
+	}
+	UNTIL scriptsToScan:LENGTH = 0 {
+		LOCAL current IS scriptsToScan[0].
+		scriptsToScan:REMOVE(0).
+		FOR eachChild IN scriptsCalledBy(current) {
+			IF archiveSizes:HASKEY(eachChild) AND NOT runSet:HASKEY(eachChild) {
+				SET runSet[eachChild] TO TRUE.
+				scriptsToScan:ADD(eachChild).
+			}
+		}
+	}
+	RETURN runSet.
+}
+
 // Update From Archive
 // Brings the local scripts up to date with the archive: copies scripts that changed or are new, and
 // deletes the local copies of scripts that were removed from the archive. Only files recorded in the manifest
 // are ever deleted, so files created by other scripts (logs and so on) are left alone.
+// The message says to reboot only if a script that was updated has already been run (see scriptsRunThisSession).
 // Passed the following:
 //			no arguments
 // Returns the following:
@@ -323,11 +462,15 @@ FUNCTION updateFromArchive {
 	LOCAL newCount IS 0.
 	LOCAL removedCount IS 0.
 	LOCAL failedCount IS 0.
+	LOCAL rebootNeeded IS FALSE.
+	LOCAL runSet IS LEXICON().
+	IF comparison["changed"]:LENGTH > 0 SET runSet TO scriptsRunThisSession(archiveSizes).
 
 	FOR scriptName IN comparison["changed"] {
 		IF installScript(scriptName) {
 			SET sizes[scriptName] TO archiveSizes[scriptName].
 			SET updatedCount TO updatedCount + 1.
+			IF runSet:HASKEY(scriptName) SET rebootNeeded TO TRUE.
 		} ELSE SET failedCount TO failedCount + 1.
 	}
 	FOR scriptName IN comparison["new"] {
@@ -357,7 +500,7 @@ FUNCTION updateFromArchive {
 		IF message <> "" SET message TO message + ", ".
 		SET message TO message + part.
 	}
-	IF updatedCount + newCount + removedCount > 0 RETURN message + ". Reboot to apply".
+	IF rebootNeeded RETURN message + ". Reboot to apply".
 	RETURN message.
 }
 
@@ -415,7 +558,7 @@ FUNCTION copyToLocal {
 		LIST FILES IN fileList.
 		FOR f IN fileList {IF f:EXTENSION = "settings" COPYPATH(f:NAME, "1:" + f:NAME).}
 		DELETEPATH("0:Staging").
-		writeManifest(archiveScriptSizes(), FALSE).
+		writeManifest(archiveScriptFingerprints(), FALSE).
 	} ELSE {
 		PRINT "Now checking to see if there is enough space for critical files".
 		CD("0:boot").
@@ -449,7 +592,7 @@ FUNCTION copyToLocal {
 			LIST FILES IN fileList.
 			FOR f IN fileList {IF f:EXTENSION = "settings" COPYPATH(f:NAME, "1:" + f:NAME).}
 			DELETEPATH("0:Staging").
-			writeManifest(criticalSizes(archiveScriptSizes()), TRUE).
+			writeManifest(criticalSizes(archiveScriptFingerprints()), TRUE).
 		} ELSE {
 			PRINT "There is not enough space on the local volume".
 			PRINT "Local volume not modified".
@@ -470,14 +613,16 @@ IF KUNIVERSE:TIMEWARP:RATE < 100 CORE:DOEVENT("Open Terminal").
 SET TERMINAL:BRIGHTNESS TO 1.
 setTerminalSize().
 
-LOCAL loopFound TO FALSE.
+LOCAL loopFound TO TRUE.
 
 isStockWorld().
 isStockRockets().
 
 // default to running on the local drive, if all the files are loaded already
-IF EXISTS("1:loop") AND EXISTS("1:loopCommands") AND EXISTS("1:loopTerminal") AND EXISTS("1:library") AND EXISTS("1:libraryTransfer") {
-	SET loopFound TO TRUE.
+FOR criticalFileName IN criticalFileNames {
+	IF NOT EXISTS(criticalFileName) SET loopFound TO FALSE.
+}
+IF loopFound {
 	PRINT "Found local loop with valid settings".
 	reportArchiveDifferences().
 }

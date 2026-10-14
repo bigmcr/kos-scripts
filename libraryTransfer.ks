@@ -4,7 +4,7 @@
 // libraryTransfer.ks - total delta-V of an interplanetary transfer, in KSP's patched
 // conic universe, plus the Lambert solvers and porkchop-plot tools it is built on. loop.ks loads it right after library.ks, which this
 // file depends on (absolutePosition, absoluteVelocity, findZeroBrent, goldenSectionMinimum, ...).
-// Moved here from library.ks: the Lambert solvers, solveBurnAtPoint and the departure-burn finders, the porkchop grid and CSV tools.
+// Moved here from library.ks: the Lambert solvers, solveBurnAtPoint, the porkchop grid and CSV tools.
 //
 // The model, and what it approximates:
 //   - Lambert (heliocentric) gives the velocity the ship needs when it LEAVES
@@ -30,205 +30,12 @@
 //              so it suits grid searches and hill climbs.
 //   exact timing             - the burn point is dictated by tSOI (burn time = tSOI minus
 //              transit). The cost then repeats with the parking-orbit period, so
-//              use refineTransferTiming rather than a coarse search for this.
+//              use phaseLockedDeparture rather than a coarse search for this.
 //
 // All angles in kOS trig are degrees; times are seconds (UT where noted).
 // ============================================================================
 
 GLOBAL invalidDeltaV IS 1e15.
-
-FUNCTION gaussProblemPIteration {
-  PARAMETER r_1.
-  PARAMETER r_2.
-  PARAMETER timeOfFlight.
-  PARAMETER mu.
-  PARAMETER shortWay IS TRUE.
-  PARAMETER timeTolerance IS 0.001.         // Default tolerance of 0.001 second
-  PARAMETER maxIterations IS 20.
-  PARAMETER logAllowed IS FALSE.
-  PARAMETER pStart1 IS 0.05.
-  PARAMETER pStart2 IS 0.2.
-
-  // Start off by calculating the various constants associated with the problem.
-  LOCAL phaseAngle IS VANG(r_1, r_2).
-  IF NOT shortWay SET phaseAngle TO 360 - phaseAngle.
-  LOCAL r_1_mag IS r_1:MAG.
-  LOCAL r_2_mag IS r_2:MAG.
-  LOCAL k IS r_1_mag*r_2_mag*(1-COS(phaseAngle)).
-  LOCAL l IS r_1_mag+r_2_mag.
-  LOCAL m IS r_1_mag*r_2_mag*(1+COS(phaseAngle)).
-  LOCAL p_i IS k/(l+SQRT(2*m)).
-  LOCAL p_ii IS k/(l-SQRT(2*m)).
-
-  LOCAL logMe IS LIST().
-  IF logAllowed {
-    logMe:ADD(",X,Y,Z,Magnitude,Units,Short Way," + shortWay + ",pStart1," + pStart1 + ",pStart2," + pStart2).
-    logMe:ADD("R_1," + r_1:X + "," + r_1:y + "," + r_1:z + "," + r_1_mag + ",meters").
-    logMe:ADD("R_2," + r_2:X + "," + r_2:y + "," + r_2:z + "," + r_2_mag + ",meters").
-    logMe:ADD("Desired Time," + timeOfFlight + ",s," + timeToString(timeOfFlight)).
-    logMe:ADD("mu," + mu).
-    logMe:ADD("phaseAngle," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-    logMe:ADD("k," + k).
-    logMe:ADD("l," + l).
-    logMe:ADD("m," + m).
-    logMe:ADD("p_i," + p_i).
-    logMe:ADD("p_ii," + p_ii).
-    logMe:ADD("").
-
-    logMe:ADD("p,").              //12
-    logMe:ADD("a,").              //13
-    logMe:ADD("Motion Type,").    //14
-    logMe:ADD("f,").              //15
-    logMe:ADD("g,").              //16
-    logMe:ADD("f_dot,").          //17
-    logMe:ADD("deltaAngle,").     //18
-    logMe:ADD("Time,").           //19
-    logMe:ADD("Time Error,").     //20
-    logMe:ADD("Iteration,").      //21
-    logMe:ADD(",").               //22
-    logMe:ADD(",").               //23
-    logMe:ADD("delta_v," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-  }
-
-  LOCAL pList IS LIST().
-  LOCAL tList IS LIST().
-
-  LOCAL p IS (p_ii - p_i) * pStart1 + p_i.
-  LOCAL a IS m*k*p/((2*m-l^2)*p^2+2*k*l*p-k^2).
-  LOCAL motionType IS "Ellipse".
-  IF a < 0 SET motionType TO "Hyperbola".
-  ELSE SET motionType TO "Ellipse".
-  LOCAL f IS 1 - r_2_mag / p * ( 1 - COS(phaseAngle)).
-  LOCAL g IS r_1_mag * r_2_mag * SIN(phaseAngle) / SQRT(mu * p).
-  LOCAL f_dot IS SQRT(mu / p) * TAN(phaseAngle / 2) * ((1 - COS(phaseAngle)) / p - 1 / r_1_mag - 1 / r_2_mag).
-  LOCAL deltaAngle IS 0.
-  LOCAL timeSeconds IS 0.
-  LOCAL timeError IS timeTolerance + 1.0.
-  IF motionType = "Ellipse" {
-    SET deltaAngle TO CONSTANT:DegToRad * ARCTAN2( -r_1_mag * r_2_mag * f_dot / SQRT( mu * a ), 1 - r_1_mag / a * (1 - f)).
-    SET timeSeconds TO g + SQRT( a^3 / mu) * ( deltaAngle - SIN(deltaAngle)).
-  } ELSE {
-    SET deltaAngle TO ACOSH( 1 - r_1_mag / a * ( 1 - f)).
-    SET timeSeconds TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngle).
-  }
-  SET timeError TO timeOfFlight - timeSeconds.
-  pList:ADD(p).
-  tList:ADD(timeSeconds).
-
-  LOCAL iterations IS 0.
-  LOCAL timeNMinusOne IS 0.
-  LOCAL timeNMinusTwo IS timeSeconds.
-  LOCAL pNMinusOne IS 0.
-  LOCAL pNMinusTwo IS p.
-
-  IF logAllowed {
-    SET logMe[12] TO logMe[12] + p + ",".
-    SET logMe[13] TO logMe[13] + a + ",".
-    SET logMe[14] TO logMe[14] + motionType + ",".
-    SET logMe[15] TO logMe[15] + f + ",".
-    SET logMe[16] TO logMe[16] + g + ",".
-    SET logMe[17] TO logMe[17] + f_dot + ",".
-    SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-    SET logMe[19] TO logMe[19] + timeSeconds + ",".
-    SET logMe[20] TO logMe[20] + timeError + ",".
-    SET logMe[21] TO logMe[21] + "-1,".
-  }
-
-  SET p TO (p_ii - p_i) * pStart2 + p_i.
-  SET a TO m * k * p / (( 2 * m - l^2) * p^2 + 2 * k * l * p - k^2).
-  IF a < 0 SET motionType TO "Hyperbola".
-  ELSE SET motionType TO "Ellipse".
-  SET f TO 1 - r_2_mag / p * ( 1 - COS(phaseAngle)).
-  SET g TO r_1_mag * r_2_mag * SIN(phaseAngle) / SQRT(mu * p).
-  SET f_dot TO SQRT(mu / p) * TAN(phaseAngle / 2) * ((1 - COS(phaseAngle)) / p - 1 / r_1_mag - 1 / r_2_mag).
-  IF motionType = "Ellipse" {
-    SET deltaAngle TO CONSTANT:DegToRad * ARCTAN2( -r_1_mag * r_2_mag * f_dot / SQRT( mu * a ), 1 - r_1_mag / a * (1 - f)).
-    SET timeSeconds TO g + SQRT( a^3 / mu) * ( deltaAngle - SIN(deltaAngle)).
-  } ELSE {
-    SET deltaAngle TO ACOSH( 1 - r_1_mag / a * ( 1 - f)).
-    SET timeSeconds TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngle).
-  }
-
-  SET timeError TO timeOfFlight - timeSeconds.
-  pList:ADD(p).
-  tList:ADD(timeSeconds).
-  SET timeNMinusOne TO timeSeconds.
-  SET pNMinusOne TO p.
-
-  IF logAllowed {
-    SET logMe[12] TO logMe[12] + p + ",".
-    SET logMe[13] TO logMe[13] + a + ",".
-    SET logMe[14] TO logMe[14] + motionType + ",".
-    SET logMe[15] TO logMe[15] + f + ",".
-    SET logMe[16] TO logMe[16] + g + ",".
-    SET logMe[17] TO logMe[17] + f_dot + ",".
-    SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-    SET logMe[19] TO logMe[19] + timeSeconds + ",".
-    SET logMe[20] TO logMe[20] + timeError + ",".
-    SET logMe[21] TO logMe[21] + "0,".
-  }
-
-  LOCAL pStep IS 0.
-
-  UNTIL (ABS(timeError) < timeTolerance) OR (iterations >= maxIterations) {
-    SET timeNMinusOne TO tList[tList:LENGTH - 1].
-    SET timeNMinusTwo TO tList[tList:LENGTH - 2].
-    SET pNMinusOne TO pList[pList:LENGTH - 1].
-    SET pNMinusTwo TO pList[pList:LENGTH - 2].
-    SET pStep TO (timeOfFlight - timeNMinusOne) * (pNMinusOne - pNMinusTwo) / (timeNMinusOne - timeNMinusTwo).
-    SET p TO pNMinusOne + pStep.
-    IF (phaseAngle >= 180) AND ((p > p_ii) OR (p < 0))
-      RETURN gaussProblemPIteration(r_1, r_2, timeOfFlight, mu, shortWay, timeTolerance, maxIterations - 1, logAllowed, MIN(pStart1 + 0.1, 1), pStart2).
-    IF (phaseAngle < 180) AND (p < p_i)
-      RETURN gaussProblemPIteration(r_1, r_2, timeOfFlight, mu, shortWay, timeTolerance, maxIterations - 1, logAllowed, pStart1, MIN(pStart2 + 0.1, 1)).
-    SET a TO m * k * p / (( 2 * m - l^2) * p^2 + 2 * k * l * p - k^2).
-    IF a < 0 SET motionType TO "Hyperbola".
-    ELSE SET motionType TO "Ellipse".
-    SET f TO 1 - r_2_mag / p * ( 1 - COS(phaseAngle)).
-    SET g TO r_1_mag * r_2_mag * SIN(phaseAngle) / SQRT(mu * p).
-    SET f_dot TO SQRT(mu / p) * TAN(phaseAngle / 2) * ((1 - COS(phaseAngle)) / p - 1 / r_1_mag - 1 / r_2_mag).
-    IF motionType = "Ellipse" {
-      SET deltaAngle TO CONSTANT:DegToRad * ARCTAN2( -r_1_mag * r_2_mag * f_dot / SQRT( mu * a ), 1 - r_1_mag / a * (1 - f)).
-      SET timeSeconds TO g + SQRT( a^3 / mu) * ( deltaAngle - SIN(deltaAngle)).
-    } ELSE {
-      // Note that the hyperbolic functions don't really use traditional angles, so no unit conversion is needed.
-      SET deltaAngle TO ACOSH( 1 - r_1_mag / a * ( 1 - f)).
-      SET timeSeconds TO g + SQRT((-a)^3 / mu)*(SINH(deltaAngle) - deltaAngle).
-    }
-    SET timeError TO timeOfFlight - timeSeconds.
-    pList:ADD(p).
-    tList:ADD(timeSeconds).
-    SET iterations TO iterations + 1.
-
-    IF logAllowed {
-      SET logMe[12] TO logMe[12] + p + ",".
-      SET logMe[13] TO logMe[13] + a + ",".
-      SET logMe[14] TO logMe[14] + motionType + ",".
-      SET logMe[15] TO logMe[15] + f + ",".
-      SET logMe[16] TO logMe[16] + g + ",".
-      SET logMe[17] TO logMe[17] + f_dot + ",".
-      SET logMe[18] TO logMe[18] + deltaAngle*CONSTANT:DegToRad + ",".
-      SET logMe[19] TO logMe[19] + timeSeconds + ",".
-      SET logMe[20] TO logMe[20] + timeError + ",".
-      SET logMe[21] TO logMe[21] + iterations + ",".
-      FOR message IN logMe {
-        LOG message TO logFileName.
-      }
-    }
-  }
-  LOCAL g_dot IS 1 - a / r_2_mag * ( 1 - COS( deltaAngle )).
-  LOCAL v_1 IS (r_2 - f * r_1) / g.
-  LOCAL v_2 IS f_dot * r_1 + g_dot * v_1.
-  RETURN LEXICON("v_1", v_1,
-                 "v_2", v_2,
-                 "Motion Type", motionType,
-                 "Iterations", iterations,
-                 "Final Value", p,
-                 "r_1", r_1,
-                 "r_2", r_2,
-                 "mu", mu,
-                 "Short Way", shortWay).
-}
 
 FUNCTION C_Z {
   PARAMETER z.
@@ -270,16 +77,18 @@ FUNCTION lambertGauss {
   PARAMETER startZ IS 0.5.
   PARAMETER timeTolerance IS 0.001.         // Default tolerance in seconds
   PARAMETER maxIterations IS 40.
-  PARAMETER logAllowed IS FALSE.
   // startZ is the ANCHOR for the whole retry ladder below and stays fixed
   // across every retry. attemptNumber drives a zig-zag offset from that
   // fixed anchor: 0, +1, -1, +2, -2, +3, ... - trying the seed itself
   // first, then alternating outward in both directions, so a root on
   // either side of the seed is reachable.
   PARAMETER attemptNumber IS 0.
+  // Why the previous attempt failed; reported if the last one fails too.
+  PARAMETER lastFailure IS "No convergence".
 
   IF attemptNumber >= 10 RETURN LEXICON("v_1", V(0, 0, 0),
                                 "v_2", V(0, 0, 0),
+                                "Failure Reason", lastFailure,
                                 "Motion Type", "Failed",
                                 "Iterations", 0,
                                 "Final Value", 0,
@@ -297,36 +106,6 @@ FUNCTION lambertGauss {
   LOCAL A IS SQRT( r_1_mag * r_2_mag * ( 1 + COS(phaseAngle))).
   IF NOT shortWay SET A TO -A.
 
-  LOCAL logMe IS LIST().
-  IF logAllowed {
-    logMe:ADD(",X,Y,Z,Magnitude,Units,Short Way," + shortWay).
-    logMe:ADD("R_1," + r_1:X + "," + r_1:y + "," + r_1:z + "," + r_1_mag + ",meters").
-    logMe:ADD("R_2," + r_2:X + "," + r_2:y + "," + r_2:z + "," + r_2_mag + ",meters").
-    logMe:ADD("Desired Time," + timeOfFlight + ",s," + timeToString(timeOfFlight)).
-    logMe:ADD("mu," + mu).
-    logMe:ADD("phaseAngle," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-    logMe:ADD("").
-    logMe:ADD("z,").              //07
-    logMe:ADD("C(z),").           //08
-    logMe:ADD("S(z),").           //09
-    logMe:ADD("y,").              //10
-    logMe:ADD("x,").              //11
-    logMe:ADD("Time,").           //12
-    logMe:ADD("dt/dz,").          //13
-    logMe:ADD("C'(z),").          //14
-    logMe:ADD("S'(z),").          //15
-    logMe:ADD("Time Error,").     //16
-    logMe:ADD("Iterations,").     //17
-    logMe:ADD("f,").              //18
-    logMe:ADD("g,").              //19
-    logMe:ADD("g_dot,").          //20
-    logMe:ADD("A," + A).          //21
-    logMe:ADD("delta_v," + phaseAngle*CONSTANT:DegToRad + "," + phaseAngle).
-    logMe:ADD(",X,Y,Z,Mag").      //23
-    logMe:ADD("v_1,").            //24
-    logMe:ADD("v_2,").            //25
-  }
-
   LOCAL z IS 0.
   LOCAL S IS 0.
   LOCAL C IS 0.
@@ -339,6 +118,7 @@ FUNCTION lambertGauss {
   LOCAL timeError IS timeTolerance + 1.
   LOCAL firstTime IS TRUE.
   LOCAL failed IS FALSE.
+  LOCAL failReason IS "No convergence".
 
   // The actual z this attempt starts Newton's method from - see the comment
   // on attemptNumber above for the zig-zag pattern this produces.
@@ -360,7 +140,10 @@ FUNCTION lambertGauss {
       // z >= (2 pi)^2 is where the universal-variable equation moves on to its multi-revolution
       // branches (z between (2 pi)^2 and (4 pi)^2 is the one-revolution family: an arc that takes
       // a whole orbit plus part of another). This solver is for zero-revolution arcs, so that is a failure.
-      IF z >= (2*CONSTANT:PI)^2 SET failed TO TRUE.
+      IF z >= (2*CONSTANT:PI)^2 {
+        SET failed TO TRUE.
+        SET failReason TO "Beyond one-revolution range".
+      }
     }
     SET S TO S_Z(z).
     SET C TO C_Z(z).
@@ -373,33 +156,23 @@ FUNCTION lambertGauss {
       SET S_prime TO S_Z_prime(z, C, S).
       SET dt_dz TO (x^3 * (S_prime - 3 * S * C_prime / ( 2 * C) ) + A / 8 * ( 3 * S * SQRT( y ) / C + A / x)) / SQRT(mu).
       SET timeError TO timeOfFlight - timeSeconds.
-      IF logAllowed {
-        SET logMe[07] TO logMe[07] + z + ",".
-        SET logMe[08] TO logMe[08] + C + ",".
-        SET logMe[09] TO logMe[09] + S + ",".
-        SET logMe[10] TO logMe[10] + y + ",".
-        SET logMe[11] TO logMe[11] + x + ",".
-        SET logMe[12] TO logMe[12] + timeSeconds + ",".
-        SET logMe[13] TO logMe[13] + dt_dz + ",".
-        SET logMe[14] TO logMe[14] + C_prime + ",".
-        SET logMe[15] TO logMe[15] + S_prime + ",".
-        SET logMe[16] TO logMe[16] + timeError + ",".
-        SET logMe[17] TO logMe[17] + iterations + ",".
-      }
       SET iterations TO iterations + 1.
-    } ELSE SET failed TO TRUE.
+    } ELSE {
+      SET failed TO TRUE.
+      SET failReason TO "Numerical breakdown".
+    }
   }
 
-  IF (failed OR (iterations >= maxIterations)) RETURN lambertGauss(r_1,
-                                                                                     r_2,
-                                                                                     timeOfFlight,
-                                                                                     mu,
-                                                                                     shortWay,
-                                                                                     startZ,
-                                                                                     timeTolerance,
-                                                                                     maxIterations,
-                                                                                     logAllowed,
-																					 attemptNumber + 1).
+	IF failed OR ABS(timeError) >= timeTolerance RETURN lambertGauss(r_1,
+																	r_2,
+																	timeOfFlight,
+																	mu,
+																	shortWay,
+																	startZ,
+																	timeTolerance,
+																	maxIterations,
+																	attemptNumber + 1,
+																	failReason).
 
   LOCAL f IS 1 - y / r_1_mag.
   LOCAL g IS A * SQRT( y / mu).
@@ -419,16 +192,6 @@ FUNCTION lambertGauss {
   } ELSE IF ecc > 1 {
     SET motionType TO "Hyperbola".
   }
-  IF logAllowed {
-    SET logMe[18] TO logMe[18] + f + ",".
-    SET logMe[19] TO logMe[19] + g + ",".
-    SET logMe[20] TO logMe[20] + g_dot + ",".
-    SET logMe[24] TO logMe[24] + v_1:X + "," + v_1:Y + "," + v_1:Z + "," + v_1:MAG.
-    SET logMe[25] TO logMe[25] + v_2:X + "," + v_2:Y + "," + v_2:Z + "," + v_2:MAG.
-    FOR message IN logMe {
-      LOG message TO logFileName.
-    }
-  }
   RETURN LEXICON("v_1", v_1,
                  "v_2", v_2,
                  "Motion Type", motionType,
@@ -439,8 +202,6 @@ FUNCTION lambertGauss {
                  "mu", mu,
                  "Short Way", shortWay).
 }
-
-GLOBAL invalidDeltaV IS 1e15.
 
 FUNCTION porkchopDeltaV {
 	PARAMETER fromBody.
@@ -490,6 +251,7 @@ FUNCTION porkchopDeltaV {
 
 	LOCAL bestTotalDV IS invalidDeltaV.
 	LOCAL winningTrajectory IS 0.
+	LOCAL failureReason IS "Flight time not positive".
 
 	// guard against a nonsensical (non-positive) time of flight from an out-of-range guess
 	IF timeOfFlight > 0 {
@@ -503,8 +265,11 @@ FUNCTION porkchopDeltaV {
 			SET longTrajectory TO lambertGauss(r_1, r_2, timeOfFlight, sunBody:MU, FALSE, longStartSeed).
 		}
 		
+		SET failureReason TO "No convergence".
+		IF shortTrajectory:HASKEY("Failure Reason") SET failureReason TO shortTrajectory["Failure Reason"].
+		IF longTrajectory:HASKEY("Failure Reason") SET failureReason TO longTrajectory["Failure Reason"].
+
 		IF shortTrajectory["Motion Type"] <> "Failed" {
-			// departure leg: combined injection + plane-change cost against the actual parking orbit, instead of a bare vector magnitude difference.
 			LOCAL vInfDepartureShort IS shortTrajectory["v_1"] - fromBodyVelocity.
 			LOCAL mismatchShort IS 0.
 			IF parkSMA <> 0 SET mismatchShort TO planeMismatchAngle(vInfDepartureShort, planeNormal).
@@ -544,6 +309,7 @@ FUNCTION porkchopDeltaV {
 		}
 	} ELSE {
 		SET statsOut["Motion Type"] TO "Failed".
+		SET statsOut["Failure Reason"] TO failureReason.
 	}
 
 	RETURN bestTotalDV.
@@ -612,7 +378,7 @@ FUNCTION bindPorkchopDeltaV {
 //       means 120 s from now.
 //   departureEnd     - UT where the departure range ends. -1 (the default) means
 //       departureStart + departureWindows synodic periods.
-//   tofStart, tofEnd - s, the shortest and longest flight time. -1 (the defaults) mean one
+//   tofStart, tofEnd - s, the shortest and longest flight time. -1 (the defaults) mean 0.5
 //       and four times the Hohmann transfer time.
 // Returns a LEXICON. "error" is "None" if everything is fine; otherwise it holds a message
 // and no other key is set. Otherwise:
@@ -705,7 +471,7 @@ FUNCTION transferSearchWindow {
 	SET window["startTime"] TO firstDeparture.
 	SET window["departureStart"] TO firstDeparture.
 	SET window["departureEnd"] TO lastDeparture.
-	// How long one "window" is: a synodic period here (a same-SOI window, see sameSOISearchWindow, is shorter).
+	// How long one "window" is: a synodic period here (a same-SOI window, see buildTransferWindow, is shorter).
 	SET window["windowLength"] TO synodicPeriod.
 	SET window["tofStart"] TO shortestFlight.
 	SET window["tofEnd"] TO longestFlight.
@@ -727,7 +493,6 @@ FUNCTION transferSearchWindow {
 // Passed:
 //   dvDelegate - f(departureTime, timeOfFlight, seed, statsOut) -> total dV; see bindPorkchopDeltaV
 //   window     - LEXICON from transferSearchWindow
-//   label      - optional text shown in the progress lines, e.g. the solver name
 // Computation runs departure-outer, TOF-inner so the solver's warm-start seed
 // (fresh per departure) stays valid across a departure's whole TOF sweep. The
 // returned grid is TOF-major, with TOF in DESCENDING order (the window's flight times
@@ -739,23 +504,31 @@ FUNCTION transferSearchWindow {
 //   "departureBands"    - LIST - which synodic period (0 for the first, 1 for the next, ...) each column's departure falls in
 //   "minDeltaV"         - LEXICON("value", "departureTime", "timeOfFlight") - best cell
 //   "motionTypeCounts"  - LEXICON - cells per motion type, including "Failed"
+//   "winningWay", "transferAngle", "rejectedArcs" - LISTs of rows laid out like "dv": the way round the winning arc
+//                       goes ("Short"/"Long"/"N/A"), its sweep angle (deg, or "N/A"), and how many arcs the cell rejected
+//                       for hitting the central body or leaving its SOI (0 where the cost function does not check)
+//   "failureReasonCounts" - LEXICON - failed cells per reason (statsOut["Failure Reason"], e.g. "No convergence",
+//                           "Intercepts the central body", "Leaves the central body"
 //   "totalCells", "startClock", "endClock", "duration" (game seconds), "realDuration" (wall-clock
 //   seconds, from KUNIVERSE:REALWORLDTIME - unaffected by time warp)
 FUNCTION porkchopGrid {
 	PARAMETER dvDelegate.
 	PARAMETER window.
-	PARAMETER label IS "".
 
 	LOCAL startClock IS TIME:SECONDS.
 	LOCAL realStartTime IS KUNIVERSE:REALWORLDTIME.
-	LOCAL logPrefix IS "".
-	IF label <> "" SET logPrefix TO "[" + label + "] ".
 
 	LOCAL dvRows IS LIST().
 	LOCAL timeOfFlights IS LIST().
 	LOCAL departureTimes IS LIST().
 	LOCAL departureBands IS LIST().
 	LOCAL motionTypeCounts IS LEXICON("Ellipse", 0, "Parabola", 0, "Hyperbola", 0, "Failed", 0).
+	LOCAL failureReasonCounts IS LEXICON().
+	// Per cell, laid out like dvRows: the way round the winning arc goes ("Short", "Long" or "N/A"),
+	// its sweep angle in degrees, and how many arcs were rejected for hitting the planet or leaving its SOI.
+	LOCAL wayRows IS LIST().
+	LOCAL angleRows IS LIST().
+	LOCAL rejectedRows IS LIST().
 	LOCAL totalCells IS 0.
 	LOCAL minDeltaV IS LEXICON("value", invalidDeltaV, "departureTime", window["startTime"], "timeOfFlight", 0).
 
@@ -763,12 +536,15 @@ FUNCTION porkchopGrid {
 	// The window lists flight times ascending; rows run longest first.
 	FROM {LOCAL flightIndex IS window["timeOfFlights"]:LENGTH - 1.} UNTIL flightIndex < 0 STEP {SET flightIndex TO flightIndex - 1.} DO {
 		dvRows:ADD(LIST()).
+		wayRows:ADD(LIST()).
+		angleRows:ADD(LIST()).
+		rejectedRows:ADD(LIST()).
 		timeOfFlights:ADD(window["timeOfFlights"][flightIndex]).
 	}
 
 	FOR departureTime IN window["departureTimes"] {
 		LOCAL periodsSinceStart IS (departureTime - window["departureStart"]) / window["windowLength"].
-		PRINT logPrefix + "Calculating departure " + ROUND(periodsSinceStart, 3) + " windows in.".
+		PRINT "Calculating departure " + ROUND(periodsSinceStart, 3) + " windows in.".
 		departureTimes:ADD(departureTime).
 		// A hair of tolerance so a departure that lands exactly on a window boundary is not
 		// pushed into the previous window by roundoff.
@@ -786,6 +562,12 @@ FUNCTION porkchopGrid {
 			LOCAL cellType IS statsOut["Motion Type"].
 			IF NOT motionTypeCounts:HASKEY(cellType) SET motionTypeCounts[cellType] TO 0.
 			SET motionTypeCounts[cellType] TO motionTypeCounts[cellType] + 1.
+			IF cellType = "Failed" {
+				LOCAL failureReason IS "Unknown".
+				IF statsOut:HASKEY("Failure Reason") AND statsOut["Failure Reason"] <> "" SET failureReason TO statsOut["Failure Reason"].
+				IF NOT failureReasonCounts:HASKEY(failureReason) SET failureReasonCounts[failureReason] TO 0.
+				SET failureReasonCounts[failureReason] TO failureReasonCounts[failureReason] + 1.
+			}
 
 			IF minDeltaV["value"] > dV {
 				SET minDeltaV["value"] TO dV.
@@ -793,6 +575,23 @@ FUNCTION porkchopGrid {
 				SET minDeltaV["timeOfFlight"] TO timeOfFlight.
 			}
 			dvRows[tofIndex]:ADD(dV).
+			LOCAL cellWay IS "N/A".
+			LOCAL cellAngle IS "N/A".
+			IF cellType <> "Failed" AND statsOut:HASKEY("r_1") {
+				LOCAL separation IS VANG(statsOut["r_1"], statsOut["r_2"]).
+				IF statsOut["Short Way"] {
+					SET cellWay TO "Short".
+					SET cellAngle TO ROUND(separation, 2).
+				} ELSE {
+					SET cellWay TO "Long".
+					SET cellAngle TO ROUND(360 - separation, 2).
+				}
+			}
+			LOCAL cellRejected IS 0.
+			IF statsOut:HASKEY("Rejected Arcs") SET cellRejected TO statsOut["Rejected Arcs"].
+			wayRows[tofIndex]:ADD(cellWay).
+			angleRows[tofIndex]:ADD(cellAngle).
+			rejectedRows[tofIndex]:ADD(cellRejected).
 
 			SET tofIndex TO tofIndex + 1.
 			WAIT 0.
@@ -806,6 +605,10 @@ FUNCTION porkchopGrid {
 					"departureBands", departureBands,
 					"minDeltaV", minDeltaV,
 					"motionTypeCounts", motionTypeCounts,
+					"failureReasonCounts", failureReasonCounts,
+					"winningWay", wayRows,
+					"transferAngle", angleRows,
+					"rejectedArcs", rejectedRows,
 					"totalCells", totalCells,
 					"startClock", startClock,
 					"endClock", endClock,
@@ -826,6 +629,27 @@ FUNCTION motionTypeSummary {
 		}
 	}
 	RETURN summary.
+}
+
+// One line per failure reason of a grid, e.g. "No convergence: 120 (60%)", most common first;
+// an empty list if nothing failed. Each is a count of cells and its share of all the cells.
+FUNCTION failureReasonLines {
+	PARAMETER grid.
+
+	LOCAL remaining IS LEXICON().
+	FOR reason IN grid["failureReasonCounts"]:KEYS {
+		SET remaining[reason] TO grid["failureReasonCounts"][reason].
+	}
+	LOCAL lines IS LIST().
+	UNTIL remaining:LENGTH = 0 {
+		LOCAL topReason IS remaining:KEYS[0].
+		FOR reason IN remaining:KEYS {
+			IF remaining[reason] > remaining[topReason] SET topReason TO reason.
+		}
+		lines:ADD(topReason + ": " + remaining[topReason] + " (" + ROUND(remaining[topReason] / MAX(grid["totalCells"], 1) * 100, 2) + "%)").
+		remaining:REMOVE(topReason).
+	}
+	RETURN lines.
 }
 
 // The lowest-dV cell in each synodic-period band of a grid (a band is one synodic period of
@@ -850,9 +674,36 @@ FUNCTION porkchopBestPerBand {
 	RETURN best.
 }
 
+// Writes one more grid of cell values to a CSV, in the layout of the cost grid: a title line, a header
+// row of departure times, then one row per flight time (longest first) with one value per departure.
+//   cellRows - LIST of rows (one per entry of grid["timeOfFlights"]), each a LIST of values
+FUNCTION writePorkchopBlock {
+	PARAMETER fileName.
+	PARAMETER title.
+	PARAMETER grid.
+	PARAMETER window.
+	PARAMETER cellRows.
+
+	LOG "" TO fileName.
+	LOG title TO fileName.
+	LOCAL headerRow IS "TOF (" + window["tofUnit"] + ") \ Departure (" + window["departureUnit"] + ")".
+	FOR departureTime IN grid["departureTimes"] {
+		SET headerRow TO headerRow + "," + ROUND((departureTime - window["startTime"]) / window["departureUnitSeconds"], 2).
+	}
+	LOG headerRow TO fileName.
+	FOR rowIndex IN RANGE(0, cellRows:LENGTH) {
+		LOCAL rowString IS ROUND(grid["timeOfFlights"][rowIndex] / window["tofUnitSeconds"], 2):TOSTRING.
+		FOR cellValue IN cellRows[rowIndex] {
+			SET rowString TO rowString + "," + cellValue.
+		}
+		LOG rowString TO fileName.
+	}
+}
+
 // Writes a grid to a CSV: the classic porkchop layout (TOF down the rows,
 // departure across the columns, "N/A" for failed cells), followed by the
-// search parameters, best cell and motion-type breakdown. Replaces any
+// search parameters, best cell, motion-type and failure-reason breakdowns, and
+// three more grids (winning way round, sweep angle, rejected arcs). Replaces any
 // existing file of that name.
 FUNCTION writePorkchopCsv {
 	PARAMETER grid.
@@ -920,190 +771,20 @@ FUNCTION writePorkchopCsv {
 		LOG typeName + "," + typeCount + "," + ROUND(typeCount / MAX(grid["totalCells"], 1) * 100, 2) + "%" TO fileName.
 	}
 	LOG "Total," + grid["totalCells"] + ",100%" TO fileName.
-}
 
-// findPlaneMatchedDeparture
-//
-// Passed:
-//   v_infinity        - Vector (m/s) - required hyperbolic excess velocity, expressed in the SAME frame as SHIP:VELOCITY:ORBIT
-//   vesselObject       - the vessel to plan the burn for. Defaults to SHIP.
-//   targetDepartureUT  - scalar (s, absolute UT), or -1. If given, the search window is centered on this epoch instead of "now" - use this to pass in the desired departure time. If -1 (default), searches forward from right now.
-//   searchWindowPeriods - scalar - width of the search window, in parking-orbit periods, centered on targetDepartureUT (or starting just after "now" if targetDepartureUT is -1). Default 1.2.
-//   coarseSteps        - scalar - number of samples used to bracket root(s) before polishing with the secant method. Increase for very eccentric parking orbits, where the achievable exit direction can swing quickly near periapsis.
-//   minBurnETA         - scalar (s) - earliest allowed burn time from now, so you don't get handed a solution seconds away.
-//   createManeuverNode - boolean - if TRUE (default), adds a maneuver node at the best candidate found. If FALSE, only computes and returns the result.
-//   clearExistingNodes - boolean - if TRUE (default) and createManeuverNode is also TRUE, removes any maneuver nodes already in the flight plan before adding the new one, so repeated calls don't pile up stale nodes.
-//
-// Returns a LEXICON:
-//   "planeMismatchAngle"  - scalar (deg) - angle between v_infinity and the parking orbit's plane. 0 = perfectly achievable with a pure prograde burn. This number is fixed for this parking orbit; it does not change with time.
-//   "outOfPlaneDVPenalty" - scalar (m/s) - approximate extra delta-v if the mismatch above is handled as a SEPARATE plane-change burn. A single combined (non-tangential) burn at the same epoch would generally cost somewhat less than this simple estimate -- treat this as an upper bound and a diagnostic, not a final number.
-//   "requiredArgOfLatitude" - scalar (deg) - in-plane direction (in this function's own arbitrary reference frame) that the departure asymptote needs to point along.
-//   "candidates"          - LIST of LEXICONs, one per burn opportunity found in the search window, each with "burnETA", "burnUT", "deltaV", "trueAnomalyBurn", "trueAnomalySOI", "flightPathAngle", "angleResidual" (deg, should be ~0).
-//   "best"                - the entry of "candidates" with the lowest deltaV, or the string "none found - widen searchWindowPeriods" if the scan turned up nothing.
-//   "nodeCreated"         - boolean - TRUE if a maneuver node was actually added.
-FUNCTION findPlaneMatchedDeparture {
-	PARAMETER v_infinity.
-	PARAMETER vesselObject IS SHIP.
-	PARAMETER targetDepartureUT IS -1.
-	PARAMETER searchWindowPeriods IS 1.2.
-	PARAMETER coarseSteps IS 90.
-	PARAMETER minBurnETA IS 60.
-	PARAMETER createManeuverNode IS TRUE.
-	PARAMETER clearExistingNodes IS TRUE.
-
-	LOCAL v_inf_mag IS v_infinity:MAG.
-	LOCAL nowUT IS TIME:SECONDS.
-
-	LOCAL posRef IS POSITIONAT(vesselObject, nowUT) - vesselObject:BODY:POSITION.
-	LOCAL velRef IS VELOCITYAT(vesselObject, nowUT):ORBIT.
-	LOCAL hHat IS VCRS(posRef, velRef):NORMALIZED.
-	LOCAL n1Hat IS posRef:NORMALIZED.
-	LOCAL n2Hat IS VCRS(hHat, n1Hat):NORMALIZED.
-
-	LOCAL planeAngleDelta IS 90 - VANG(v_infinity, hHat).
-
-	LOCAL vInfInPlane IS v_infinity - hHat * VDOT(v_infinity, hHat).
-	IF vInfInPlane:MAG < (v_inf_mag * 0.001) {
-		// v_infinity is almost exactly along the plane normal: essentially no
-		// phasing choice helps here, the whole vector is an out-of-plane cost.
-		LOCAL degenerateResult IS LEXICON().
-		degenerateResult:ADD("planeMismatchAngle", planeAngleDelta).
-		degenerateResult:ADD("outOfPlaneDVPenalty", 2 * v_inf_mag * SIN(planeAngleDelta / 2)).
-		degenerateResult:ADD("requiredArgOfLatitude", "undefined - v_infinity nearly normal to orbit plane").
-		degenerateResult:ADD("candidates", LIST()).
-		degenerateResult:ADD("best", "none found - v_infinity nearly normal to the parking orbit plane").
-		degenerateResult:ADD("nodeCreated", FALSE).
-		RETURN degenerateResult.
-	}
-	LOCAL uTarget IS normalizeAngle360(ARCTAN2(VDOT(vInfInPlane, n2Hat), VDOT(vInfInPlane, n1Hat))).
-
-	// exitAngleError(burnETA): the signed angular error (degrees, -180..180)
-	// between where a purely prograde burn at burnETA would actually send the
-	// ship's departure asymptote, and where it needs to go (uTarget).
-	//   uBurn  = in-plane direction of the vessel's position at burnETA
-	//   uExit  = uBurn + flightPathAngle + theta_turn
-	//            (flightPathAngle rotates the position direction to the actual
-	//             velocity direction at burn; theta_turn is the additional
-	//             rotation of the velocity direction from the burn point out to
-	//             the SOI edge, both already computed by the library function)
-	FUNCTION exitAngleError {
-		PARAMETER burnETA.
-		LOCAL hbi IS getHyperbolicBurnInfo(v_inf_mag, burnETA, vesselObject).
-		LOCAL posBurn IS POSITIONAT(vesselObject, TIME:SECONDS + burnETA) - vesselObject:BODY:POSITION.
-		LOCAL uBurn IS ARCTAN2(VDOT(posBurn, n2Hat), VDOT(posBurn, n1Hat)).
-		LOCAL uExit IS uBurn + hbi["flightPathAngle"] + hbi["theta_turn"].
-		RETURN normalizeAngle180(uExit - uTarget).
+	// Why the failed cells failed.
+	LOG "" TO fileName.
+	LOG "Failure Reason Breakdown:,Count,Percent" TO fileName.
+	FOR reason IN grid["failureReasonCounts"]:KEYS {
+		LOCAL reasonCount IS grid["failureReasonCounts"][reason].
+		LOG reason + "," + reasonCount + "," + ROUND(reasonCount / MAX(grid["totalCells"], 1) * 100, 2) + "%" TO fileName.
 	}
 
-	// Coarse scan across the search window to bracket every sign change of the
-	// error function, then polish each bracket with the secant method. This is
-	// deliberately a grid-then-refine search rather than a descent: it cannot
-	// get stuck on the wrong side of the orbit, which is exactly the failure
-	// mode a nested gradient descent risks for higher-inclination orbits.
-	LOCAL period IS vesselObject:ORBIT:PERIOD.
-	LOCAL scanStart IS 0.
-	LOCAL scanEnd IS 0.
-	IF targetDepartureUT >= 0 {
-		LOCAL halfWindow IS (period * searchWindowPeriods) / 2.
-		SET scanStart TO MAX(minBurnETA, (targetDepartureUT - halfWindow) - nowUT).
-		SET scanEnd TO MAX(scanStart + minBurnETA, (targetDepartureUT + halfWindow) - nowUT).
-	} ELSE {
-		SET scanStart TO minBurnETA.
-		SET scanEnd TO MAX(minBurnETA * 2, period * searchWindowPeriods).
-	}
-	LOCAL stepSize IS (scanEnd - scanStart) / coarseSteps.
-
-	LOCAL brackets IS LIST().
-	LOCAL previousETA IS scanStart.
-	LOCAL previousError IS exitAngleError(previousETA).
-	LOCAL sampleETA IS 0.
-	LOCAL sampleError IS 0.
-	FOR stepIndex IN RANGE(1, coarseSteps + 1) {
-		SET sampleETA TO scanStart + stepIndex * stepSize.
-		SET sampleError TO exitAngleError(sampleETA).
-		// The ABS(...) < 180 guard rejects the false "sign change" that shows up
-		// when the error simply wraps from +180 to -180 without ever crossing
-		// zero; a genuine root has a small step-to-step change when stepSize is
-		// fine enough.
-		IF (sampleError * previousError < 0) AND (ABS(sampleError - previousError) < 180) {
-			brackets:ADD(LIST(previousETA, sampleETA)).
-		}
-		SET previousETA TO sampleETA.
-		SET previousError TO sampleError.
-	}
-
-	LOCAL candidates IS LIST().
-	FOR eachBracket IN brackets {
-		LOCAL refinedETA IS findZeroSecant(exitAngleError@, eachBracket[0], eachBracket[1], 0.0005).
-		LOCAL hbiFinal IS getHyperbolicBurnInfo(v_inf_mag, refinedETA, vesselObject).
-		LOCAL candidate IS LEXICON().
-		candidate:ADD("burnETA", refinedETA).
-		candidate:ADD("burnUT", TIME:SECONDS + refinedETA).
-		candidate:ADD("deltaV", hbiFinal["v_delta"]).
-		candidate:ADD("trueAnomalyBurn", hbiFinal["trueAnomaly"]).
-		candidate:ADD("trueAnomalySOI", hbiFinal["trueAnomalySOI"]).
-		candidate:ADD("flightPathAngle", hbiFinal["flightPathAngle"]).
-		candidate:ADD("angleResidual", exitAngleError(refinedETA)).
-		candidates:ADD(candidate).
-	}
-
-	LOCAL bestIndex IS -1.
-	LOCAL bestDeltaV IS 0.
-	FOR candidateIndex IN RANGE(0, candidates:LENGTH) {
-		IF (bestIndex = -1) OR (candidates[candidateIndex]["deltaV"] < bestDeltaV) {
-			SET bestIndex TO candidateIndex.
-			SET bestDeltaV TO candidates[candidateIndex]["deltaV"].
-		}
-	}
-
-	LOCAL outOfPlaneDV IS 2 * v_inf_mag * SIN(planeAngleDelta / 2).
-
-	LOCAL result IS LEXICON().
-	result:ADD("planeMismatchAngle", planeAngleDelta).
-	result:ADD("outOfPlaneDVPenalty", outOfPlaneDV).
-	result:ADD("requiredArgOfLatitude", uTarget).
-	result:ADD("candidates", candidates).
-	result:ADD("nodeCreated", FALSE).
-
-	IF bestIndex <> -1 {
-		LOCAL best IS candidates[bestIndex].
-		result:ADD("best", best).
-
-		IF createManeuverNode {
-			IF clearExistingNodes {
-				clearManeuverNodes().
-			}
-			LOCAL burnNode IS NODE(best["burnUT"], 0, 0, best["deltaV"]).
-			ADD burnNode.
-			SET result["nodeCreated"] TO TRUE.
-			PRINT "Departure burn node created: burn in " + ROUND(best["burnETA"], 1) + " s, dV " + ROUND(best["deltaV"], 1) + " m/s.".
-		}
-	} ELSE {
-		result:ADD("best", "none found - widen searchWindowPeriods").
-	}
-	RETURN result.
-}
-
-// ----------------------------------------------------------------------------
-// printPlaneMatchResults
-// Small convenience printer for a result LEXICON from findPlaneMatchedDeparture,
-// in the same spirit as the library's other print* helpers. 
-FUNCTION printPlaneMatchResults {
-	PARAMETER result.
-	PRINT "Plane mismatch angle:     " + ROUND(result["planeMismatchAngle"], 3) + " deg".
-	PRINT "Out-of-plane dV penalty:  " + ROUND(result["outOfPlaneDVPenalty"], 1) + " m/s (separate-burn estimate)".
-	IF result["best"]:ISTYPE("String") {
-		PRINT result["best"].
-	} ELSE {
-		LOCAL best IS result["best"].
-		PRINT "Best burn in:             " + ROUND(best["burnETA"], 1) + " s".
-		PRINT "Delta-V (prograde):       " + ROUND(best["deltaV"], 1) + " m/s".
-		PRINT "True anomaly at burn:     " + ROUND(best["trueAnomalyBurn"], 2) + " deg".
-		PRINT "True anomaly at SOI edge: " + ROUND(best["trueAnomalySOI"], 2) + " deg".
-		PRINT "Angle residual (check):   " + ROUND(best["angleResidual"], 4) + " deg".
-		PRINT "Candidates found in window: " + result["candidates"]:LENGTH.
-		PRINT "Maneuver node created:    " + result["nodeCreated"].
-	}
+	// Three more grids, laid out like the cost grid, to explain jumps in it: which way round the winning
+	// arc goes, how far it sweeps, and how many arcs the cell threw out for hitting the planet or leaving its SOI.
+	writePorkchopBlock(fileName, "Winning way round (Short or Long; N/A = no valid arc)", grid, window, grid["winningWay"]).
+	writePorkchopBlock(fileName, "Winning arc sweep angle (deg; N/A = no valid arc)", grid, window, grid["transferAngle"]).
+	writePorkchopBlock(fileName, "Arcs rejected for hitting the central body or leaving its SOI (count)", grid, window, grid["rejectedArcs"]).
 }
 
 // ----------------------------------------------------------------------------
@@ -1166,174 +847,6 @@ FUNCTION solveBurnAtPoint {
 		options:ADD(radialUnit * radialSpeed + sweepDirection * tangentialSpeed).
 	}
 	RETURN options.
-}
-
-// ----------------------------------------------------------------------------
-// findDepartureBurn
-// Finds when, within the vessel's current orbit, a single burn reaches v_infinity
-// at the lowest delta-v, and creates the maneuver node for it. Unlike
-// findPlaneMatchedDeparture, the burn is NOT restricted to prograde: the node
-// gets the full radial / normal / prograde vector, so it contains the plane
-// change and any non-tangential component, and its delta-v is the cost of
-// actually arriving on the requested asymptote (see solveBurnAtPoint).
-//
-// Passed: as findPlaneMatchedDeparture (same parameters, same meanings).
-//   v_infinity - Vector (m/s) in the same frame as the vessel's :ORBIT velocity
-// Returns a LEXICON:
-//   "planeMismatchAngle" - scalar (deg) - angle between v_infinity and the orbit plane
-//   "candidates"         - LIST of LEXICONs, the local delta-v minima found in the window
-//   "best"               - the cheapest candidate, or a string if none found. Each candidate has
-//                          "burnETA", "burnUT", "deltaV" (m/s, magnitude), "dvVector",
-//                          "prograde", "normal", "radial" (m/s node components), "position", "velocity".
-//   "nodeCreated"        - boolean
-//   "nodeVerified"       - boolean - TRUE if the created node's :DELTAV matches the intended vector
-//                          (this also settles the sign convention of the node's normal axis)
-FUNCTION findDepartureBurn {
-	PARAMETER v_infinity.
-	PARAMETER vesselObject IS SHIP.
-	PARAMETER targetDepartureUT IS -1.
-	PARAMETER searchWindowPeriods IS 1.2.
-	PARAMETER coarseSteps IS 90.
-	PARAMETER minBurnETA IS 60.
-	PARAMETER createManeuverNode IS TRUE.
-	PARAMETER clearExistingNodes IS TRUE.
-
-	// Existing nodes would bend the predicted orbit that everything below samples.
-	IF createManeuverNode AND clearExistingNodes {
-		clearManeuverNodes().
-	}
-
-	LOCAL nowUT IS TIME:SECONDS.
-	LOCAL bodyMu IS vesselObject:BODY:MU.
-	LOCAL period IS vesselObject:ORBIT:PERIOD.
-
-	LOCAL posNow IS POSITIONAT(vesselObject, nowUT) - vesselObject:BODY:POSITION.
-	LOCAL velNow IS VELOCITYAT(vesselObject, nowUT):ORBIT.
-	LOCAL planeAngleDelta IS 90 - VANG(v_infinity, VCRS(posNow, velNow)).
-
-	// The cheapest exact burn at one ETA: the better of the two sweep directions.
-	FUNCTION burnAt {
-		PARAMETER burnETA.
-		LOCAL burnUT IS nowUT + burnETA.
-		LOCAL burnPos IS POSITIONAT(vesselObject, burnUT) - vesselObject:BODY:POSITION.
-		LOCAL burnVel IS VELOCITYAT(vesselObject, burnUT):ORBIT.
-		LOCAL options IS solveBurnAtPoint(burnPos, v_infinity, bodyMu, burnVel).
-		LOCAL dvVector IS options[0] - burnVel.
-		IF (options[1] - burnVel):MAG < dvVector:MAG SET dvVector TO options[1] - burnVel.
-		RETURN LEXICON("burnETA", burnETA, "burnUT", burnUT, "position", burnPos, "velocity", burnVel,
-						"dvVector", dvVector, "deltaV", dvVector:MAG).
-	}
-
-	LOCAL scanStart IS 0.
-	LOCAL scanEnd IS 0.
-	IF targetDepartureUT >= 0 {
-		LOCAL halfWindow IS (period * searchWindowPeriods) / 2.
-		SET scanStart TO MAX(minBurnETA, (targetDepartureUT - halfWindow) - nowUT).
-		SET scanEnd TO MAX(scanStart + minBurnETA, (targetDepartureUT + halfWindow) - nowUT).
-	} ELSE {
-		SET scanStart TO minBurnETA.
-		SET scanEnd TO MAX(minBurnETA * 2, period * searchWindowPeriods).
-	}
-	LOCAL stepSize IS (scanEnd - scanStart) / coarseSteps.
-
-	// Coarse scan of delta-v against burn time, then a golden-section polish
-	// around every local minimum (a cheap, derivative-free bracket search, same
-	// grid-then-refine idea as findPlaneMatchedDeparture).
-	LOCAL sampleDV IS LIST().
-	FOR stepIndex IN RANGE(0, coarseSteps + 1) {
-		sampleDV:ADD(burnAt(scanStart + stepIndex * stepSize)["deltaV"]).
-	}
-
-	LOCAL candidates IS LIST().
-	LOCAL inversePhi IS (SQRT(5) - 1) / 2.
-	FOR stepIndex IN RANGE(0, coarseSteps + 1) {
-		LOCAL isMinimum IS TRUE.
-		IF stepIndex > 0 AND sampleDV[stepIndex - 1] < sampleDV[stepIndex] SET isMinimum TO FALSE.
-		IF stepIndex < coarseSteps AND sampleDV[stepIndex + 1] < sampleDV[stepIndex] SET isMinimum TO FALSE.
-		IF isMinimum {
-			LOCAL lowETA IS MAX(scanStart, scanStart + (stepIndex - 1) * stepSize).
-			LOCAL highETA IS MIN(scanEnd, scanStart + (stepIndex + 1) * stepSize).
-			LOCAL probeLow IS highETA - inversePhi * (highETA - lowETA).
-			LOCAL probeHigh IS lowETA + inversePhi * (highETA - lowETA).
-			LOCAL probeLowDV IS burnAt(probeLow)["deltaV"].
-			LOCAL probeHighDV IS burnAt(probeHigh)["deltaV"].
-			LOCAL iterations IS 0.
-			UNTIL (highETA - lowETA < 0.05) OR (iterations >= 60) {
-				IF probeLowDV < probeHighDV {
-					SET highETA TO probeHigh.
-					SET probeHigh TO probeLow.
-					SET probeHighDV TO probeLowDV.
-					SET probeLow TO highETA - inversePhi * (highETA - lowETA).
-					SET probeLowDV TO burnAt(probeLow)["deltaV"].
-				} ELSE {
-					SET lowETA TO probeLow.
-					SET probeLow TO probeHigh.
-					SET probeLowDV TO probeHighDV.
-					SET probeHigh TO lowETA + inversePhi * (highETA - lowETA).
-					SET probeHighDV TO burnAt(probeHigh)["deltaV"].
-				}
-				SET iterations TO iterations + 1.
-			}
-			candidates:ADD(burnAt((lowETA + highETA) / 2)).
-		}
-	}
-
-	// Express each candidate's burn in the node's own axes (prograde along the
-	// velocity, normal along the orbit normal, radial the remaining outward axis).
-	FOR candidate IN candidates {
-		LOCAL progradeUnit IS candidate["velocity"]:NORMALIZED.
-		LOCAL normalUnit IS VCRS(candidate["position"], candidate["velocity"]):NORMALIZED.
-		LOCAL radialUnit IS VCRS(progradeUnit, normalUnit):NORMALIZED.
-		IF VDOT(radialUnit, candidate["position"]) < 0 SET radialUnit TO -radialUnit.
-		candidate:ADD("prograde", VDOT(candidate["dvVector"], progradeUnit)).
-		candidate:ADD("normal", VDOT(candidate["dvVector"], normalUnit)).
-		candidate:ADD("radial", VDOT(candidate["dvVector"], radialUnit)).
-	}
-
-	LOCAL bestIndex IS -1.
-	FOR candidateIndex IN RANGE(0, candidates:LENGTH) {
-		IF (bestIndex = -1) OR (candidates[candidateIndex]["deltaV"] < candidates[bestIndex]["deltaV"]) SET bestIndex TO candidateIndex.
-	}
-
-	LOCAL result IS LEXICON("planeMismatchAngle", planeAngleDelta,
-							"candidates", candidates,
-							"nodeCreated", FALSE,
-							"nodeVerified", FALSE).
-
-	IF bestIndex = -1 {
-		result:ADD("best", "none found - widen searchWindowPeriods").
-		RETURN result.
-	}
-	LOCAL best IS candidates[bestIndex].
-	result:ADD("best", best).
-
-	IF createManeuverNode {
-		// The sign of the node's normal axis depends on the coordinate handedness, so
-		// check each choice against the node's own :DELTAV and keep the one that matches.
-		LOCAL tolerance IS best["deltaV"] * 0.01.
-		LOCAL burnNode IS NODE(best["burnUT"], best["radial"], best["normal"], best["prograde"]).
-		ADD burnNode.
-		LOCAL nodeError IS (burnNode:DELTAV - best["dvVector"]):MAG.
-		IF nodeError > tolerance {
-			REMOVE burnNode.
-			LOCAL flippedNode IS NODE(best["burnUT"], best["radial"], -best["normal"], best["prograde"]).
-			ADD flippedNode.
-			LOCAL flippedError IS (flippedNode:DELTAV - best["dvVector"]):MAG.
-			IF flippedError > nodeError {
-				// Neither matches; fall back to the original and let nodeVerified say so.
-				REMOVE flippedNode.
-				ADD NODE(best["burnUT"], best["radial"], best["normal"], best["prograde"]).
-			} ELSE {
-				SET nodeError TO flippedError.
-			}
-		}
-		SET result["nodeCreated"] TO TRUE.
-		SET result["nodeVerified"] TO nodeError <= tolerance.
-		PRINT "Departure burn node created: burn in " + ROUND(best["burnETA"], 1) + " s, dV " + ROUND(best["deltaV"], 1) + " m/s" +
-			" (prograde " + ROUND(best["prograde"], 1) + ", normal " + ROUND(best["normal"], 1) + ", radial " + ROUND(best["radial"], 1) + ").".
-		IF NOT result["nodeVerified"] PRINT "WARNING: node :DELTAV does not match the intended burn vector (off by " + ROUND(nodeError, 2) + " m/s).".
-	}
-	RETURN result.
 }
 
 // Angle between a v_infinity vector's direction and a parking orbit's plane.
@@ -1428,6 +941,7 @@ FUNCTION lambertGooding {
 	LOCAL x IS 0.
 	LOCAL z IS 0.
 	LOCAL converged IS TRUE.
+	LOCAL failReason IS "".
 
 	IF transferType = 1 {
 		// Exact parabola - a closed form, no root-finding needed at all.
@@ -1467,7 +981,10 @@ FUNCTION lambertGooding {
 		// there's nothing valid to hand findZeroBrent - flag it now rather than
 		// letting findZeroBrent's own graceful fallback silently report a
 		// plausible-looking but unconverged x as if it were a real solution.
-		IF bracket["low"] = bracket["high"] SET converged TO FALSE.
+		IF bracket["low"] = bracket["high"] {
+			SET converged TO FALSE.
+			SET failReason TO "No bracket for root".
+		}
 
 		SET x TO findZeroBrent(residualDelegate, bracket["low"], bracket["high"], tolerance).
 		SET z TO SQRT(pathParameterSquared * x * x + oneMinusPathParameterSquared).
@@ -1478,7 +995,10 @@ FUNCTION lambertGooding {
 		// "Motion Type" here mean the same thing it does in
 		// lambertGauss ("Failed" really means failed), which
 		// matters for comparing the two solvers' reliability fairly.
-		IF ABS(residualDelegate(x)) > boundaryTolerance SET converged TO FALSE.
+		IF ABS(residualDelegate(x)) > boundaryTolerance {
+			SET converged TO FALSE.
+			IF failReason = "" SET failReason TO "Root not converged".
+		}
 	}
 
 	LOCAL zVelocityFactor IS pathSign * z * invSqrtPerimeterDiff.
@@ -1500,6 +1020,7 @@ FUNCTION lambertGooding {
 
 	RETURN LEXICON("v_1", v1Result,
 					"v_2", v2Result,
+					"Failure Reason", failReason,
 					"Motion Type", motionType,
 					"Iterations", 0,
 					"Final Value", x,
@@ -2122,11 +1643,11 @@ FUNCTION bestEjectionFromOrbit {
 //   vExit     - velocity wanted at the SOI edge, relative to the body
 //   tSOI      - UT the ship should cross the SOI edge
 //   earliestBurnUT - UT before which the burn is impossible (e.g. now + a margin); a burn
-//                    earlier than this is flagged ("tooEarly"), not moved
+//                    earlier than this is ignored
 //   scanSamples - samples for the transit-time range, and again for the root bracketing
 // Returns a LEXICON with "deltaV", "burnUT", "dvVector", "burnVelocity", "burnPosition",
-// "parkVelocity", "transitTime", "tooEarly" and the "ejection" candidate; "deltaV" is
-// invalidDeltaV if there is no valid burn.
+// "parkVelocity", "transitTime" and the "ejection" candidate; "deltaV" is invalidDeltaV
+// if there is no valid burn.
 // (Checked on an eccentric, inclined orbit: the cost swings from ~1200 to ~4800 m/s as
 // tSOI moves through one parking period, and its minimum matches the phase-free minimum.)
 FUNCTION ejectionForExitTime {
@@ -2138,7 +1659,7 @@ FUNCTION ejectionForExitTime {
 	PARAMETER soiIterations IS 4.
 	PARAMETER scanSamples IS 12.
 
-	LOCAL result IS LEXICON("deltaV", invalidDeltaV, "ejection", 0, "tooEarly", FALSE).
+	LOCAL result IS LEXICON("deltaV", invalidDeltaV, "ejection", 0).
 
 	// The ejection candidate for one sweep direction at one burn time. The periapsis
 	// limit is left off here (it would make the residual below jump) and is checked
@@ -2191,7 +1712,7 @@ FUNCTION ejectionForExitTime {
 					LOCAL root IS candidateAt(senseNumber, rootUT).
 					IF root["valid"] AND root["option"]["periapsis"] >= orbitSpec["minPeriapsis"] {
 						LOCAL rootDV IS (root["option"]["burnVelocity"] - root["state"]["velocity"]):MAG.
-						IF rootDV < result["deltaV"] {
+						IF rootDV < result["deltaV"] AND rootUT >= earliestBurnUT {
 							SET result TO LEXICON("deltaV", rootDV,
 													"burnUT", rootUT,
 													"dvVector", root["option"]["burnVelocity"] - root["state"]["velocity"],
@@ -2199,7 +1720,6 @@ FUNCTION ejectionForExitTime {
 													"burnPosition", root["state"]["position"],
 													"parkVelocity", root["state"]["velocity"],
 													"transitTime", root["option"]["transitTime"],
-													"tooEarly", rootUT < earliestBurnUT,
 													"ejection", root["option"]).
 						}
 					}
@@ -2347,6 +1867,12 @@ FUNCTION transferDeltaV {
 	LOCAL parentLimit IS 0.
 	IF sunBody:NAME <> "Sun" SET parentLimit TO sunBody:SOIRADIUS.
 
+	// Why the cell failed if it does: the reason from the furthest stage any solution got to
+	// (1 Lambert, 2 escape, 3 flight path, 4 ejection).
+	LOCAL failureReason IS "Flight time not positive".
+	LOCAL failureRank IS 0.
+	LOCAL rejectedArcs IS 0.
+
 	IF timeOfFlight > 0 {
 		LOCAL shortTrajectory IS 0.
 		LOCAL longTrajectory IS 0.
@@ -2358,8 +1884,7 @@ FUNCTION transferDeltaV {
 			SET longTrajectory TO lambertGauss(departurePosition, arrivalPosition, timeOfFlight, sunBody:MU, FALSE, longStartSeed).
 		}
 
-		// The cheap part: for each usable solution, the exit velocity, the arrival cost, and a
-		// lower bound on the total.
+		// The cheap part: for each usable solution, the exit velocity, the arrival cost, and a lower bound on the total.
 		LOCAL candidates IS LIST().
 		FOR trajectory IN LIST(shortTrajectory, longTrajectory) {
 			IF trajectory["Motion Type"] <> "Failed" {
@@ -2370,11 +1895,27 @@ FUNCTION transferDeltaV {
 				LOCAL vInfinitySquared IS vExit:MAG ^ 2 - 2 * orbitSpec["mu"] / fromBody:SOIRADIUS.
 				LOCAL sweepAngle IS VANG(departurePosition, arrivalPosition).
 				IF NOT trajectory["Short Way"] SET sweepAngle TO 360 - sweepAngle.
-				IF vInfinitySquared > 0 AND transferArcClears(departurePosition, trajectory["v_1"], sweepAngle, sunBody:MU, 0, parentLimit) {
+				LOCAL arcProblem IS transferArcProblem(departurePosition, trajectory["v_1"], sweepAngle, sunBody:MU, bodyClearanceRadius(sunBody), parentLimit).
+				IF vInfinitySquared <= 0 {
+					IF failureRank < 2 {
+						SET failureRank TO 2.
+						SET failureReason TO "Cannot escape the departure SOI".
+					}
+				} ELSE IF arcProblem <> "" {
+					SET rejectedArcs TO rejectedArcs + 1.
+					IF failureRank < 3 {
+						SET failureRank TO 3.
+						SET failureReason TO arcProblem.
+					}
+				} ELSE {
 					LOCAL arrivalDV IS arrivalDeltaV(trajectory["v_2"] - toBodyVelocity, toBody, captureRadius).
 					candidates:ADD(LEXICON("trajectory", trajectory, "vExit", vExit, "arrivalDV", arrivalDV,
 											"lowerBound", ejectionLowerBound(orbitSpec, SQRT(vInfinitySquared)) + arrivalDV)).
 				}
+			} ELSE IF failureRank < 1 {
+				SET failureRank TO 1.
+				SET failureReason TO "No convergence".
+				IF trajectory:HASKEY("Failure Reason") SET failureReason TO trajectory["Failure Reason"].
 			}
 		}
 
@@ -2391,6 +1932,10 @@ FUNCTION transferDeltaV {
 			// Skip the expensive ejection search if even the best case can't beat what we have.
 			IF candidate["lowerBound"] < bestTotalDV {
 				LOCAL ejection IS ejectionDeltaVForExit(orbitSpec, candidate["vExit"], fromBody, tSOI, exactTiming, precision, earliestBurnUT).
+				IF ejection["deltaV"] >= invalidDeltaV AND failureRank < 4 {
+					SET failureRank TO 4.
+					SET failureReason TO "No valid ejection burn".
+				}
 				IF ejection["deltaV"] < invalidDeltaV AND ejection["deltaV"] + candidate["arrivalDV"] < bestTotalDV {
 					SET bestTotalDV TO ejection["deltaV"] + candidate["arrivalDV"].
 					SET winningTrajectory TO candidate["trajectory"].
@@ -2410,7 +1955,9 @@ FUNCTION transferDeltaV {
 		SET statsOut["Arrival Delta V"] TO winningArrivalDV.
 	} ELSE {
 		SET statsOut["Motion Type"] TO "Failed".
+		SET statsOut["Failure Reason"] TO failureReason.
 	}
+	SET statsOut["Rejected Arcs"] TO rejectedArcs.
 	RETURN bestTotalDV.
 }
 
@@ -2443,66 +1990,8 @@ FUNCTION bindTransferDeltaV {
 // Exact timing, and the node
 // ----------------------------------------------------------------------------
 
-// Final stage for a ship already in orbit: takes the (tSOI, timeOfFlight) a grid search
-// settled on and finds the exact tSOI, within a parking period of it, at which the burn
-// point the orbit forces is cheapest. The Lambert solution is recomputed at every trial
-// tSOI, so the exit velocity follows along. (Lambert changes only slightly across one
-// parking period, but the burn's position in the orbit sweeps all the way round.)
-//   windowLength - s, centred on tSOI; defaults to one parking period
-//   samples      - trial tSOI values across the window before polishing
-//   earliestBurnUT - burns earlier than this (e.g. now + a margin) are ruled out
-// Returns a LEXICON: "tSOI", "deltaV" (invalidDeltaV if nothing works), and "stats"
-// (the statsOut of transferDeltaV at that tSOI; stats["Ejection"] has the burn).
-FUNCTION refineTransferTiming {
-	PARAMETER fromBody.
-	PARAMETER toBody.
-	PARAMETER sunBody.
-	PARAMETER solverType.
-	PARAMETER orbitSpec.
-	PARAMETER captureRadius.
-	PARAMETER tSOI.
-	PARAMETER timeOfFlight.
-	PARAMETER windowLength IS -1.
-	PARAMETER samples IS 24.
-	PARAMETER earliestBurnUT IS 0.
-
-	LOCAL searchLength IS windowLength.
-	IF searchLength < 0 SET searchLength TO orbitSpec["period"].
-	LOCAL stepLength IS searchLength / samples.
-
-	// One trial: the exact-timing cost at trialTSOI, with burns that are too early ruled out.
-	FUNCTION trialAt {
-		PARAMETER trialTSOI.
-
-		LOCAL trialStats IS LEXICON().
-		// Always full precision: this stage produces the answer that gets reported and flown.
-		LOCAL trialDV IS transferDeltaV(fromBody, toBody, sunBody, solverType, orbitSpec, captureRadius, ejectionPrecision("full"),
-										trialTSOI, timeOfFlight, LEXICON(), trialStats, TRUE, earliestBurnUT).
-		IF trialStats:HASKEY("Ejection") {
-			IF trialStats["Ejection"]["tooEarly"] SET trialDV TO invalidDeltaV.
-		}
-		RETURN LEXICON("tSOI", trialTSOI, "deltaV", trialDV, "stats", trialStats).
-	}
-	FUNCTION costAt {
-		PARAMETER trialTSOI.
-		RETURN trialAt(trialTSOI)["deltaV"].
-	}
-
-	LOCAL best IS LEXICON("tSOI", tSOI, "deltaV", invalidDeltaV, "stats", LEXICON()).
-	FOR sampleIndex IN RANGE(0, samples + 1) {
-		LOCAL trial IS trialAt(tSOI - searchLength / 2 + sampleIndex * stepLength).
-		IF trial["deltaV"] < best["deltaV"] SET best TO trial.
-	}
-	IF best["deltaV"] >= invalidDeltaV RETURN best.
-
-	// Polish around the best sample; keep it only if it actually is better.
-	LOCAL polished IS trialAt(goldenSectionMinimum(costAt@, best["tSOI"] - stepLength, best["tSOI"] + stepLength, 12)).
-	IF polished["deltaV"] < best["deltaV"] SET best TO polished.
-	RETURN best.
-}
-
-// A much faster route to the same answer as refineTransferTiming, for a ship already in orbit:
-// lock the departure to the best burn PHASE instead of scanning departure times.
+// Exact timing for a ship already in orbit: lock the departure to the best burn PHASE instead of
+// scanning departure times.
 //
 // The parking orbit repeats every period, so every burn phase occurs once per period. The
 // cheapest exact-timing burn is therefore the phase-free best burn point (bestEjectionFromOrbit),
@@ -2512,15 +2001,15 @@ FUNCTION refineTransferTiming {
 // re-prices at full precision and moves tSOI to the phase it finds. One exact-timing solve at the
 // end gives the burn the node needs.
 // (Checked offline at a fixed exit velocity: pricing at tSOI = best phase's exit time gives the
-// phase-free minimum. What this ignores, against refineTransferTiming, is the tiny variation of the
-// Lambert cost across at most half a parking period, which is a second-order effect at a minimum.)
+// phase-free minimum. What this ignores, against a full scan of departure times, is the tiny variation of
+// the Lambert cost across at most half a parking period, which is a second-order effect at a minimum.)
 //   tSOI, timeOfFlight - from the grid / hill climb
 //   earliestBurnUT     - burns earlier than this (e.g. now + a margin) are not allowed; the departure
 //                        moves a period later instead
 //   maxPasses          - at most this many phase-lock passes (it stops early once tSOI moves less than
 //                        0.2% of the orbit period, which is about the resolution of the burn-point search,
 //                        or once the price agrees with the previous pass to 0.1 m/s)
-// Returns a LEXICON like refineTransferTiming: "tSOI", "deltaV" (invalidDeltaV if nothing works),
+// Returns a LEXICON: "tSOI", "deltaV" (invalidDeltaV if nothing works),
 // "stats" (stats["Ejection"] has the burn), plus "phaseFreeDeltaV" (the price of the best burn point
 // anywhere in the orbit, for comparison) and "passes".
 FUNCTION phaseLockedDeparture {
@@ -2581,16 +2070,14 @@ FUNCTION phaseLockedDeparture {
 	LOCAL finalDV IS transferDeltaV(fromBody, toBody, sunBody, solverType, orbitSpec, captureRadius, ejectionPrecision("full"),
 									currentTSOI, timeOfFlight, LEXICON(), finalStats, TRUE, earliestBurnUT).
 	IF finalDV < invalidDeltaV AND finalStats:HASKEY("Ejection") {
-		IF NOT finalStats["Ejection"]["tooEarly"] {
-			SET result["deltaV"] TO finalDV.
-			SET result["stats"] TO finalStats.
-		}
+		SET result["deltaV"] TO finalDV.
+		SET result["stats"] TO finalStats.
 	}
 	RETURN result.
 }
 
 // Adds a maneuver node for an exact-timing ejection (the "Ejection" LEXICON from
-// refineTransferTiming / ejectionForExitTime), carrying the whole burn vector - radial,
+// phaseLockedDeparture / ejectionForExitTime), carrying the whole burn vector - radial,
 // normal and prograde - so the node's delta-V is the true cost, plane change included.
 // The sign of the node's normal axis depends on coordinate handedness, so each choice is
 // checked against the node's own :DELTAV and the one that matches is kept.
@@ -2651,8 +2138,9 @@ FUNCTION addEjectionNode {
 // rotated from the prime vector by +LAN about the spin axis is right as it stands, but the
 // plane must tilt by -inclination about that node, not +inclination. (Confirmed in-game against
 // the ship's own orbit and nine bodies, measured from POSITIONAT samples: every normal matched.
-// A normal measured from :VELOCITY:ORBIT was wrong for several far-away bodies, so that is not
-// a reliable way to measure one.)
+// A normal measured from :VELOCITY:ORBIT was wrong for several far-away bodies, because on an
+// orbitable that is not the ship that suffix is relative to SHIP:BODY, not to the orbitable's own
+// parent, so it is not a reliable way to measure one unless the parent is SHIP:BODY.)
 // Written with the documented Direction * Vector form; the old Vector * Direction form was
 // checked in-game and does the same thing, so this does not change the result.
 FUNCTION getOrbitPlaneNormal {
@@ -2694,12 +2182,23 @@ FUNCTION computeMinimumInclinationPlane {
 	LOCAL eastInPlane IS VCRS(equatorialNormal, primeInPlane):NORMALIZED.
 
 	LOCAL vHat IS vInfinityVector:NORMALIZED.
-	LOCAL minNormal IS VXCL(vHat, equatorialNormal):NORMALIZED.
+	LOCAL minNormal IS VXCL(vHat, equatorialNormal).
+	IF minNormal:MAG < 1e-6 {
+		// v_infinity lies along the spin axis, so every plane that contains the axis qualifies (all are
+		// polar, inclination 90). Any of them will do; use the one whose normal is the prime vector.
+		SET minNormal TO primeInPlane.
+	} ELSE SET minNormal TO minNormal:NORMALIZED.
 	LOCAL inclination IS VANG(minNormal, equatorialNormal).
 	// The ascending node is VCRS(minNormal, pole) (not VCRS(pole, minNormal)) because of the
 	// left-handed tilt described at getOrbitPlaneNormal.
-	LOCAL ascendingNodeDir IS VCRS(minNormal, equatorialNormal):NORMALIZED.
-	LOCAL lan IS normalizeAngle360(ARCTAN2(VDOT(ascendingNodeDir, eastInPlane), VDOT(ascendingNodeDir, primeInPlane))).
+	LOCAL ascendingNodeDir IS VCRS(minNormal, equatorialNormal).
+	// If v_infinity lies in the equatorial plane the best orbit is equatorial (inclination 0), where the
+	// ascending node is undefined (the plane is the same for any LAN), so use a LAN of 0.
+	LOCAL lan IS 0.
+	IF ascendingNodeDir:MAG > 1e-6 {
+		SET ascendingNodeDir TO ascendingNodeDir:NORMALIZED.
+		SET lan TO normalizeAngle360(ARCTAN2(VDOT(ascendingNodeDir, eastInPlane), VDOT(ascendingNodeDir, primeInPlane))).
+	}
 
 	LOCAL checkNormal IS getOrbitPlaneNormal(centralBody, inclination, lan).
 	LOCAL verificationResidual IS 90 - VANG(vInfinityVector, checkNormal).
@@ -2742,6 +2241,12 @@ FUNCTION solveLANForInclination {
 	IF (inclinationDeg <= 0.0001) OR (inclinationDeg >= 179.9999) RETURN LIST().
 
 	LOCAL pos IS SQRT(vx ^ 2 + vy ^ 2).
+	IF pos < 1e-9 {
+		// v_infinity lies along the spin axis. The plane contains it only if the plane is polar
+		// (inclination 90), and then every LAN works; report two opposite ones. Any other inclination has no solution.
+		IF ABS(COS(inclinationDeg)) < 1e-6 RETURN LIST(0, 180).
+		RETURN LIST().
+	}
 	LOCAL phi IS ARCTAN2(vy, vx).
 	LOCAL rhs IS vz * COS(inclinationDeg) / (SIN(inclinationDeg) * pos).
 	IF ABS(rhs) > 1.0001 RETURN LIST(). // this inclination is below the true minimum - shouldn't happen if the caller respects it
@@ -2956,8 +2461,8 @@ FUNCTION buildTransferWindow {
 
 // The orbit of an orbitable around centralBody, as an orbit spec (see makeOrbitSpec), as of now.
 // The ship's own state is read directly; for anything else the position is taken relative to the
-// central body and the velocity from VELOCITYAT (:VELOCITY:ORBIT is not parent-relative for an
-// orbitable that is not the ship).
+// central body and the velocity from VELOCITYAT (:VELOCITY:ORBIT on an orbitable that is not the
+// ship is relative to SHIP:BODY, not to the orbitable's own parent).
 FUNCTION orbitSpecAround {
 	PARAMETER orbitable.
 	PARAMETER centralBody.
@@ -2967,14 +2472,16 @@ FUNCTION orbitSpecAround {
 							TIME:SECONDS, centralBody:MU, bodyClearanceRadius(centralBody)).
 }
 
-// Whether a Lambert arc stays clear of the central body and inside its sphere of influence. The arc
-// starts at startPosition with startVelocity and sweeps sweepAngle degrees round the central body.
-// Its lowest point is an end (which are above minRadius) or the periapsis of its orbit, if the arc
-// passes it; its highest is an end or, for a bound orbit, the apoapsis, if the arc passes that.
+// Why a Lambert arc is not flyable, or "" if it is. The arc stays clear of the central body and inside
+// its sphere of influence. The arc starts at startPosition with startVelocity and sweeps sweepAngle
+// degrees round the central body. Its lowest point is an end (which are above minRadius) or the
+// periapsis of its orbit, if the arc passes it; its highest is an end or, for a bound orbit, the
+// apoapsis, if the arc passes that.
 //   minRadius - m from the centre; an arc whose periapsis is lower (and reached) is rejected
 //   maxRadius - m from the centre, normally the SOI radius; an arc that reaches an apoapsis higher than
 //               this is rejected (the real path would leave the sphere of influence). 0 means no limit.
-FUNCTION transferArcClears {
+// Returns "Intercepts the central body", "Leaves the central body's SOI", or "".
+FUNCTION transferArcProblem {
 	PARAMETER startPosition.
 	PARAMETER startVelocity.
 	PARAMETER sweepAngle.
@@ -2986,22 +2493,26 @@ FUNCTION transferArcClears {
 	LOCAL momentum IS VCRS(startPosition, startVelocity):MAG.
 	LOCAL semiLatus IS momentum ^ 2 / mu.
 	LOCAL eccentricity IS SQRT(MAX(0, 1 + (startVelocity:MAG ^ 2 - 2 * mu / startRadius) * momentum ^ 2 / mu ^ 2)).
-	IF eccentricity < 1e-6 RETURN startRadius >= minRadius.
+	IF eccentricity < 1e-6 {
+		IF startRadius >= minRadius RETURN "".
+		RETURN "Intercepts the central body".
+	}
 
 	LOCAL tooLow IS semiLatus / (1 + eccentricity) < minRadius.
 	LOCAL tooHigh IS FALSE.
 	IF maxRadius > 0 AND eccentricity < 1 SET tooHigh TO semiLatus / (1 - eccentricity) > maxRadius.
-	IF NOT tooLow AND NOT tooHigh RETURN TRUE.
+	IF NOT tooLow AND NOT tooHigh RETURN "".
 
 	// An extreme is only a problem if the arc gets there. The true anomaly grows along the arc: the
 	// periapsis is at 360 degrees and the apoapsis at 180 or 540.
 	LOCAL startAnomaly IS ARCCOS(MAX(-1, MIN(1, (semiLatus / startRadius - 1) / eccentricity))).
 	IF VDOT(startPosition, startVelocity) < 0 SET startAnomaly TO 360 - startAnomaly.
 	LOCAL endAnomaly IS startAnomaly + sweepAngle.
-	IF tooLow AND endAnomaly >= 360 RETURN FALSE.
-	IF tooHigh AND ((startAnomaly < 180 AND endAnomaly > 180) OR endAnomaly > 540) RETURN FALSE.
-	RETURN TRUE.
+	IF tooLow AND endAnomaly >= 360 RETURN "Intercepts the central body".
+	IF tooHigh AND ((startAnomaly < 180 AND endAnomaly > 180) OR endAnomaly > 540) RETURN "Leaves the central body's SOI".
+	RETURN "".
 }
+
 // Total delta-V (m/s) of a transfer that stays inside one SOI: a burn at departureTime on the
 // ship's own orbit onto a Lambert arc that meets the target timeOfFlight later, and a burn to match
 // the target's velocity (arrivalDeltaV) there. There is no sphere of influence to leave, so the burn
@@ -3043,6 +2554,11 @@ FUNCTION sameSOITransferDeltaV {
 	LOCAL winningDeparture IS 0.
 	LOCAL winningArrivalDV IS 0.
 
+	// Why the cell failed if it does (rank: 1 Lambert, 3 flight path).
+	LOCAL failureReason IS "Flight time not positive".
+	LOCAL failureRank IS 0.
+	LOCAL rejectedArcs IS 0.
+
 	IF timeOfFlight > 0 AND departureTime >= earliestDeparture {
 		LOCAL departureState IS propagateKepler(fromSpec["position"], fromSpec["velocity"], departureTime - fromSpec["epoch"], mu).
 		LOCAL arrivalState IS propagateKepler(toSpec["position"], toSpec["velocity"], departureTime + timeOfFlight - toSpec["epoch"], mu).
@@ -3069,7 +2585,14 @@ FUNCTION sameSOITransferDeltaV {
 						SET sweepAngle TO 360 - separation.
 					}
 
-					IF transferArcClears(departureState["position"], trajectory["v_1"], sweepAngle, mu, fromSpec["minPeriapsis"], maxRadius) {
+					LOCAL arcProblem IS transferArcProblem(departureState["position"], trajectory["v_1"], sweepAngle, mu, fromSpec["minPeriapsis"], maxRadius).
+					IF arcProblem <> "" {
+						SET rejectedArcs TO rejectedArcs + 1.
+						IF failureRank < 3 {
+							SET failureRank TO 3.
+							SET failureReason TO arcProblem.
+						}
+					} ELSE {
 						LOCAL burnVector IS trajectory["v_1"] - departureState["velocity"].
 						LOCAL arrivalDV IS arrivalDeltaV(trajectory["v_2"] - arrivalState["velocity"], toOrbitable, captureRadius).
 						IF burnVector:MAG + arrivalDV < bestTotalDV {
@@ -3081,9 +2604,17 @@ FUNCTION sameSOITransferDeltaV {
 															"burnUT", departureTime).
 						}
 					}
+				} ELSE IF failureRank < 1 {
+					SET failureRank TO 1.
+					SET failureReason TO "No convergence".
+					IF trajectory:HASKEY("Failure Reason") SET failureReason TO trajectory["Failure Reason"].
 				}
 			}
+		} ELSE {
+			SET failureReason TO "Transfer angle near 0 or 180".
 		}
+	} ELSE IF timeOfFlight > 0 {
+		SET failureReason TO "Departure before window start".
 	}
 
 	// Mutate the caller's statsOut in place (see the note in porkchopDeltaV on why).
@@ -3095,7 +2626,9 @@ FUNCTION sameSOITransferDeltaV {
 		SET statsOut["Arrival Delta V"] TO winningArrivalDV.
 	} ELSE {
 		SET statsOut["Motion Type"] TO "Failed".
+		SET statsOut["Failure Reason"] TO failureReason.
 	}
+	SET statsOut["Rejected Arcs"] TO rejectedArcs.
 	RETURN bestTotalDV.
 }
 
@@ -3120,4 +2653,39 @@ FUNCTION bindSameSOIDeltaV {
 	SET bound TO bound:BIND(earliestDeparture).
 	SET bound TO bound:BIND(centralBody:SOIRADIUS).
 	RETURN bound.
+}
+
+// Given the ship's position and velocity (relative to the body) at the burn,
+// and the radius of the far apsis of the transfer orbit, return the burn needed
+// to enter a transfer ellipse whose apsis is the current radius and whose other
+// apsis is r_2.  The burn point is the transfer orbit's apsis, so the velocity
+// right after the burn is purely horizontal.
+// Returns a LEXICON: "prograde", "radial" (node components, normal is always 0),
+// "speedAfter" and "transferSMA".
+FUNCTION hohmannBurn {
+  PARAMETER positionVector.
+  PARAMETER velocityVector.
+  PARAMETER r_2.
+  PARAMETER centralBody IS SHIP:BODY.
+
+  LOCAL r_1 IS positionVector:MAG.
+  LOCAL transferSMA IS (r_1 + r_2) / 2.
+  LOCAL speedAfter IS SQRT(centralBody:MU * (2 / r_1 - 1 / transferSMA)).
+
+  LOCAL upDir IS positionVector:NORMALIZED.
+  LOCAL planeNormal IS VCRS(positionVector, velocityVector):NORMALIZED.
+  // Horizontal direction of travel (velocity with its radial component removed).
+  LOCAL horizontal IS VCRS(planeNormal, upDir):NORMALIZED.
+  LOCAL deltaVVector IS horizontal * speedAfter - velocityVector.
+
+  // Maneuver node axes: prograde along the velocity, radial out perpendicular to it in the orbit plane.
+  LOCAL progradeDir IS velocityVector:NORMALIZED.
+  LOCAL radialDir IS VCRS(planeNormal, progradeDir):NORMALIZED.
+  IF VDOT(radialDir, upDir) < 0 SET radialDir TO -radialDir.
+
+  RETURN LEXICON(
+    "prograde", VDOT(deltaVVector, progradeDir),
+    "radial", VDOT(deltaVVector, radialDir),
+    "speedAfter", speedAfter,
+    "transferSMA", transferSMA).
 }

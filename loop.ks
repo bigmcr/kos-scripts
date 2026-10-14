@@ -27,6 +27,9 @@ RUNPATH("libraryTransfer").
 RUNPATH("loopCommands").
 RUNPATH("loopTerminal").
 
+IF isStockWorld() SET STEERINGMANAGER:MAXSTOPPINGTIME TO 1.0.
+ELSE SET STEERINGMANAGER:MAXSTOPPINGTIME TO 30.0.
+
 FUNCTION functionCaller {
 		PARAMETER func, minArguments, maxArguments, args.
 		IF args:LENGTH > maxArguments RETURN "Too many arguments".
@@ -75,9 +78,10 @@ FUNCTION isResidentScript {
 
 // Stage Function
 // This function activates a stage and updates the appropriate stage information
-// If the rocket is below 75% of the way through the atmosphere, the rocket points prograde before and
-// after staging. The reason is to allow the staged rocket parts to drop behind without colliding with
-// the rocket. This prevents the spent stage from being pushed into the rocket by aerodynamic forces.
+// If the atmosphere near the rocket is below 50% of sea level pressure and the rocket is moving faster
+// than 10 m/s, the rocket points prograde before and after staging. The reason is to allow the staged
+// rocket parts to drop behind without colliding with the rocket. This prevents the spent stage from
+// being pushed into the rocket by aerodynamic forces.
 // Passed the following
 //			waitTime (scalar, seconds rocket should point prograde before and after staging)
 // Returns the following:
@@ -87,12 +91,11 @@ FUNCTION stageFunction {
 	PARAMETER forceLongWait IS SHIP:PARTS:LENGTH > 200.
 	PARAMETER manualStage IS FALSE.
 	LOCAL stageStartTime IS TIME:SECONDS.
-	LOCAL facingVect IS SHIP:FACING.
-
+	
 	IF not manualStage {
 		LOCAL stageInAtm IS ((SHIP:BODY:ATM:EXISTS) AND
-												 (SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) / SHIP:BODY:ATM:SEALEVELPRESSURE > 0.05) AND
-												 (SHIP:VELOCITY:SURFACE:MAG > 10.0)).
+							(SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) / SHIP:BODY:ATM:SEALEVELPRESSURE > 0.50) AND
+							(SHIP:VELOCITY:SURFACE:MAG > 10.0)).
 		IF stageInAtm PRINT "Staging in atmosphere!".
 		IF forceLongWait SET waitTime TO 5.0.
 
@@ -100,13 +103,14 @@ FUNCTION stageFunction {
 		IF stageInAtm {
 			SET globalSteer TO SHIP:VELOCITY:SURFACE.
 			// this pause is to allow time for the rocket to face pure prograde (within 2.5 degrees)
-			UNTIL VANG(SHIP:FACING:VECTOR, SHIP:VELOCITY:SURFACE) < 2.5 WAIT 0.
+			// It times out after 10 seconds.
+			LOCAL startTime IS TIME:SECONDS.
+			UNTIL VANG(SHIP:FACING:VECTOR, SHIP:VELOCITY:SURFACE) < 2.5 OR (TIME:SECONDS - startTime) > 10 WAIT 0.
 		}
 	}
 	STAGE.
 	IF not manualStage {
 		SET stageStartTime TO TIME:SECONDS.
-		SET facingVect TO SHIP:FACING:VECTOR.
 
 		// this pause is to allow time for the spent stage to go past the rocket
 		UNTIL TIME:SECONDS > stageStartTime + waitTime WAIT 0.
@@ -250,6 +254,8 @@ UNTIL done {
 						debugString("Argument " + (arg) + " has the value of " + argList[arg] + " and is of type " + argList[arg]:TYPENAME).
 					}
 					debugString("Running " + argList[0] + " locally with " + (argList:LENGTH - 1) + " arguments").
+					// remember that this script has run, so that update knows a reboot is needed to change it
+					markScriptRun(commandName).
 					IF (argList:LENGTH = 1) RUNPATH(argList[0]).
 					IF (argList:LENGTH = 2) RUNPATH(argList[0], argList[1]).
 					IF (argList:LENGTH = 3) RUNPATH(argList[0], argList[1], argList[2]).
