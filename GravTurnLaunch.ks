@@ -19,9 +19,9 @@ PARAMETER finalLAN IS "Current".
 // For a launch from Kerbin/Earth, this is true, but it might not be from Luna/the Mun
 PARAMETER initialStage IS TRUE.
 
-// Maximum number of G's that the ship should go under
-// For passenger comfort and safety
-PARAMETER maxGs IS 3.
+// An inclination this close to zero is zero for any practical purpose. A launch site is never exactly on the equator,
+// so the launch window calculation would report an orbit like that as too low an inclination for the site.
+IF ABS(finalInclination) < 0.01 SET finalInclination TO 0.
 
 IF (finalInclination < 0) AND (finalLAN <> "Current") {
 	SET finalLAN TO normalizeAngle360(finalLAN + 180).
@@ -45,6 +45,15 @@ LOCAL gravTurnExponent TO 0.740740741.	// The exponent used in the calculation o
 LOCAL endMessage IS "Blank".						// Used to determine the reason for exiting the loop
 LOCAL engineList IS LIST().							// Used to list all of the engines for staging
 LOCAL pitchValue IS 0.									// Used for calculating the desired pitch of the craft
+
+// Maximum number of G's that the ship should go under for passenger comfort and safety
+LOCAL maxGs IS 3.
+
+// Max G related values. First is a delay before which maxGs is overridden to
+// unrealistically high (maxGInitial). After the delay, maxG is set to maxGFinal.
+LOCAL maxGDelay IS 90.
+LOCAL maxGInitial IS 20.
+LOCAL maxGFinal IS 2.
 
 LOCAL useYawPID IS (finalInclination <> 0).
 
@@ -312,6 +321,8 @@ UNTIL mode > 6 {
 			logPID(yawPos_PID, "0:yawPos_PID.csv", TRUE).
 			logPID(yawSpeed_PID, "0:yawSpeed_PID.csv", TRUE).
 		}
+		IF MISSIONTIME < maxGDelay SET maxGs TO maxGInitial.
+		ELSE SET maxGs TO maxGFinal.
 		updateShipInfoCurrent(FALSE).
 		IF debug {
 			PRINT "Ship Facing To North Vector: " + ROUND(normalizeAngle180(yaw_for(SHIP)), 3) + " deg      " AT (0, 4).
