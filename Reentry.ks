@@ -2,9 +2,11 @@
 
 CLEARSCREEN.
 
-PARAMETER desiredPeri IS 55000.
+PARAMETER desiredPeri IS "Default".
 PARAMETER facePrograde IS FALSE.
 PARAMETER hardReentry IS FALSE.
+SET desiredPeri TO processScalarParameter(desiredPeri, errorValue).
+IF desiredPeri = errorValue SET desiredPeri TO 55000.
 
 SAS OFF.
 RCS ON.

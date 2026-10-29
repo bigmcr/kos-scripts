@@ -4,9 +4,11 @@ PARAMETER finalInclination IS 0.			// The desired final inclination of the orbit
 PARAMETER delayForEngines IS TRUE.			// whether or not to delay for engines to spool up before launch
 											// if enabled, stages the hold-down clamps and SRBs after LF engines have reached full thrust
 PARAMETER gravTurnAngleEnd IS 10.			// The final angle of the end of the gravity turn
-PARAMETER gravTurnEnd IS 150000.			// The altitude of the end of the gravity turn
+PARAMETER gravTurnEnd IS "Default".			// The altitude of the end of the gravity turn
 PARAMETER initialStage IS TRUE.				// Whether or not to trigger the initial stage
 PARAMETER maxGs IS 2.						// maximum number of G's that the ship should go under
+SET gravTurnEnd TO processScalarParameter(gravTurnEnd, errorValue).
+IF gravTurnEnd = errorValue SET gravTurnEnd TO 150000.
 
 // Given the start and end altitudes of a curve and the max value, calculates
 // the required vertical velocity at the current altitude.

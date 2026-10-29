@@ -3,9 +3,11 @@
 PARAMETER finalInclination IS 0.			// The desired final inclination of the orbit
 PARAMETER delayForEngines IS FALSE.			// whether or not to delay for engines to spool up before launch
 											// if enabled, stages the hold-down clamps and SRBs after LF engines have reached full thrust
-PARAMETER targetAltitude IS 30000.			// The altitude of the end of the gravity turn
+PARAMETER targetAltitude IS "Default".			// The altitude of the end of the gravity turn
 PARAMETER initialStage IS FALSE.				// Whether or not to trigger the initial stage
 PARAMETER maxGs IS 1.5.						// maximum number of G's that the ship should go under
+SET targetAltitude TO processScalarParameter(targetAltitude, errorValue).
+IF targetAltitude = errorValue SET targetAltitude TO 30000.
 
 LOCAL launchAzimuth IS desiredAzimuth(targetAltitude, finalInclination).
 
