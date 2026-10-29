@@ -581,6 +581,34 @@ FUNCTION createCommandList {
 		RETURN "Global Throttle set to " + globalThrottle.
 	})).
 
+	// Burns the engines for a given time, at a given throttle, in the direction that the ship is facing.
+	// Passed the following:
+	//			burnTime (scalar, seconds to burn for)
+	//			throt (scalar, throttle from 0 to 1. The default is 1.)
+	possibleCommands:ADD("burn", LEXICON("PossibleArgs", 2, "RequiredArgs", 1, "Delegate", {
+		PARAMETER burnTime.
+		PARAMETER throt IS 1.
+		IF NOT burnTime:ISTYPE("Scalar") OR NOT throt:ISTYPE("Scalar") RETURN "burn - invalid argument".
+		SET globalSteer TO SHIP:FACING.
+		setLockedSteering(TRUE).
+		setLockedThrottle(TRUE).
+		SET globalThrottle TO throt.
+		CLEARSCREEN.
+		LOCAL startTime IS TIME:SECONDS.
+		IF burnTime > 30 AND physicsWarpPerm {
+			SET KUNIVERSE:timewarp:mode TO "PHYSICS".
+			SET KUNIVERSE:timewarp:warp TO physicsWarpPerm.
+		}
+		UNTIL TIME:SECONDS - startTime >= burnTime {
+			PRINT "Time remaining in burn:" AT (0,0).
+			PRINT timeToString(burnTime - (TIME:SECONDS - startTime), 2):PADLEFT(23) + "     " AT (0, 1).
+			WAIT 0.
+		}
+		SET SHIP:CONTROL:MAINTHROTTLE TO 0.
+		endScript().
+		RETURN "Burned for " + timeToString(burnTime).
+		})).
+
 	// Kill command - stops all control of the vehicle
 	// intended to allow the operator to stop after entering one of the above commands
 	possibleCommands:ADD("kill", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
