@@ -46,7 +46,7 @@
 //                      period; in the same SOI it is a synodic period or four ship orbits, whichever is shorter
 //   samplesPerWindow - departure times sampled in each window; the grid covers
 //                      departureWindows x samplesPerWindow departure times in all. -1 (the default) chooses:
-//                      4 between bodies, 12 per ship orbit in the same SOI
+//                      between bodies 8 per period of the quicker body in the window (4 to 24), 12 per ship orbit in the same SOI
 //   tofSamples       - flight times sampled (1 to 4 times the Hohmann time). -1 (the default) chooses:
 //                      5 between bodies, 7 in the same SOI
 //   sourceName       - "" (the default) takes the source from where the ship is. Otherwise the source to
@@ -56,16 +56,29 @@
 //                      50 km, or 30 km above the atmosphere if there is one.
 //   captureAltitude  - m above the destination's surface to capture into a circular orbit.
 //                      -1 (the default) prices only matching the arrival excess speed.
+//   solverType       - the Lambert solver: "Gooding" (the default) or "Gauss"
 // ============================================================================
 
-PARAMETER destinationName IS "Minmus".
+PARAMETER destinationName IS "Default".
 PARAMETER startOffset IS 120.
 PARAMETER departureWindows IS 1.
 PARAMETER samplesPerWindow IS -1.
 PARAMETER tofSamples IS -1.
 PARAMETER sourceName IS "".
-PARAMETER parkingAltitude IS -1.
-PARAMETER captureAltitude IS -1.
+PARAMETER parkingAltitude IS "Default".
+PARAMETER captureAltitude IS "Default".
+PARAMETER solverType IS "Gooding".
+SET parkingAltitude TO processScalarParameter(parkingAltitude, errorValue).
+IF parkingAltitude = errorValue SET parkingAltitude TO -1.
+SET captureAltitude TO processScalarParameter(captureAltitude, errorValue).
+IF captureAltitude = errorValue SET captureAltitude TO -1.
+
+CLEARSCREEN.
+
+IF destinationName = "Default" {
+	IF HASTARGET SET destinationName TO TARGET:NAME.
+	ELSE SET destinationName TO "None".
+}
 
 // With debug on (a global from library.ks), the script writes what each step produced to one CSV
 // on the archive: first the coarse porkchop grid (writePorkchopCsv, which replaces the file), then
@@ -85,6 +98,7 @@ FUNCTION debugUnits {
 	IF value:ISTYPE("Boolean") RETURN "boolean".
 	IF value:ISTYPE("String") RETURN "text".
 	IF NOT (value:ISTYPE("Scalar") OR value:ISTYPE("Vector") OR value:ISTYPE("List")) RETURN "text".
+	IF name:STARTSWITH("failureReasons.") RETURN "count".
 
 	LOCAL key IS name.
 	IF name:CONTAINS(".") SET key TO name:SUBSTRING(name:FINDLAST(".") + 1, name:LENGTH - name:FINDLAST(".") - 1).
@@ -97,10 +111,18 @@ FUNCTION debugUnits {
 		SET unit TO "m^3/s^2".
 	} ELSE IF key:CONTAINS("unitseconds") {
 		SET unit TO "s per unit".
-	} ELSE IF key = "finalguess1" {
+	} ELSE IF key = "finalguess1" OR key = "initialguess1" {
 		SET unit TO "s (UT)".
-	} ELSE IF key = "finalguess2" {
+	} ELSE IF key = "finalguess2" OR key = "initialguess2" {
 		SET unit TO "s".
+	} ELSE IF key = "initialvalue" OR key = "deltavalue" OR key = "vinfinity" {
+		SET unit TO "m/s".
+	} ELSE IF key:CONTAINS("anomaly") {
+		SET unit TO "deg".
+	} ELSE IF key:CONTAINS("exit offset") {
+		SET unit TO "m".
+	} ELSE IF key:CONTAINS("rejected") {
+		SET unit TO "count".
 	} ELSE IF key:CONTAINS("deltav") OR key:CONTAINS("delta v") OR key = "dv" OR key = "finalvalue" OR key:CONTAINS("velocity") OR key = "v_1" OR key = "v_2" OR key = "dvvector" OR key = "prograde" OR key = "normal" OR key = "radial" OR key = "nodeerror" {
 		SET unit TO "m/s".
 	} ELSE IF key:CONTAINS("position") OR key = "r_1" OR key = "r_2" OR key:CONTAINS("altitude") OR key:CONTAINS("radius") OR key = "sma" OR key:CONTAINS("periapsis") {
@@ -129,9 +151,18 @@ FUNCTION debugLine {
 	PARAMETER value.
 
 	LOCAL quote IS CHAR(34).
-	LOCAL line IS quote + section + quote + "," + quote + name + quote + "," + quote + value:TOSTRING + quote + "," + quote + debugUnits(section, name, value) + quote.
+	// A list is written as its items joined by semicolons (TOSTRING on a list lists each one over several lines).
+	LOCAL valueText IS value:TOSTRING.
+	IF value:ISTYPE("List") {
+		SET valueText TO "".
+		FOR item IN value {
+			IF valueText <> "" SET valueText TO valueText + "; ".
+			SET valueText TO valueText + item:TOSTRING.
+		}
+	}
+	LOCAL line IS quote + section + quote + "," + quote + name + quote + "," + quote + valueText + quote + "," + quote + debugUnits(section, name, value) + quote.
 	IF transferGridWritten {
-		LOG line TO transferGridFile.
+		IF connectionToKSC() LOG line TO transferGridFile.
 	} ELSE {
 		transferPendingLog:ADD(line).
 	}
@@ -141,6 +172,12 @@ FUNCTION debugLine {
 FUNCTION debugFlush {
 	IF transferGridWritten RETURN.
 	SET transferGridWritten TO TRUE.
+	// No archive connection: nothing is written, and the rows are dropped rather than saved elsewhere.
+	IF NOT connectionToKSC() {
+		transferPendingLog:CLEAR().
+		PRINT "No archive connection: debug log not saved.".
+		RETURN.
+	}
 	LOG "" TO transferGridFile.
 	LOG "Section,Name,Value,Units" TO transferGridFile.
 	FOR line IN transferPendingLog {
@@ -149,28 +186,50 @@ FUNCTION debugFlush {
 	transferPendingLog:CLEAR().
 }
 
-// Adds a lexicon's contents, one row per key. A lexicon inside it is listed one level deep.
+// Adds a lexicon's contents, one row per key. A lexicon inside it is listed too, its keys prefixed
+// with the outer key and a dot.
 FUNCTION debugLogValues {
 	PARAMETER section.
 	PARAMETER data.
+	PARAMETER prefix IS "".
 
 	FOR dataKey IN data:KEYS {
 		LOCAL dataValue IS data[dataKey].
 		IF dataValue:ISTYPE("Lexicon") {
-			FOR innerKey IN dataValue:KEYS {
-				debugLine(section, dataKey + "." + innerKey, dataValue[innerKey]).
-			}
+			debugLogValues(section, dataValue, prefix + dataKey + ".").
 		} ELSE {
-			debugLine(section, dataKey, dataValue).
+			debugLine(section, prefix + dataKey, dataValue).
 		}
 	}
 }
+// Prints where the ship's predicted path goes after the node just made, and anything wrong with it (see
+// checkTransferSOIPath). Returns the number of problems.
+FUNCTION reportSOIPath {
+	PARAMETER fromOrbitable.
+	PARAMETER toOrbitable.
+	PARAMETER sameSOI.
+
+	LOCAL soiCheck IS checkTransferSOIPath(fromOrbitable, toOrbitable, sameSOI).
+	PRINT "SOI path: " + soiCheck["text"] + ".".
+	FOR problem IN soiCheck["problems"] {
+		PRINT "WARNING: " + problem + ".".
+	}
+	IF debug {
+		LOCAL problemText IS "".
+		FOR problem IN soiCheck["problems"] {
+			IF problemText <> "" SET problemText TO problemText + "; ".
+			SET problemText TO problemText + problem.
+		}
+		debugLogValues("SOI path", LEXICON("path", soiCheck["text"], "problems", problemText)).
+	}
+	RETURN soiCheck["problems"]:LENGTH.
+}
 IF debug {
-	IF EXISTS(transferGridFile) DELETEPATH(transferGridFile).
+	IF connectionToKSC() AND EXISTS(transferGridFile) DELETEPATH(transferGridFile).
 	debugLine("Run", "start", "UT " + TIME:SECONDS + ", " + SHIP:NAME + " in " + SHIP:BODY:NAME + "'s SOI, " + SHIP:STATUS).
 	debugLogValues("Parameters", LEXICON("destinationName", destinationName, "startOffset", startOffset, "departureWindows", departureWindows,
 		"samplesPerWindow", samplesPerWindow, "tofSamples", tofSamples, "sourceName", sourceName,
-		"parkingAltitude", parkingAltitude, "captureAltitude", captureAltitude)).
+		"parkingAltitude", parkingAltitude, "captureAltitude", captureAltitude, "solverType", solverType)).
 }
 LOCAL errorCode IS "None".
 
@@ -179,6 +238,9 @@ SET errorCode TO endpoints["error"].
 LOCAL fromOrbitable IS endpoints["from"].
 LOCAL toOrbitable IS endpoints["to"].
 LOCAL sameSOI IS endpoints["sameSOI"].
+IF errorCode = "None" AND solverType <> "Gauss" AND solverType <> "Gooding" {
+	SET errorCode TO "solverType must be Gauss or Gooding, not " + solverType + "!".
+}
 IF debug {
 	IF errorCode = "None" {
 		debugLogValues("Endpoints", LEXICON("from", fromOrbitable:NAME, "to", toOrbitable:NAME, "sameSOI", sameSOI)).
@@ -232,7 +294,6 @@ IF errorCode = "None" AND NOT sameSOI {
 }
 
 IF errorCode = "None" {
-	LOCAL solverType IS "Gauss".
 	// Burns earlier than this (the next minute) can't be flown.
 	LOCAL minimumBurnLead IS 60.
 
@@ -269,6 +330,9 @@ IF errorCode = "None" {
 	LOCAL grid IS porkchopGrid(quickDelegate, window).
 	PRINT "Grid: " + grid["totalCells"] + " cells.".
 	PRINT motionTypeSummary(grid, TRUE).
+	FOR reasonLine IN failureReasonLines(grid) {
+		PRINT "Failed - " + reasonLine.
+	}
 
 	// The best coarse cell in each window is what gets refined.
 	LOCAL coarseCandidates IS porkchopBestPerBand(grid).
@@ -276,7 +340,7 @@ IF errorCode = "None" {
 	IF debug {
 		writePorkchopCsv(grid, window, transferGridFile, solverType, fromOrbitable, toOrbitable).
 		debugFlush().
-		debugLogValues("Coarse grid", LEXICON("cells", grid["totalCells"], "motionTypes", motionTypeSummary(grid),
+		debugLogValues("Coarse grid", LEXICON("cells", grid["totalCells"], "motionTypes", motionTypeSummary(grid), "failureReasons", grid["failureReasonCounts"],
 			"minDeltaV", grid["minDeltaV"]["value"], "minDepartureTime", grid["minDeltaV"]["departureTime"],
 			"minTimeOfFlight", grid["minDeltaV"]["timeOfFlight"], "gameSeconds", grid["duration"], "realSeconds", grid["realDuration"],
 			"csv", transferGridFile)).
@@ -322,6 +386,7 @@ IF errorCode = "None" {
 		LOCAL reportStats IS LEXICON().
 		// Re-price the winner with the full ejection search - the hill climb only saw the quick one.
 		LOCAL reportDV IS fullDelegate(reportTSOI, reportTimeOfFlight, LEXICON(), reportStats).
+		LOCAL soiProblems IS 0.
 		IF debug {
 			debugLogValues("Winner", LEXICON("departureTime", reportTSOI, "flightTime", reportTimeOfFlight, "deltaV", reportDV)).
 			debugLogValues("Full-precision pricing of the winner", reportStats).
@@ -337,6 +402,7 @@ IF errorCode = "None" {
 			IF NOT nodeResult["verified"] {
 				PRINT "WARNING: node dV off by " + ROUND(nodeResult["nodeError"], 2) + " m/s.".
 			}
+			SET soiProblems TO reportSOIPath(fromOrbitable, toOrbitable, sameSOI).
 		} ELSE IF shipInParkingOrbit {
 			// The search priced the best burn point anywhere in the orbit. The orbit repeats every
 			// period, so the cheapest burn the ship can really make is that same point at the repeat
@@ -364,6 +430,7 @@ IF errorCode = "None" {
 				IF NOT nodeResult["verified"] {
 					PRINT "WARNING: node dV off by " + ROUND(nodeResult["nodeError"], 2) + " m/s.".
 				}
+				SET soiProblems TO reportSOIPath(fromOrbitable, toOrbitable, sameSOI).
 			} ELSE {
 				PRINT "No burn in this orbit reaches it: no node.".
 			}
@@ -398,6 +465,7 @@ IF errorCode = "None" {
 		WAIT 0.5.
 
 		SET loopMessage TO fromOrbitable:NAME + " -> " + toOrbitable:NAME + " " + ROUND(reportDV) + "m/s in " + durationToUnitString(reportTimeOfFlight).
+		IF soiProblems > 0 SET loopMessage TO loopMessage + " (SOI WARNING)".
 	}
 }
 
