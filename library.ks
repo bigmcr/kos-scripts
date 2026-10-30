@@ -184,6 +184,19 @@ FUNCTION recursivePartSort {
 // For each stage, record the following information:
 //		Parts - List - containing PARTs in this stage
 //		Engines - List - ENGINEs in this stage, or in the closest stage if this only has resources
+//		EngineData - List - for each of the Engines, a lexicon of "Engine" (the ENGINE), "Ignitions" (scalar, the number of ignitions
+//				remaining, not counting the one that lit the engine if it is running, so it is 0 for a single use engine that is running,
+//				and -1 if it is unlimited), "Throttleable" (boolean, NOT THROTTLELOCK), "CanRestart" (boolean, the engine allows a
+//				restart and has an ignition left), "Running" (boolean, the engine is ignited), "ThrustLimit" (scalar, the thrust limiter
+//				setting, in percent from 0 to 100) and "MinThrottle" (scalar, the lowest throttle the engine can run at, as a fraction from 0 to 1)
+//		MinIgnitions - scalar - the lowest of the engines' ignitions remaining, or -1 if all of them are unlimited
+//		LimitedIgnitions - boolean - whether any of the Engines has a limited number of ignitions
+//		Throttleable - boolean - whether all of the Engines can be throttled (FALSE if there are none)
+//		CanRestart - boolean - whether all of the Engines can be restarted (FALSE if there are none)
+//		LowestThrustLimit - scalar - the lowest thrust limiter setting of the Engines, in percent (100 if there are none)
+//		HighestMinThrottle - scalar - the highest minimum throttle of the Engines, as a fraction (0 if there are none)
+//		EngineData, MinIgnitions, LimitedIgnitions, Throttleable, CanRestart, LowestThrustLimit and HighestMinThrottle are refreshed by
+//		updateShipInfoCurrent for the current stage, because ignitions get used up and the thrust limit can be changed.
 //		RCS - List - RCSs in this stage, or in the closest stage if this only has resources
 //		Sensors - List - SENSORs in this stage
 //		Isp - scalar - calculated for all engines in this stage
@@ -252,6 +265,15 @@ FUNCTION updateShipInfo {
 		stageInfo:ADD("Thrust", 0).
 		stageInfo:ADD("mDot", 0).
 
+		// Add the engine capabilities, but they will be filled out once the engine list has been finalized
+		stageInfo:ADD("EngineData", LIST()).
+		stageInfo:ADD("MinIgnitions", -1).
+		stageInfo:ADD("LimitedIgnitions", FALSE).
+		stageInfo:ADD("Throttleable", FALSE).
+		stageInfo:ADD("CanRestart", FALSE).
+		stageInfo:ADD("LowestThrustLimit", 100).
+		stageInfo:ADD("HighestMinThrottle", 0).
+
 		// Add the resources from this stage
 		stageInfo:ADD("Resources", resourcesInParts(stageInfo["Parts"])).
 
@@ -298,6 +320,11 @@ FUNCTION updateShipInfo {
 
 		SET shipInfo["Stage " + stageNumber]["Fuels"] TO getCurrentFuels(shipInfo["Stage " + stageNumber]["Engines"], stageNumber).
 		SET shipInfo["Stage " + stageNumber]["FuelsRCS"] TO getCurrentFuels(shipInfo["Stage " + stageNumber]["RCS"], stageNumber).
+
+		LOCAL capabilities IS engineCapabilities(shipInfo["Stage " + stageNumber]["Engines"]).
+		FOR eachKey IN capabilities:KEYS {
+			SET shipInfo["Stage " + stageNumber][eachKey] TO capabilities[eachKey].
+		}
 	}
 	updateShipInfoCurrent(FALSE).
 
@@ -377,6 +404,16 @@ FUNCTION logShipInfo {
 		FOR p IN shipInfo["Stage " + stageNumber]["Parts"] {LOG ",," + p:TITLE:REPLACE(",","") + "," + (p:MASS*1000) + ",kg," + p:STAGE TO fileName.}
 		LOG ",Engines has " + shipInfo["Stage " + stageNumber]["Engines"]:LENGTH + " Items in it" TO fileName.
 		FOR p IN shipInfo["Stage " + stageNumber]["Engines"] {LOG ",," + p:CONFIG:REPLACE(",","") TO fileName.}
+		LOG ",Engine Capabilities,Engine,Ignitions Remaining (-1 is unlimited),Throttleable,Can Restart,Running,Thrust Limit (%),Minimum Throttle (fraction)" TO fileName.
+		FOR eachData IN shipInfo["Stage " + stageNumber]["EngineData"] {
+			LOG ",," + eachData["Engine"]:CONFIG:REPLACE(",","") + "," + eachData["Ignitions"] + "," + eachData["Throttleable"] + "," + eachData["CanRestart"] + "," + eachData["Running"] + "," + eachData["ThrustLimit"] + "," + eachData["MinThrottle"] TO fileName.
+		}
+		LOG ",Minimum Ignitions Remaining," + shipInfo["Stage " + stageNumber]["MinIgnitions"] TO fileName.
+		LOG ",Any Engine Has Limited Ignitions," + shipInfo["Stage " + stageNumber]["LimitedIgnitions"] TO fileName.
+		LOG ",All Engines Throttleable," + shipInfo["Stage " + stageNumber]["Throttleable"] TO fileName.
+		LOG ",All Engines Can Restart," + shipInfo["Stage " + stageNumber]["CanRestart"] TO fileName.
+		LOG ",Lowest Thrust Limit," + shipInfo["Stage " + stageNumber]["LowestThrustLimit"] + ",%" TO fileName.
+		LOG ",Highest Minimum Throttle," + shipInfo["Stage " + stageNumber]["HighestMinThrottle"] TO fileName.
 		LOG ",RCS has " + shipInfo["Stage " + stageNumber]["RCS"]:LENGTH + " Items in it" TO fileName.
 		FOR p IN shipInfo["Stage " + stageNumber]["RCS"] {LOG ",," + p:TITLE:REPLACE(",","") TO fileName.}
 		LOG ",Sensors has " + shipInfo["Stage " + stageNumber]["Sensors"]:LENGTH + " Items in it" TO fileName.
@@ -759,6 +796,11 @@ FUNCTION updateShipInfoCurrent {
 	}
 	LOCAL engineStatsVariable IS engineStats(throttleableEngines).
 	LOCAL engineStatsConstant IS engineStats(nonThrottleableEngines).
+	// the ignitions remaining change as engines are lit, so they are refreshed for the current stage
+	LOCAL capabilities IS engineCapabilities(shipInfo["CurrentStage"]["Engines"]).
+	FOR eachKey IN capabilities:KEYS {
+		SET shipInfo["CurrentStage"][eachKey] TO capabilities[eachKey].
+	}
 	LOCAL localAccel IS ( SHIP:BODY:MU / (ALTITUDE + SHIP:BODY:RADIUS)^2).
 //			effective Isp (scalar, s)
 //			thrust (scalar, Newtons)
@@ -1782,6 +1824,66 @@ FUNCTION engineStats {
 								 "mDot", mDot_cur,
 								 "thrustMax", F_max,
 								 "mDotMax", mDot_max).
+}
+
+// Calculate Engine Capabilities
+// Works out what the engines in a list can do about ignition and throttling.
+// Passed the following
+//			list of engines (list containing type "engine", unitless)
+// Returns a lexicon of the following:
+//			"EngineData" (list of lexicons, one for each engine, of "Engine", "Ignitions", "Throttleable", "CanRestart", "Running",
+//				"ThrustLimit" (percent, 0 to 100) and "MinThrottle" (fraction, 0 to 1))
+//			"MinIgnitions" (scalar, the lowest ignitions remaining of the engines, or -1 if all are unlimited)
+//			"LimitedIgnitions" (boolean, whether any engine has limited ignitions)
+//			"Throttleable" (boolean, whether all engines can be throttled, FALSE if the list is empty)
+//			"CanRestart" (boolean, whether all engines can be restarted, FALSE if the list is empty)
+//			"LowestThrustLimit" (scalar, the lowest thrust limiter setting in percent, 100 if the list is empty)
+//			"HighestMinThrottle" (scalar, the highest minimum throttle as a fraction, 0 if the list is empty)
+// The ignitions of an engine (ENGINE:IGNITIONS) are the number remaining, and do not count the ignition that was used to light
+// the engine if it is running now, so a single use engine that is running has 0. It is -1 if the number is unlimited.
+// An engine can be restarted if it allows a restart at all, and it is not out of ignitions (0).
+// An engine can be throttled if it is not THROTTLELOCK. Its minimum throttle is not considered.
+FUNCTION engineCapabilities {
+	PARAMETER engineList.
+
+	LOCAL engineData IS LIST().
+	LOCAL minIgnitions IS -1.
+	LOCAL limitedIgnitions IS FALSE.
+	LOCAL allThrottleable IS engineList:LENGTH > 0.
+	LOCAL allCanRestart IS engineList:LENGTH > 0.
+	LOCAL lowestThrustLimit IS 100.
+	LOCAL highestMinThrottle IS 0.
+
+	FOR eng IN engineList {
+		LOCAL ignitions IS eng:IGNITIONS.
+		LOCAL throttleable IS NOT eng:THROTTLELOCK.
+		LOCAL canRestart IS eng:ALLOWRESTART AND (ignitions <> 0).
+		LOCAL thrustLimit IS eng:THRUSTLIMIT.
+		LOCAL minThrottle IS eng:MINTHROTTLE.
+		engineData:ADD(LEXICON("Engine", eng,
+								"Ignitions", ignitions,
+								"Throttleable", throttleable,
+								"CanRestart", canRestart,
+								"Running", eng:IGNITION,
+								"ThrustLimit", thrustLimit,
+								"MinThrottle", minThrottle)).
+		IF thrustLimit < lowestThrustLimit SET lowestThrustLimit TO thrustLimit.
+		IF minThrottle > highestMinThrottle SET highestMinThrottle TO minThrottle.
+		IF ignitions <> -1 {
+			SET limitedIgnitions TO TRUE.
+			IF minIgnitions = -1 OR ignitions < minIgnitions SET minIgnitions TO ignitions.
+		}
+		IF NOT throttleable SET allThrottleable TO FALSE.
+		IF NOT canRestart SET allCanRestart TO FALSE.
+	}
+
+	RETURN LEXICON("EngineData", engineData,
+					"MinIgnitions", minIgnitions,
+					"LimitedIgnitions", limitedIgnitions,
+					"Throttleable", allThrottleable,
+					"CanRestart", allCanRestart,
+					"LowestThrustLimit", lowestThrustLimit,
+					"HighestMinThrottle", highestMinThrottle).
 }
 
 // Calculate Engine Stats for RCS engines
