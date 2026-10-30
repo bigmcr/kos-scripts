@@ -63,7 +63,8 @@ IF tempChar = TERMINAL:INPUT:ENTER {
 	LOCAL entryETA IS 0.
 	IF previousTargetOrbit <> 0 SET entryETA TO previousTargetOrbit:NEXTPATCHETA.
 
-	LOCAL exitETA IS 1000000000.		// treat a target that never leaves this SOI as an unlimited window
+	LOCAL exitETAInitial IS 1000000000. // treat a target that never leaves this SOI as an unlimited window
+	LOCAL exitETA IS 1000000000.
 	IF finalTargetOrbit:HASNEXTPATCH SET exitETA TO finalTargetOrbit:NEXTPATCHETA.
 
 	LOCAL durationInSOI IS exitETA - entryETA.
@@ -75,7 +76,9 @@ IF tempChar = TERMINAL:INPUT:ENTER {
 	LOCAL transferSMA IS (parkingRadius + targetPeriRadius) / 2.
 	LOCAL transferTime IS CONSTANT:PI * SQRT(transferSMA^3 / SHIP:BODY:MU).
 
-	PRINT "Target will be within this SOI for " + timeToString(durationInSOI).
+	IF exitETA = exitETAInitial {
+		PRINT "Target is in a bound orbit within this SOI.".
+	} ELSE PRINT "Target will be within this SOI for " + timeToString(durationInSOI).
 	PRINT "Hohmann transfer time to the target's periapsis: " + timeToString(transferTime).
 
 	IF durationInSOI < 1.5 * transferTime {
