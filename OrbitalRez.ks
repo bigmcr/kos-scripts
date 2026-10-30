@@ -145,7 +145,6 @@ IF (mode <> "Done") {
 	LOCAL limiterNote IS "".
 
 	LOCAL engineLit IS FALSE.					// whether the main engines have been commanded on and are producing thrust
-	LOCAL limitedIgnitions IS FALSE.			// whether any engine in use has a limited number of ignitions
 	LOCAL minThrottle IS 0.						// the highest minimum throttle of the engines in use
 	LOCAL throttleFloor IS 0.05.				// the lowest throttle that is commanded when burning
 	LOCAL fixedThrust IS FALSE.					// whether the engines cannot be throttled down to the planned thrust
@@ -194,15 +193,9 @@ IF (mode <> "Done") {
 			SET currentMass TO shipInfo["CurrentStage"]["CurrentMass"].
 			SET v_e TO g_0 * shipInfo["CurrentStage"]["Isp"].
 			SET aMax TO MAX(shipInfo["Maximum"]["Accel"], 0.001).
-			LOCAL lowestLimit IS 100.
-			SET limitedIgnitions TO FALSE.
-			SET minThrottle TO 0.
-			FOR eachEngine IN shipInfo["CurrentStage"]["Engines"] {
-				IF eachEngine:THRUSTLIMIT < lowestLimit SET lowestLimit TO eachEngine:THRUSTLIMIT.
-				IF eachEngine:IGNITIONS <> -1 SET limitedIgnitions TO TRUE.
-				IF eachEngine:MINTHROTTLE > minThrottle SET minThrottle TO eachEngine:MINTHROTTLE.
-			}
-			SET fixedThrust TO minThrottle >= thrustFraction.
+			LOCAL lowestLimit IS shipInfo["CurrentStage"]["LowestThrustLimit"].
+			SET minThrottle TO shipInfo["CurrentStage"]["HighestMinThrottle"].
+			SET fixedThrust TO NOT shipInfo["CurrentStage"]["Throttleable"] OR minThrottle >= thrustFraction.
 			SET throttleFloor TO MAX(minThrottle, 0.05).
 			// an engine that cannot throttle down plans with its full acceleration, the others leave some for control
 			IF fixedThrust SET aPlanned TO aMax.
@@ -388,7 +381,7 @@ IF (mode <> "Done") {
 					IF alignError > finalAlignLimit SET throttleCommand TO MAX(throttleCommand * MAX(COS(alignError), 0), throttleFloor).
 				} ELSE IF alignError > alignLimit SET throttleCommand TO 0.
 				IF throttleCommand > 0 SET ignited TO TRUE.
-				IF engineLit AND limitedIgnitions AND throttleCommand < throttleFloor SET throttleCommand TO throttleFloor.
+				IF engineLit AND shipInfo["CurrentStage"]["LimitedIgnitions"] AND throttleCommand < throttleFloor SET throttleCommand TO throttleFloor.
 
 				// drop spent stages (stageIfNeeded). The no-thrust and empty-tank checks wait until the stage has been seen producing
 				// thrust, so that a stage that has not started is not dropped. The throttle is not touched, because shutting an engine
