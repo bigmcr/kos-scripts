@@ -181,6 +181,7 @@ IF (targetInclination <> 0) OR (targetLAN <> 0) {
       returnMe:ADD("positive", solution).
       returnMe:ADD("negative", solution).
       returnMe:ADD("closest", solution).
+      returnMe:ADD("daylight", solution).
     }
 
     returnMe:ADD("useAlternate", useAlternate).

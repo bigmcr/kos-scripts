@@ -1,24 +1,31 @@
 @LAZYGLOBAL OFF.
 
 PARAMETER useOrbitingBody IS FALSE.
+// Whether or not to wait for the operator to adjust the closest approach, and to press ENTER or AG1. If it is FALSE, the burn is planned once, from the closest approach that is found.
+PARAMETER interactive IS TRUE.
+// A time (UT seconds) to start the search for the closest approach from. If it is not in the future, the search starts a quarter orbit ahead.
+PARAMETER guessTime IS TIME:SECONDS - 1.
 
 CLEARSCREEN.
 PRINT "Now matching velocity at closest position to target.".
-PRINT "Adjust closest approach using RCS if desired.".
-PRINT "Activate AG1 or press the ENTER key to end.".
+IF interactive PRINT "Adjust closest approach using RCS if desired.".
+IF interactive PRINT "Activate AG1 or press the ENTER key to end.".
 
 LOCAL approach IS 0.
 LOCAL shipToIntercept   IS VECDRAW(V(0,0,0), V(0,0,0), RED,   "Facing", 1, MAPVIEW).
 LOCAL interceptToTarget IS VECDRAW(V(0,0,0), V(0,0,0), GREEN, "Guidance", 1, MAPVIEW).
 LOCAL tempChar IS "".
+LOCAL passes IS 0.
 
 AG1 OFF.
 
-UNTIL AG1 OR (tempChar = TERMINAL:INPUT:ENTER) {
+UNTIL AG1 OR (tempChar = TERMINAL:INPUT:ENTER) OR ((NOT interactive) AND passes > 0) {
+	SET passes TO passes + 1.
 	IF SHIP:ORBIT:HASNEXTPATCH {
 		SET approach TO closestApproach(TIME:SECONDS + SHIP:ORBIT:NEXTPATCHETA / 2, SHIP:ORBIT:NEXTPATCHETA / 8).
 	} ELSE {
-		IF useOrbitingBody	SET approach TO closestApproach(TIME:SECONDS + SHIP:BODY:ORBIT:PERIOD / 4, SHIP:BODY:ORBIT:PERIOD / 8).
+		IF guessTime > TIME:SECONDS SET approach TO closestApproach(guessTime, 10).
+		ELSE IF useOrbitingBody	SET approach TO closestApproach(TIME:SECONDS + SHIP:BODY:ORBIT:PERIOD / 4, SHIP:BODY:ORBIT:PERIOD / 8).
 		ELSE 								SET approach TO closestApproach(TIME:SECONDS + SHIP:ORBIT:PERIOD / 4, SHIP:ORBIT:PERIOD / 8).
 	}
 	// If the target is a body, show closest approach distance relative to surface, not center.

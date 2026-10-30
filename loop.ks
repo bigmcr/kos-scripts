@@ -1,15 +1,10 @@
 @LAZYGLOBAL OFF.
 GLOBAL autoSteer IS "".
 LOCAL autoSteerOld IS "".
-// previousCommandIndex is the place in previousCommands that is being shown in the input. When it equals the length
-// of the list, the operator is typing a new command, and draftInput holds what was typed before browsing started.
 LOCAL previousCommandIndex IS 0.
 LOCAL draftInput IS "".
 LOCAL forceScreenUpdate IS FALSE.
-GLOBAL runLocal TO TRUE.
-PRINT "Boot script running locally".
 SWITCH TO 1.
-
 
 GLOBAL loopMessage IS bootMessage.					// bootMessage is set in boot.ks, and may report that scripts are out of date.
 GLOBAL errorValue IS -123456789.
@@ -21,6 +16,7 @@ GLOBAL loopMode IS "Default".					// Global so the other loop scripts can access
 GLOBAL rawArgumentCommands IS LIST().
 GLOBAL bodList IS LIST().
 LIST BODIES IN bodList.
+
 // avoiding the use of a file extension allows RUNPATH to determine the file extension
 RUNPATH("library").
 RUNPATH("libraryTransfer").
@@ -226,9 +222,9 @@ UNTIL done {
 	UNTIL NOT TERMINAL:INPUT:HASCHAR {
 		SET tempChar TO TERMINAL:INPUT:GETCHAR().
 
-		// if the operator entered the "Enter" key, attempt to interperet the input
+		// if the operator entered the "Enter" key, attempt to interpret the input
 		IF tempChar = TERMINAL:INPUT:ENTER {
-			// for keeping track of if we sucessfully did something based on the command
+			// for keeping track of if we successfully did something based on the command
 			SET commandValid TO FALSE.
 
 			// ignore the operator hitting the enter key if nothing is present in inputString
@@ -263,6 +259,8 @@ UNTIL done {
 					IF (argList:LENGTH = 5) RUNPATH(argList[0], argList[1], argList[2], argList[3], argList[4]).
 					IF (argList:LENGTH = 6) RUNPATH(argList[0], argList[1], argList[2], argList[3], argList[4], argList[5]).
 					IF (argList:LENGTH = 7) RUNPATH(argList[0], argList[1], argList[2], argList[3], argList[4], argList[5], argList[6]).
+					// stay on the local drive, and in its top folder, whatever the script did
+					SWITCH TO 1.
 					IF (argList:LENGTH <= 7) {
 						IF NOT dontKillAfterScript endScript().
 						SET dontKillAfterScript TO FALSE.
@@ -303,16 +301,10 @@ UNTIL done {
 			// after processing the command, record then delete the command.
 			IF (commandValid) {
 				debugString("Command " + inputString + " completed").
-				// do not record the same command twice in a row, and keep only the most recent 50
-				LOCAL isRepeat IS FALSE.
-				IF previousCommands:LENGTH > 0 {
-					IF previousCommands[previousCommands:LENGTH - 1] = inputString SET isRepeat TO TRUE.
-				}
-				IF NOT isRepeat {
-					previousCommands:ADD(inputString).
-					IF previousCommands:LENGTH > 50 previousCommands:REMOVE(0).
-					saveHistory().
-				}
+				// every command is recorded, including repeats, and only the most recent 50 are kept
+				previousCommands:ADD(inputString).
+				IF previousCommands:LENGTH > 50 previousCommands:REMOVE(0).
+				saveHistory().
 				SET previousCommandIndex TO previousCommands:LENGTH.
 				SET draftInput TO "".
 				SET inputString TO "".

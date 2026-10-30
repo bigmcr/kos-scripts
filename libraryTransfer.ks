@@ -704,7 +704,8 @@ FUNCTION writePorkchopBlock {
 // departure across the columns, "N/A" for failed cells), followed by the
 // search parameters, best cell, motion-type and failure-reason breakdowns, and
 // three more grids (winning way round, sweep angle, rejected arcs). Replaces any
-// existing file of that name.
+// existing file of that name. Nothing is written if the archive is not reachable (connectionToKSC);
+// the data is not saved anywhere else. Returns TRUE if the file was written.
 FUNCTION writePorkchopCsv {
 	PARAMETER grid.
 	PARAMETER window.
@@ -713,6 +714,7 @@ FUNCTION writePorkchopCsv {
 	PARAMETER fromOrbitable.
 	PARAMETER toOrbitable.
 
+	IF NOT connectionToKSC() RETURN FALSE.
 	IF EXISTS(fileName) DELETEPATH(fileName).
 
 	LOCAL synodicPeriod IS window["synodicPeriod"].
@@ -785,6 +787,7 @@ FUNCTION writePorkchopCsv {
 	writePorkchopBlock(fileName, "Winning way round (Short or Long; N/A = no valid arc)", grid, window, grid["winningWay"]).
 	writePorkchopBlock(fileName, "Winning arc sweep angle (deg; N/A = no valid arc)", grid, window, grid["transferAngle"]).
 	writePorkchopBlock(fileName, "Arcs rejected for hitting the central body or leaving its SOI (count)", grid, window, grid["rejectedArcs"]).
+	RETURN TRUE.
 }
 
 // ----------------------------------------------------------------------------
@@ -1391,12 +1394,16 @@ FUNCTION designParkingOrbit {
 // solving every sample exactly (what this replaced) managed 88% / 95% (8 samples) and 97.5% / 98%
 // (16 samples, twice the solves). Kerbin-like orbits are easier. The misses that remain are cases
 // where the cost is nearly flat across two separate regions.
-// Returns a LEXICON: "samples", "soiIterations", "polishIterations".
+// It also sets how carefully transferDeltaV places the start of the Lambert arc at the departure
+// body's SOI-exit point (see there): "exitPasses" Lambert re-solves from the exit point estimated
+// along the exit heading, and "exactExit" (full only) a final refinement from the exit point the
+// ejection hyperbola actually reaches.
+// Returns a LEXICON: "samples", "soiIterations", "polishIterations", "exitPasses", "exactExit".
 FUNCTION ejectionPrecision {
 	PARAMETER precisionName.
 
-	IF precisionName = "quick" RETURN LEXICON("samples", 24, "soiIterations", 2, "polishIterations", 6).
-	RETURN LEXICON("samples", 48, "soiIterations", 4, "polishIterations", 8).
+	IF precisionName = "quick" RETURN LEXICON("samples", 24, "soiIterations", 2, "polishIterations", 6, "exitPasses", 1, "exactExit", FALSE).
+	RETURN LEXICON("samples", 48, "soiIterations", 4, "polishIterations", 8, "exitPasses", 2, "exactExit", TRUE).
 }
 
 // A cheap, rigorous lower bound on the ejection delta-V for an orbit spec ("orbit" or "design")
@@ -1732,6 +1739,29 @@ FUNCTION ejectionForExitTime {
 	RETURN result.
 }
 
+// Where the ship is when it crosses the departure body's SOI edge, relative to the body's centre, for an
+// ejection found by bestEjectionFromOrbit or ejectionForExitTime. The hyperbola lies in the plane of the
+// burn position and the post-burn velocity; the ship moves on from the burn by the difference of the
+// true anomalies at the SOI edge and at the burn, so the edge position is the burn direction turned by
+// that angle towards the direction of travel, at the SOI radius. Returns V(0, 0, 0) if there is no
+// hyperbola to read it from (the closed form for a designed orbit has none).
+FUNCTION soiExitOffset {
+	PARAMETER ejection.
+	PARAMETER soiRadius.
+
+	IF NOT ejection:HASKEY("ejection") OR NOT ejection:HASKEY("burnPosition") RETURN V(0, 0, 0).
+	LOCAL hyperbola IS ejection["ejection"].
+	IF NOT hyperbola:ISTYPE("Lexicon") RETURN V(0, 0, 0).
+
+	LOCAL radialUnit IS ejection["burnPosition"]:NORMALIZED.
+	LOCAL burnVelocity IS hyperbola["burnVelocity"].
+	LOCAL tangentialVector IS burnVelocity - radialUnit * VDOT(burnVelocity, radialUnit).
+	IF tangentialVector:MAG < 1e-6 RETURN V(0, 0, 0).
+
+	LOCAL sweep IS hyperbola["trueAnomalySOI"] - hyperbola["trueAnomalyBurn"].
+	RETURN (radialUnit * COS(sweep) + tangentialVector:NORMALIZED * SIN(sweep)) * soiRadius.
+}
+
 // The ejection cost for a given exit velocity, for either kind of orbit spec.
 //   exactTiming - for an "orbit" spec only: fix the burn point by tSOI instead of
 //                 taking the best point in the orbit. A "design" spec has no real
@@ -1829,6 +1859,14 @@ FUNCTION arrivalDeltaV {
 // Both Lambert solutions are costed, but cheaply first: the arrival is exact and the ejection
 // has a rigorous lower bound (ejectionLowerBound), so the solution that looks cheaper is searched
 // first and the other one's ejection search is skipped if its lower bound can't beat the first.
+// The Lambert arc starts where the ship really leaves the departure body: at the SOI edge, up to
+// soiRadius from the body's centre (a fifth of the Mun's orbit radius; negligible for a planet in the
+// Sun's frame, but not for a moon). Starting from the centre with the speed Lambert wants at the edge
+// puts the ship on the wrong orbit. So each solution is re-solved from "the body's position plus an
+// offset to the exit point": first (precision["exitPasses"] times) with the offset along the exit
+// heading, then (precision["exactExit"], the full stage) from the exit point the ejection hyperbola
+// actually reaches (soiExitOffset), re-pricing the ejection each time. statsOut["Exit Offset"] is the
+// offset used.
 // Returns invalidDeltaV if neither solution works.
 FUNCTION transferDeltaV {
 	PARAMETER fromBody.
@@ -1862,6 +1900,7 @@ FUNCTION transferDeltaV {
 	LOCAL winningTrajectory IS 0.
 	LOCAL winningEjection IS 0.
 	LOCAL winningArrivalDV IS 0.
+	LOCAL soiRadius IS fromBody:SOIRADIUS.
 
 	// A transfer around a body that has a sphere of influence (not the Sun) must stay inside it.
 	LOCAL parentLimit IS 0.
@@ -1873,29 +1912,43 @@ FUNCTION transferDeltaV {
 	LOCAL failureRank IS 0.
 	LOCAL rejectedArcs IS 0.
 
-	IF timeOfFlight > 0 {
-		LOCAL shortTrajectory IS 0.
-		LOCAL longTrajectory IS 0.
-		IF solverType = "Gooding" {
-			SET shortTrajectory TO lambertGooding(departurePosition, arrivalPosition, timeOfFlight, sunBody:MU, TRUE, shortStartSeed).
-			SET longTrajectory TO lambertGooding(departurePosition, arrivalPosition, timeOfFlight, sunBody:MU, FALSE, longStartSeed).
-		} ELSE {
-			SET shortTrajectory TO lambertGauss(departurePosition, arrivalPosition, timeOfFlight, sunBody:MU, TRUE, shortStartSeed).
-			SET longTrajectory TO lambertGauss(departurePosition, arrivalPosition, timeOfFlight, sunBody:MU, FALSE, longStartSeed).
-		}
+	// One Lambert solve, from startPosition to the destination at arrival.
+	FUNCTION solveLambert {
+		PARAMETER startPosition.
+		PARAMETER shortWay.
+		PARAMETER startSeed.
 
+		IF solverType = "Gooding" RETURN lambertGooding(startPosition, arrivalPosition, timeOfFlight, sunBody:MU, shortWay, startSeed).
+		RETURN lambertGauss(startPosition, arrivalPosition, timeOfFlight, sunBody:MU, shortWay, startSeed).
+	}
+
+	IF timeOfFlight > 0 {
 		// The cheap part: for each usable solution, the exit velocity, the arrival cost, and a lower bound on the total.
 		LOCAL candidates IS LIST().
-		FOR trajectory IN LIST(shortTrajectory, longTrajectory) {
+		FOR shortWay IN LIST(TRUE, FALSE) {
+			LOCAL startSeed IS longStartSeed.
+			IF shortWay SET startSeed TO shortStartSeed.
+			LOCAL trajectory IS solveLambert(departurePosition, shortWay, startSeed).
+
+			// Move the start of the arc from the body's centre to where the ship leaves its SOI (estimated
+			// along the exit heading), and again from that arc's own exit heading.
+			FROM {LOCAL pass IS 1.} UNTIL pass > precision["exitPasses"] STEP {SET pass TO pass + 1.} DO {
+				IF trajectory["Motion Type"] = "Failed" BREAK.
+				LOCAL headingOffset IS (trajectory["v_1"] - fromBodyVelocity):NORMALIZED * soiRadius.
+				LOCAL movedTrajectory IS solveLambert(departurePosition + headingOffset, shortWay, trajectory["Final Value"]).
+				IF movedTrajectory["Motion Type"] = "Failed" BREAK.
+				SET trajectory TO movedTrajectory.
+			}
+
 			IF trajectory["Motion Type"] <> "Failed" {
-				IF trajectory["Short Way"] SET seed["shortSeed"] TO trajectory["Final Value"].
+				IF shortWay SET seed["shortSeed"] TO trajectory["Final Value"].
 				ELSE SET seed["longSeed"] TO trajectory["Final Value"].
 
 				LOCAL vExit IS trajectory["v_1"] - fromBodyVelocity.
-				LOCAL vInfinitySquared IS vExit:MAG ^ 2 - 2 * orbitSpec["mu"] / fromBody:SOIRADIUS.
-				LOCAL sweepAngle IS VANG(departurePosition, arrivalPosition).
-				IF NOT trajectory["Short Way"] SET sweepAngle TO 360 - sweepAngle.
-				LOCAL arcProblem IS transferArcProblem(departurePosition, trajectory["v_1"], sweepAngle, sunBody:MU, bodyClearanceRadius(sunBody), parentLimit).
+				LOCAL vInfinitySquared IS vExit:MAG ^ 2 - 2 * orbitSpec["mu"] / soiRadius.
+				LOCAL sweepAngle IS VANG(trajectory["r_1"], arrivalPosition).
+				IF NOT shortWay SET sweepAngle TO 360 - sweepAngle.
+				LOCAL arcProblem IS transferArcProblem(trajectory["r_1"], trajectory["v_1"], sweepAngle, sunBody:MU, bodyClearanceRadius(sunBody), parentLimit).
 				IF vInfinitySquared <= 0 {
 					IF failureRank < 2 {
 						SET failureRank TO 2.
@@ -1944,6 +1997,33 @@ FUNCTION transferDeltaV {
 				}
 			}
 		}
+
+		// The exact exit point (full stage): the ejection that won says where the ship really crosses the SOI
+		// edge. If that is not where the arc was started, re-solve Lambert from it, re-price the ejection
+		// for the new exit velocity and the arrival for the new arrival velocity, and look again (twice at most).
+		IF precision["exactExit"] AND winningTrajectory:ISTYPE("Lexicon") {
+			FROM {LOCAL pass IS 1.} UNTIL pass > 2 STEP {SET pass TO pass + 1.} DO {
+				LOCAL exactOffset IS soiExitOffset(winningEjection, soiRadius).
+				IF exactOffset:MAG = 0 BREAK.
+				IF (exactOffset - (winningTrajectory["r_1"] - departurePosition)):MAG < 0.005 * soiRadius BREAK.
+
+				LOCAL movedTrajectory IS solveLambert(departurePosition + exactOffset, winningTrajectory["Short Way"], winningTrajectory["Final Value"]).
+				IF movedTrajectory["Motion Type"] = "Failed" BREAK.
+				LOCAL movedExit IS movedTrajectory["v_1"] - fromBodyVelocity.
+				IF movedExit:MAG ^ 2 - 2 * orbitSpec["mu"] / soiRadius <= 0 BREAK.
+				LOCAL movedSweep IS VANG(movedTrajectory["r_1"], arrivalPosition).
+				IF NOT movedTrajectory["Short Way"] SET movedSweep TO 360 - movedSweep.
+				IF transferArcProblem(movedTrajectory["r_1"], movedTrajectory["v_1"], movedSweep, sunBody:MU, bodyClearanceRadius(sunBody), parentLimit) <> "" BREAK.
+
+				LOCAL movedEjection IS ejectionDeltaVForExit(orbitSpec, movedExit, fromBody, tSOI, exactTiming, precision, earliestBurnUT).
+				IF movedEjection["deltaV"] >= invalidDeltaV BREAK.
+				LOCAL movedArrivalDV IS arrivalDeltaV(movedTrajectory["v_2"] - toBodyVelocity, toBody, captureRadius).
+				SET winningTrajectory TO movedTrajectory.
+				SET winningEjection TO movedEjection.
+				SET winningArrivalDV TO movedArrivalDV.
+				SET bestTotalDV TO movedEjection["deltaV"] + movedArrivalDV.
+			}
+		}
 	}
 
 	// Mutate the caller's statsOut in place (see the note in porkchopDeltaV on why).
@@ -1953,6 +2033,7 @@ FUNCTION transferDeltaV {
 		}
 		SET statsOut["Ejection"] TO winningEjection.
 		SET statsOut["Arrival Delta V"] TO winningArrivalDV.
+		SET statsOut["Exit Offset"] TO winningTrajectory["r_1"] - departurePosition.
 	} ELSE {
 		SET statsOut["Motion Type"] TO "Failed".
 		SET statsOut["Failure Reason"] TO failureReason.
@@ -1999,7 +2080,10 @@ FUNCTION bindTransferDeltaV {
 // time as burn time + transit time + a whole number of periods. Lambert then has to be recomputed
 // at that new exit time (it changes only slightly, so this settles in a pass or two); each pass
 // re-prices at full precision and moves tSOI to the phase it finds. One exact-timing solve at the
-// end gives the burn the node needs.
+// end gives the burn the node needs. Each of those prices is a full-precision transferDeltaV, so each
+// one also moves the start of the Lambert arc to the SOI-exit point the ejection reaches (see there);
+// nothing in the phase lock itself depends on where the arc starts, since it only reads the burn offset and
+// the transit time from the ejection.
 // (Checked offline at a fixed exit velocity: pricing at tSOI = best phase's exit time gives the
 // phase-free minimum. What this ignores, against a full scan of departure times, is the tiny variation of
 // the Lambert cost across at most half a parking period, which is a second-order effect at a minimum.)
@@ -2074,6 +2158,79 @@ FUNCTION phaseLockedDeparture {
 		SET result["stats"] TO finalStats.
 	}
 	RETURN result.
+}
+
+// The bodies whose SOIs the ship's predicted path passes through, in order, once the maneuver node is
+// executed: the body of the orbit after the node, then the body of each patched-conic patch after it.
+// Empty if there is no node. Only as many patches as KSP predicts (its patch limit, and the tracking
+// station's patched-conics level) show up, so a long path can be cut short.
+FUNCTION predictedSOIPath {
+	LOCAL soiPath IS LIST().
+	// A tick, so KSP has re-solved the flight plan for a node that was only just added.
+	WAIT 0.
+	IF NOT HASNODE RETURN soiPath.
+
+	LOCAL patch IS NEXTNODE:ORBIT.
+	soiPath:ADD(patch:BODY:NAME).
+	UNTIL NOT patch:HASNEXTPATCH {
+		SET patch TO patch:NEXTPATCH.
+		soiPath:ADD(patch:BODY:NAME).
+	}
+	RETURN soiPath.
+}
+
+// Checks the predicted SOI path of the maneuver node just made for a transfer, against what the transfer
+// is meant to do. The path should be: the departure body (or, in the same SOI, the central body), then
+// the central body, then, if the destination is a body, a change into that body's SOI. Anything else
+// before the destination is a problem: another body's SOI is crossed (for example the Mun, on the way
+// from Kerbin orbit to Minmus), the departure body is met again, or a destination body is never reached.
+// Whatever happens after the destination's SOI is entered is not checked.
+//   fromOrbitable - the source (the departure body, or the ship in a same-SOI transfer)
+//   toOrbitable   - the destination
+//   sameSOI       - TRUE for a transfer inside one SOI
+// Returns a LEXICON: "path" (the LIST of body names), "text" (the path as "Mun > Kerbin > Minmus"),
+// and "problems" (a LIST of short messages, empty if the path is as intended).
+FUNCTION checkTransferSOIPath {
+	PARAMETER fromOrbitable.
+	PARAMETER toOrbitable.
+	PARAMETER sameSOI.
+
+	LOCAL centralName IS fromOrbitable:BODY:NAME.
+	LOCAL leadingName IS fromOrbitable:NAME.
+	IF sameSOI SET leadingName TO centralName.
+
+	LOCAL soiPath IS predictedSOIPath().
+	LOCAL problems IS LIST().
+	LOCAL pathText IS "".
+	LOCAL targetIsBody IS toOrbitable:ISTYPE("Body").
+	LOCAL reachedTarget IS FALSE.
+
+	FOR index IN RANGE(0, soiPath:LENGTH) {
+		LOCAL bodyName IS soiPath[index].
+		IF index > 0 { SET pathText TO pathText + " > ". }
+		SET pathText TO pathText + bodyName.
+
+		IF NOT reachedTarget AND index > 0 {
+			LOCAL problem IS "".
+			IF targetIsBody AND bodyName = toOrbitable:NAME {
+				SET reachedTarget TO TRUE.
+			} ELSE IF bodyName = centralName {
+				// back in (or still in) the central body's SOI: expected
+			} ELSE IF bodyName = leadingName {
+				SET problem TO "returns to " + bodyName + "'s SOI before the target".
+			} ELSE {
+				SET problem TO "crosses " + bodyName + "'s SOI before the target".
+			}
+			IF problem <> "" AND NOT problems:CONTAINS(problem) problems:ADD(problem).
+		}
+	}
+
+	IF soiPath:LENGTH = 0 {
+		problems:ADD("no predicted path (no node?)").
+	} ELSE IF targetIsBody AND NOT reachedTarget {
+		problems:ADD("no " + toOrbitable:NAME + " encounter predicted").
+	}
+	RETURN LEXICON("path", soiPath, "text", pathText, "problems", problems).
 }
 
 // Adds a maneuver node for an exact-timing ejection (the "Ejection" LEXICON from
@@ -2402,8 +2559,12 @@ FUNCTION resolveTransferEndpoints {
 // A same-SOI window is one synodic period of the two orbits, or four orbits of the ship if that is
 // shorter (the cost repeats with the ship's orbit, so the departure axis needs a dozen or two
 // samples per ship orbit; two nearly-equal orbits have a synodic period of thousands of orbits).
-// Defaults: between bodies 4 x 5 (coarse) or 40 x 41 (fine); in the same SOI 12 (coarse) or 24
-// (fine) departures per ship orbit and 7 or 31 flight times.
+// Defaults: between bodies the departures scale with the window. The geometry changes as fast as the
+// quicker of the two bodies moves, so the count is the window length in periods of that body times 8
+// (coarse) or 24 (fine): never fewer than 4 (coarse) or 40 (fine), never more than 24 (coarse) or 120
+// (fine). A window of a synodic period is 1.15 periods of the Mun against Minmus (9 coarse, 40 fine), but
+// about 2.1 years of Kerbin against Duna (17 coarse, 51 fine). Flight times: 5 (coarse) or 41 (fine). In the
+// same SOI: 12 (coarse) or 24 (fine) departures per ship orbit and 7 or 31 flight times.
 // Returns a window LEXICON as for transferSearchWindow ("error" set if something is wrong), with
 // "windowLength" (s) and "samplesPerWindow" added.
 FUNCTION buildTransferWindow {
@@ -2445,8 +2606,22 @@ FUNCTION buildTransferWindow {
 		IF window["error"] = "None" SET window["windowLength"] TO windowLength.
 	} ELSE {
 		IF perWindow < 1 {
-			SET perWindow TO 40.
-			IF coarse SET perWindow TO 4.
+			// Scale with how many periods of the quicker body the window covers.
+			LOCAL perPeriod IS 24.
+			LOCAL fewest IS 40.
+			LOCAL most IS 120.
+			IF coarse {
+				SET perPeriod TO 8.
+				SET fewest TO 4.
+				SET most TO 24.
+			}
+			SET perWindow TO fewest.
+			LOCAL periodFrom IS fromOrbitable:ORBIT:PERIOD.
+			LOCAL periodTo IS toOrbitable:ORBIT:PERIOD.
+			IF ABS(1 / periodFrom - 1 / periodTo) > 1e-12 {
+				LOCAL synodic IS 1 / ABS(1 / periodFrom - 1 / periodTo).
+				SET perWindow TO MAX(fewest, MIN(most, ROUND(synodic / MIN(periodFrom, periodTo) * perPeriod))).
+			}
 		}
 		IF flightSamples < 1 {
 			SET flightSamples TO 41.

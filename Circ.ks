@@ -82,7 +82,6 @@ FUNCTION getOffset {
 			IF desiredAltitude <> processScalarParameter(remainder, 1) RETURN failed.
 		}
 		// timeToAltitude only works for an orbit that comes back around
-		IF SHIP:ORBIT:ECCENTRICITY >= 1 RETURN failed.
 		LOCAL timeToIt IS timeToAltitude(desiredAltitude).
 		RETURN timeToIt.
 	}

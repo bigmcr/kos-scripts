@@ -2933,46 +2933,90 @@ FUNCTION timeToLongitude
 	RETURN TIME:SECONDS + normalizeAngle360(SHIP:GEOPOSITION:LNG - desiredLongitude) / 360 * SHIP:BODY:ROTATIONPERIOD.
 }
 
-// Returns time in seconds to the next time SHIP crosses the input altitude or -1 if input altitude is never crossed
+// Returns time in seconds to the next time SHIP crosses the input altitude or -1 if input altitude is never crossed.
+// Works for both kinds of orbit:
+//		elliptical - the ship crosses an altitude between the periapsis and apoapsis twice per orbit.
+//		hyperbolic (eccentricity of 1 or more) - the ship crosses an altitude above the periapsis once on the way in and
+//			once on the way out. The time of each is its hyperbolic mean anomaly (see trueToMeanAnomaly) over the hyperbolic
+//			mean motion, measured from periapsis and negative on the way in. The nearer one that is still ahead is used.
+// Either way, once the time is known it is compared with the time of the next sphere of influence change. If the crossing
+// would be after that, the ship is on a different orbit by then and does not cross the altitude, so the result is -1.
+// Passed the following:
+//			desiredAltitude (scalar, meters above sea level)
+// Returns the following:
+//			time from now in seconds (scalar), or -1 if the altitude is never crossed on this orbit. For a hyperbolic orbit
+//			that includes an altitude below the periapsis, at or beyond the sphere of influence, or crossed both ways already.
 FUNCTION timeToAltitude
 {
 	PARAMETER desiredAltitude.
 
-	// return -1 if never reach altitude
-	IF desiredAltitude < SHIP:PERIAPSIS OR desiredAltitude > SHIP:APOAPSIS RETURN -1.
-
-	// query constants
 	LOCAL ecc IS SHIP:ORBIT:ECCENTRICITY.
-	IF ecc = 0 SET ecc TO 0.00001. // ensure no divide by 0
 	LOCAL sma IS SHIP:ORBIT:SEMIMAJORAXIS.
 	LOCAL desiredRadius IS desiredAltitude + SHIP:BODY:RADIUS.
-	LOCAL currentRadius IS SHIP:ALTITUDE + SHIP:BODY:RADIUS.
+	LOCAL crossingTime IS -1.
 
-  // Step 1: get true anomaly (bounds required for numerical errors near apsides)
-  LOCAL desiredTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / desiredRadius) - 1) / ecc)).
-  LOCAL currentTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / currentRadius) - 1) / ecc)).
+	// return -1 if never reach altitude (for either kind of orbit, it is not reached below the periapsis)
+	IF desiredAltitude < SHIP:PERIAPSIS RETURN -1.
 
-  // Step 2: calculate eccentric anomaly
-  LOCAL desiredEccentricAnomaly IS ARCCOS((ecc + desiredTrueAnomalyCos) / (1 + ecc * desiredTrueAnomalyCos)).
-  LOCAL currentEccentricAnomaly IS ARCCOS((ecc + currentTrueAnomalyCos) / (1 + ecc * currentTrueAnomalyCos)).
+	IF ecc >= 1 {
+		// a parabola has no finite semi-major axis to work with
+		IF ecc < 1 + 1e-9 RETURN -1.
+		// outside the sphere of influence the ship is on another orbit (the Sun has no sphere of influence)
+		IF SHIP:BODY:HASBODY AND desiredRadius >= SHIP:BODY:SOIRADIUS RETURN -1.
 
-  // Step 3: calculate mean anomaly
-  LOCAL desiredMeanAnomaly IS Constant:DegToRad * desiredEccentricAnomaly - ecc * SIN( desiredEccentricAnomaly).
-  LOCAL currentMeanAnomaly IS Constant:DegToRad * currentEccentricAnomaly - ecc * SIN( currentEccentricAnomaly).
-	IF ETA:APOAPSIS > ETA:PERIAPSIS {
-		SET currentMeanAnomaly TO Constant:PI * 2 - currentMeanAnomaly.
+		// the semi-latus rectum, sma * (1 - e^2), is positive for a hyperbola because sma is negative
+		LOCAL semiLatus IS sma * (1 - ecc^2).
+		LOCAL desiredCos IS MAX(-1, MIN(1, (semiLatus / desiredRadius - 1) / ecc)).
+		LOCAL desiredTrueAnomaly IS ARCCOS(desiredCos).
+
+		// the mean motion is in radians per second, so the mean anomalies (in degrees) are converted to radians
+		LOCAL hyperbolicMeanMotion IS SQRT(SHIP:BODY:MU / (-sma)^3).
+		LOCAL desiredMean IS Constant:DegToRad * trueToMeanAnomaly(desiredTrueAnomaly, ecc).
+		LOCAL currentMean IS Constant:DegToRad * trueToMeanAnomaly(normalizeAngle180(SHIP:ORBIT:TRUEANOMALY), ecc).
+
+		// the way in comes first (desiredMean is positive), then the way out
+		LOCAL inboundTime IS (-desiredMean - currentMean) / hyperbolicMeanMotion.
+		LOCAL outboundTime IS (desiredMean - currentMean) / hyperbolicMeanMotion.
+		IF inboundTime >= 0 SET crossingTime TO inboundTime.
+		ELSE IF outboundTime >= 0 SET crossingTime TO outboundTime.
+	} ELSE {
+		// an ellipse does not go above its apoapsis
+		IF desiredAltitude > SHIP:APOAPSIS RETURN -1.
+		IF ecc = 0 SET ecc TO 0.00001. // ensure no divide by 0
+		LOCAL currentRadius IS SHIP:ALTITUDE + SHIP:BODY:RADIUS.
+
+		// Step 1: get true anomaly (bounds required for numerical errors near apsides)
+		LOCAL desiredTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / desiredRadius) - 1) / ecc)).
+		LOCAL currentTrueAnomalyCos IS MAX(-1, MIN(1, ((sma * (1 - ecc^2) / currentRadius) - 1) / ecc)).
+
+		// Step 2: calculate eccentric anomaly
+		LOCAL desiredEccentricAnomaly IS ARCCOS((ecc + desiredTrueAnomalyCos) / (1 + ecc * desiredTrueAnomalyCos)).
+		LOCAL currentEccentricAnomaly IS ARCCOS((ecc + currentTrueAnomalyCos) / (1 + ecc * currentTrueAnomalyCos)).
+
+		// Step 3: calculate mean anomaly
+		LOCAL desiredMeanAnomaly IS Constant:DegToRad * desiredEccentricAnomaly - ecc * SIN( desiredEccentricAnomaly).
+		LOCAL currentMeanAnomaly IS Constant:DegToRad * currentEccentricAnomaly - ecc * SIN( currentEccentricAnomaly).
+		IF ETA:APOAPSIS > ETA:PERIAPSIS {
+			SET currentMeanAnomaly TO Constant:PI * 2 - currentMeanAnomaly.
+		}
+		IF desiredAltitude < SHIP:ALTITUDE {
+			SET desiredMeanAnomaly TO Constant:PI * 2 - desiredMeanAnomaly.
+		}
+		ELSE IF desiredAltitude > SHIP:ALTITUDE AND ETA:APOAPSIS > ETA:PERIAPSIS {
+			SET desiredMeanAnomaly TO Constant:PI * 2 + desiredMeanAnomaly.
+		}
+
+		// Step 4: calculate time difference via mean motion
+		LOCAL meanMotion IS Constant:PI * 2 / SHIP:ORBIT:PERIOD. // in rad/s
+
+		SET crossingTime TO (desiredMeanAnomaly - currentMeanAnomaly) / meanMotion.
 	}
-  IF desiredAltitude < SHIP:ALTITUDE {
-      SET desiredMeanAnomaly TO Constant:PI * 2 - desiredMeanAnomaly.
-  }
-  ELSE IF desiredAltitude > SHIP:ALTITUDE AND ETA:APOAPSIS > ETA:PERIAPSIS {
-      SET desiredMeanAnomaly TO Constant:PI * 2 + desiredMeanAnomaly.
-  }
 
-  // Step 4: calculate time difference via mean motion
-  LOCAL meanMotion IS Constant:PI * 2 / SHIP:ORBIT:PERIOD. // in rad/s
-
-  RETURN (desiredMeanAnomaly - currentMeanAnomaly) / meanMotion.
+	// compare the crossing with the next sphere of influence change
+	IF crossingTime >= 0 AND SHIP:ORBIT:HASNEXTPATCH {
+		IF crossingTime > SHIP:ORBIT:NEXTPATCHETA RETURN -1.
+	}
+	RETURN crossingTime.
 }
 
 FUNCTION greatCircleDistance

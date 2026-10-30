@@ -19,10 +19,13 @@ FUNCTION createCommandList {
 	rawArgumentCommands:ADD("debug").
 	possibleCommands:ADD("mode", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Default".
+		// a mode name is always text, even if it looks like a number or T or F
+		SET changeTo TO changeTo:TOSTRING.
 		IF (changeTo = "Default") OR (changeTo = "") SET loopMode TO "Default".
 		ELSE SET loopMode TO changeTo.
 		RETURN "LoopMode is currently " + loopMode.
 		})).
+	rawArgumentCommands:ADD("mode").
 	possibleCommands:ADD("solar", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
 		LOCAL waitTime IS 2.
@@ -112,15 +115,24 @@ FUNCTION createCommandList {
 	possibleCommands:ADD("stopTime", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER newTime IS "".
 		IF newTime = "" RETURN "Max Stopping time is " + STEERINGMANAGER:MAXSTOPPINGTIME.
+		IF NOT newTime:ISTYPE("Scalar") RETURN "stopTime - invalid argument".
+		IF newTime <= 0 RETURN "stopTime - invalid argument".
 		SET STEERINGMANAGER:MAXSTOPPINGTIME TO newTime.
 		RETURN "Changed Max Stopping time to " + STEERINGMANAGER:MAXSTOPPINGTIME.
 		})).
 	possibleCommands:ADD("warp", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER newPermission IS "".
 		IF newPermission = "" RETURN "Physics Warp Perm is currently " + (physicsWarpPerm + 1).
-		IF ((newPermission = "Up") AND (physicsWarpPerm <> 3)) SET physicsWarpPerm TO physicsWarpPerm + 1.
-		ELSE IF ((newPermission = "Down") AND (physicsWarpPerm <> 0)) SET physicsWarpPerm TO physicsWarpPerm - 1.
-		ELSE SET physicsWarpPerm TO newPermission - 1.
+		// the levels shown to the operator are 1 to 4, and physicsWarpPerm is 0 to 3
+		IF newPermission = "Up" {
+			IF physicsWarpPerm < 3 SET physicsWarpPerm TO physicsWarpPerm + 1.
+		} ELSE IF newPermission = "Down" {
+			IF physicsWarpPerm > 0 SET physicsWarpPerm TO physicsWarpPerm - 1.
+		} ELSE {
+			LOCAL requested IS processScalarParameter(newPermission, errorValue).
+			IF requested = errorValue OR requested < 1 OR requested > 4 RETURN "Warp - invalid argument".
+			SET physicsWarpPerm TO ROUND(requested) - 1.
+		}
 		RETURN "Changed Physics Warp Perm to " + (physicsWarpPerm + 1).
 		})).
 	possibleCommands:ADD("physicsWarp", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
@@ -132,7 +144,7 @@ FUNCTION createCommandList {
 		IF changeTo = "On"  {SET GEAR TO  TRUE. RETURN  "Gear turned on".}
 		IF changeTo = "Off" {SET GEAR TO FALSE. RETURN "Gear turned off".}
 		IF (changeTo = "Toggle") OR (changeTo = "T") {SET GEAR TO NOT GEAR. RETURN "Gear toggled to " + GEAR.}
-		IF changeTo = "" RETURN "Gear are currently " + GEAR.
+		IF changeTo = "" RETURN "Gear is currently " + GEAR.
 		RETURN "Gear - invalid argument".
 		})).
 	rawArgumentCommands:ADD("GEAR").
@@ -230,6 +242,7 @@ FUNCTION createCommandList {
 		PARAMETER yawSetpoint.
 		PARAMETER pitchSetpoint.
 		PARAMETER rollSetpoint IS 0.
+		IF NOT (yawSetpoint:ISTYPE("Scalar") AND pitchSetpoint:ISTYPE("Scalar") AND rollSetpoint:ISTYPE("Scalar")) RETURN "point - invalid argument".
 		SET autoSteer TO "point," + yawSetpoint + "," + pitchSetpoint + "," + rollSetpoint.
 		RETURN "Steering held to (" + ROUND(yawSetpoint) + "," + ROUND(pitchSetpoint) + "," + ROUND(rollSetpoint) + ")".
 		})).
@@ -250,11 +263,10 @@ FUNCTION createCommandList {
 		}
 		// If the first argument is not "delete" or "remove"
 		ELSE {
-			IF arg1:TYPENAME = "STRING" RETURN "node - invalid arguments".
+			IF NOT (arg1:ISTYPE("Scalar") AND arg2:ISTYPE("Scalar") AND arg3:ISTYPE("Scalar") AND arg4:ISTYPE("Scalar")) RETURN "node - invalid arguments".
 			ADD NODE(TIME:SECONDS + arg4, arg3, arg2, arg1).
-			RETURN "Node created with 4 arguments".
+			RETURN "Node created".
 		}
-		RETURN "node - invalid arguments".
 		})).
 	possibleCommands:ADD("ISRU", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
@@ -314,10 +326,12 @@ FUNCTION createCommandList {
 		SET SHIP:NAME TO newName.
 		RETURN "Ship renamed to " + SHIP:NAME.
 		})).
+	rawArgumentCommands:ADD("rename").
 	possibleCommands:ADD("nameship", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
 		PARAMETER newName.
 		RETURN possibleCommands["rename"]["Delegate"](newName).
 		})).
+	rawArgumentCommands:ADD("nameship").
 	possibleCommands:ADD("warpToAltitude", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER desiredAltitude IS 10000.
 		IF (processScalarParameter(desiredAltitude, errorValue) <> errorValue) {
@@ -367,6 +381,7 @@ FUNCTION createCommandList {
 			RETURN "Target - invalid argument " + arg1.
 		} ELSE {RETURN "Must have a target set.".}
 		})).
+	rawArgumentCommands:ADD("target").
 	possibleCommands:ADD("hold",        LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET globalSteer TO SHIP:FACING. SET autoSteer TO "hold". RETURN "Steering held at current direction".})).
 	possibleCommands:ADD("damp",        LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "damp". RETURN "Damping rotation".})).
 	possibleCommands:ADD("up",          LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {SET autoSteer TO "up". RETURN "Steering locked to up".})).
@@ -412,11 +427,31 @@ FUNCTION createCommandList {
 		REBOOT.
 		})).
 
-	possibleCommands:ADD("update", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
+	// Brings the scripts on this ship up to date. With T, every script is installed again, even if it has not changed,
+	// and the archive is built first if its build is missing or out of date.
+	possibleCommands:ADD("update", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
+		PARAMETER forceAll IS FALSE.
 		IF (connectionToKSC()) {
-			RETURN updateFromArchive().
+			RETURN syncScripts(forceAll)["message"].
 		}
 		RETURN "Not connected to KSC - cannot update scripts".
+		})).
+
+	// Leaves a flag that makes the next boot delete every local script and install them all again from the archive,
+	// and then reboots. Nothing is changed unless the archive is connected and has a build that is current.
+	possibleCommands:ADD("reinstall", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
+		IF NOT connectionToKSC() RETURN "Not connected to KSC - cannot reinstall".
+		LOCAL state IS compareWithArchive().
+		IF NOT state["hasBuild"] RETURN "No archive build: use build".
+		IF state["buildStale"] <> "" RETURN "Build out of date: use build".
+		LOG "reinstall" TO reinstallFlagPath.
+		REBOOT.
+		})).
+
+	// Compile the scripts on the archive that changed (or all of them, with T) so that ships can install them
+	possibleCommands:ADD("build", LEXICON("PossibleArgs", 2, "RequiredArgs", 0, "Delegate", {
+		PARAMETER forceAll IS FALSE, ignoreLock IS FALSE.
+		RETURN buildArchive(forceAll, ignoreLock).
 		})).
 
 	possibleCommands:ADD("listFiles", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
@@ -463,28 +498,6 @@ FUNCTION createCommandList {
 		RETURN "Manually Staged!".
 		})).
 
-	possibleCommands:ADD("local", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
-		PARAMETER forcedUpdate IS FALSE.
-		IF connectionToKSC() {
-			LOCAL message IS "".
-			IF forcedUpdate SET message TO "Copied " + copyToLocal() + " files, running locally".
-			ELSE SET message TO updateFromArchive().
-			SWITCH TO 1.
-			SET runLocal TO TRUE.
-			RETURN message.
-		}
-		RETURN "Already running locally".
-		})).
-
-	possibleCommands:ADD("remote", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
-		IF connectionToKSC() {
-			SWITCH TO 0.
-			SET runLocal TO FALSE.
-			RETURN "Switched to running on the archive".
-		}
-		RETURN "KSC not accessible".
-		})).
-	possibleCommands:ADD("archive", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {RETURN possibleCommands["remote"]["Delegate"]().})).
 
 	possibleCommands:ADD("hide", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
 		CORE:PART:GETMODULE("kOSProcessor"):DOEVENT("Close Terminal").
