@@ -3891,3 +3891,38 @@ FUNCTION findZeroBrent {
 
 	RETURN b.
 }
+
+// Stages if it is time to, and returns the reason. It is time to stage when the engines are producing no thrust, when an
+// engine has flamed out, or when the tanks of the current stage are empty. Below the top of the atmosphere the long wait
+// of stageFunction (in loop.ks) is used, so that the spent stage drops clear of the rocket.
+// Assumes that updateShipInfoCurrent has been run recently, for the resources.
+// Passed the following:
+//   thrustSeen (boolean, whether the engines of the current stage have been seen producing thrust. The no-thrust and
+//               empty-tank checks only apply when it is TRUE, so that a stage that has not started yet is not dropped.)
+// Returns the following:
+//   "max thrust", "flameout" or "resources" if the ship was staged, "None" if it was not
+FUNCTION stageIfNeeded {
+	PARAMETER thrustSeen IS TRUE.
+	LOCAL reason IS "None".
+
+	IF thrustSeen AND MAXTHRUST = 0 SET reason TO "max thrust".
+
+	IF reason = "None" {
+		LOCAL engineList IS LIST().
+		LIST ENGINES IN engineList.
+		FOR eng IN engineList {
+			IF eng:FLAMEOUT AND eng:IGNITION {
+				SET reason TO "flameout".
+				BREAK.
+			}
+		}
+	}
+
+	IF reason = "None" AND thrustSeen AND shipInfo["CurrentStage"]["ResourceMass"] < 1.0 SET reason TO "resources".
+
+	IF reason <> "None" {
+		IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
+		ELSE stageFunction().
+	}
+	RETURN reason.
+}
