@@ -1,7 +1,9 @@
 @LAZYGLOBAL OFF.
 
-PARAMETER desiredHeight IS heightAboveGround().
+PARAMETER desiredHeight IS "Default".
 PARAMETER maxVelocity IS 50.
+SET desiredHeight TO processScalarParameter(desiredHeight, errorValue).
+IF desiredHeight = errorValue SET desiredHeight TO heightAboveGround().
 
 SET maxVelocity TO ABS(maxVelocity).
 

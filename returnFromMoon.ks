@@ -2,9 +2,11 @@
 LOCAL estimateAltitude IS 0.
 IF SHIP:BODY:BODY:ATM:EXISTS SET estimateAltitude TO SHIP:BODY:BODY:ATM:HEIGHT * 1.1.
 ELSE SET estimateAltitude TO SHIP:BODY:BODY:RADIUS * 0.05.
-PARAMETER finalAltitude IS estimateAltitude.
+PARAMETER finalAltitude IS "Default".
 PARAMETER printingAllowed IS TRUE.
 PARAMETER adjustWithHeuristics IS TRUE.
+SET finalAltitude TO processScalarParameter(finalAltitude, errorValue).
+IF finalAltitude = errorValue SET finalAltitude TO estimateAltitude.
 
 LOCAL moonBody IS SHIP:BODY.
 LOCAL planetBody IS SHIP:BODY:BODY.

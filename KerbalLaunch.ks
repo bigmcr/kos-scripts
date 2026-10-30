@@ -1,6 +1,8 @@
 PARAMETER finalInclination IS 0.					// The initial heading to launch at
-PARAMETER altitudeTarget IS 30000.			// The desired final altitude
+PARAMETER altitudeTarget IS "Default".			// The desired final altitude
 PARAMETER initialStage IS TRUE.				// Whether or not to trigger the stage function to start with
+SET altitudeTarget TO processScalarParameter(altitudeTarget, errorValue).
+IF altitudeTarget = errorValue SET altitudeTarget TO 30000.
 
 // If the body has an atmosphere and altitudeTarget is the default, set the
 //   altitude target to 5km below the top of the atmosphere.
