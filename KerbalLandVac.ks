@@ -59,6 +59,8 @@ LOCAL downslopeSpeedVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), RED, "Down Speed", 1.
 LOCAL sideSpeedVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), GREEN, "Side Speed", 1.0, FALSE, 0.2).
 LOCAL gravityAccel TO 0.
 LOCAL effectiveAccel TO 0.
+LOCAL minTimeToStop TO 0.
+LOCAL logFileName IS "0:KerbalLandVac.csv".
 LOCAL slopeInfo IS LEXICON().
 LOCAL downslopeDirection IS 0.
 LOCAL sideDirection IS 0.
@@ -71,6 +73,7 @@ AG1 OFF.
 
 LOCAL downslopeVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), YELLOW, "Down Slope Direction", 1.0, TRUE, 0.2).
 LOCAL downslopeDirectionVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Down Slope Compass", 1.0, TRUE, 0.2).
+LOCAL velocityVecDraw IS VECDRAW(V(0,0,0), V(0,0,0), BLUE, "Velocity", 1.0, TRUE, 0.2).
 
 UNTIL mode > 5 {
 	PRINT "Mode " + mode AT (40, 0).
@@ -84,12 +87,14 @@ UNTIL mode > 5 {
 
 	SET downslopeVecDraw:VEC TO 10*slopeInfo["Vector"].
 	SET downslopeDirectionVecDraw:VEC TO 10*SHIP:NORTH:VECTOR * ANGLEAXIS(slopeInfo["heading"], UP:VECTOR).
+	SET velocityVecDraw:VEC TO MIN(10, VELOCITY:SURFACE:MAG)*VELOCITY:SURFACE:NORMALIZED.
 
 	IF (TIME:SECONDS <> oldTime) {
 		SET hAccel TO (GROUNDSPEED - oldHSpeed)/(TIME:SECONDS - oldTime).
 		SET vAccel TO (VERTICALSPEED - oldVSpeed)/(TIME:SECONDS - oldTime).
 		SET gravityAccel TO BODY:MU/(ALTITUDE + BODY:RADIUS)^2.
 		SET effectiveAccel TO shipInfo["Maximum"]["Accel"] - gravityAccel.
+		IF effectiveAccel > 0 SET minTimeToStop TO -VERTICALSPEED / effectiveAccel.
 
 		PRINT "Horizontal Speed " + distanceToString(GROUNDSPEED, 2) + "/s     " AT (0, 0).
 		PRINT "Horizontal Acceleration " + distanceToString(hAccel, 2) + "/s^2    " AT (0, 1).
@@ -107,13 +112,14 @@ UNTIL mode > 5 {
 		IF connectionToKSC() {
 			LOCAL message IS "".
 			IF NOT headerCreated {
-				DELETEPATH("0:EqualTime.csv").
+				DELETEPATH(logFileName).
 				SET headerCreated TO TRUE.
 				SET message TO "Mission Time,".
 				SET message TO message + "Horizontal Distance,".
 				SET message TO message + "Maximum Accel,".
 				SET message TO message + "Effective Accel,".
 				SET message TO message + "Gravity Accel,".
+				SET message TO message + "Min Time To Stop,".
 				SET message TO message + "Horizontal Speed,".
 				SET message TO message + "Horizontal Acceleration,".
 				SET message TO message + "Vertical Speed,".
@@ -129,13 +135,14 @@ UNTIL mode > 5 {
 				SET message TO message + "Heading Steering Adjust,".
 				SET message TO message + "Pitch,".
 				SET message TO message + "Mode,".
-				LOG message TO "0:EqualTime.csv".
+				LOG message TO logFileName.
 			}
 			SET message TO missionTime.
 			SET message TO message + "," + greatCircleDistance(SHIP:GEOPOSITION, startPosition).
 			SET message TO message + "," + shipInfo["Maximum"]["Accel"].
 			SET message TO message + "," + effectiveAccel.
 			SET message TO message + "," + gravityAccel.
+			SET message TO message + "," + minTimeToStop.
 			SET message TO message + "," + GROUNDSPEED.
 			SET message TO message + "," + hAccel.
 			SET message TO message + "," + VERTICALSPEED.
@@ -151,7 +158,7 @@ UNTIL mode > 5 {
 			SET message TO message + "," + headingSteeringAdjust.
 			SET message TO message + "," + pitch_for(SHIP).
 			SET message TO message + "," + mode.
-			LOG message TO "0:EqualTime.csv".
+			LOG message TO logFileName.
 		}
 
 		SET oldHSpeed TO GROUNDSPEED.

@@ -4,9 +4,14 @@ CLEARSCREEN.
 
 PARAMETER desiredPeri IS "Default".
 PARAMETER facePrograde IS FALSE.
-PARAMETER hardReentry IS FALSE.
+PARAMETER hardReentry IS TRUE.
 SET desiredPeri TO processScalarParameter(desiredPeri, errorValue).
-IF desiredPeri = errorValue SET desiredPeri TO 55000.
+IF desiredPeri = errorValue {
+	IF SHIP:BODY:ATM:EXISTS {
+		IF isStockWorld() SET desiredPeri TO SHIP:BODY:ATM:HEIGHT * 0.45.
+		ELSE SET desiredPeri TO BODY:ATM:HEIGHT * 0.39.
+	} ELSE SET desiredPeri TO 25000.
+}
 
 SAS OFF.
 RCS ON.
@@ -56,14 +61,6 @@ IF NOT facePrograde {
 }
 
 IF NOT hardReentry {
-	PRINT "Cooked Steering, Level" AT(0,0).
-//	WAIT UNTIL ALTITUDE < 110000 {
-
-	SET globalSteer TO HEADING(yaw_for(SHIP), 30).
-
-	PRINT "Cooked Steering, Angled" AT(0,0).
-//	WAIT UNTIL ALTITUDE < 100000 {
-
 	PRINT "Manual Steering" AT (0,0).
 
 	setLockedSteering(FALSE).
@@ -88,23 +85,39 @@ IF NOT hardReentry {
 
 	SET SHIP:CONTROL:PITCH TO 0.
 	SET SHIP:CONTROL:YAW TO 0.
+
+	UNTIL ALTITUDE < 20000 AND SHIP:VELOCITY:SURFACE:MAG < 1000 {
+		SAS OFF.
+		SET rollVelocityPID:SETPOINT TO 0.
+		SET rollVelocity TO SHIP:ANGULARVEL * SHIP:FACING:VECTOR.		// set the roll velocity to the angular velocity around FACING.
+		SET rollTorquePID:SETPOINT TO -rollVelocityPID:Update(time:seconds, roll_for(SHIP)).
+		SET SHIP:CONTROL:ROLL TO -rollTorquePID:Update(time:seconds, rollVelocity).
+		WAIT 0.
+	}
 } ELSE {
 	SET globalSteer TO -SHIP:VELOCITY:SURFACE.
-}
 
-UNTIL ALTITUDE < 20000 AND SHIP:VELOCITY:SURFACE:MAG < 1000 {
 	SAS OFF.
-	SET rollVelocityPID:SETPOINT TO 0.
-	SET rollVelocity TO SHIP:ANGULARVEL * SHIP:FACING:VECTOR.		// set the roll velocity to the angular velocity around FACING.
-	SET rollTorquePID:SETPOINT TO -rollVelocityPID:Update(time:seconds, roll_for(SHIP)).
-	SET SHIP:CONTROL:ROLL TO -rollTorquePID:Update(time:seconds, rollVelocity).
-	WAIT 0.
+	RCS ON.
+	SET SHIP:CONTROL:PITCH TO 0.
+	SET SHIP:CONTROL:YAW TO 0.
+
+	LOCAL prevVelocity IS 0.
+	LOCAL prevTime IS 0.
+
+	UNTIL ALTITUDE < 20000 AND SHIP:VELOCITY:SURFACE:MAG < 1000 {
+		SAS OFF.
+		IF (prevTime <> 0) PRINT "Current Accel: " + ROUND((prevVelocity - SHIP:VELOCITY:SURFACE):MAG/(prevTime - TIME:SECONDS),2) + "     " AT (0, 10).
+		SET prevVelocity TO SHIP:VELOCITY:SURFACE.
+		SET prevTime TO TIME:SECONDS.
+		WAIT 0.1.
+	}
 }
 stageFunction().																// this is supposed to trigger the parachutes
 SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
 
 UNTIL heightAboveGround() < 100 {
 	SET globalSteer TO -SHIP:VELOCITY:SURFACE.
-	WAIT 0.1.
+	WAIT 0.
 	IF (NOT CHUTESSAFE) {CHUTESSAFE ON.}
 }

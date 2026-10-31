@@ -281,11 +281,70 @@ FUNCTION createCommandList {
 		RETURN possibleCommands["ISRU"]["Delegate"](changeTo).
 		})).
 	rawArgumentCommands:ADD("CONVERTER").
-	possibleCommands:ADD("mining", LEXICON("PossibleArgs", 1, "RequiredArgs", 1, "Delegate", {
+	// With the second argument TRUE, "On" waits 10 seconds for the equipment to deploy, watches how fast the tanks are
+	// filling for another 10, and then warps until they should be full. Loop does not run while it waits.
+	// The equipment is left running afterwards; use "mining Off" to stop it.
+	possibleCommands:ADD("mining", LEXICON("PossibleArgs", 2, "RequiredArgs", 1, "Delegate", {
 		PARAMETER changeTo.
-		IF changeTo = "On" {ISRU ON. RADIATORS ON. FUELCELLS ON. DEPLOYDRILLS ON. WAIT 0.5. DRILLS ON. RETURN "Surface mining started".}
+		PARAMETER waitUntilFull IS FALSE.
+		IF NOT waitUntilFull:ISTYPE("Boolean") RETURN "Mining - invalid arguments".
 		IF changeTo = "Off" {ISRU OFF. RADIATORS OFF. FUELCELLS OFF. DEPLOYDRILLS OFF. RETURN "Surface mining stopped".}
-		RETURN "Mining - invalid arguments".
+		IF changeTo <> "On" RETURN "Mining - invalid arguments".
+		ISRU ON. RADIATORS ON. FUELCELLS ON. DEPLOYDRILLS ON. WAIT 0.5. DRILLS ON.
+		IF NOT waitUntilFull RETURN "Surface mining started".
+
+		// give the equipment 10 seconds to deploy and get going before the first measurement
+		WAIT 10.
+		// measure how fast the tanks fill (the amount of room left in each is what counts)
+		LOCAL sensingDelay IS 10.
+		LOCAL resourceNames IS LIST("LiquidFuel", "Oxidizer", "MonoProp").
+		LOCAL roomAtStart IS LEXICON().
+		LOCAL roomAtEnd IS LEXICON().
+		FOR eachName IN resourceNames {
+			SET roomAtStart[eachName] TO 0.
+			SET roomAtEnd[eachName] TO 0.
+		}
+		FOR eachResource IN SHIP:RESOURCES {
+			IF roomAtStart:HASKEY(eachResource:NAME) SET roomAtStart[eachResource:NAME] TO eachResource:CAPACITY - eachResource:AMOUNT.
+		}
+		LOCAL startTime IS TIME:SECONDS.
+		UNTIL TIME:SECONDS - startTime > sensingDelay {
+			WAIT 0.
+		}
+		FOR eachResource IN SHIP:RESOURCES {
+			IF roomAtEnd:HASKEY(eachResource:NAME) SET roomAtEnd[eachResource:NAME] TO eachResource:CAPACITY - eachResource:AMOUNT.
+		}
+		LOCAL timeRemaining IS 0.
+		FOR eachName IN resourceNames {
+			LOCAL rate IS (roomAtStart[eachName] - roomAtEnd[eachName]) / sensingDelay.
+			IF rate > 0 SET timeRemaining TO MAX(timeRemaining, roomAtEnd[eachName] / rate).
+		}
+		IF timeRemaining <= 0 RETURN "Surface mining started. Not waiting, because no tank is filling".
+
+		LOCAL targetTime IS TIME:SECONDS + timeRemaining.
+		LOCAL timeLeft IS timeRemaining.
+		SET KUNIVERSE:TIMEWARP:RATE TO 0.
+		WAIT 0.1.
+		SET KUNIVERSE:TIMEWARP:MODE TO "RAILS".
+		// continue waiting until there is half a second or less of real time remaining
+		UNTIL (timeLeft < 0.5) AND (KUNIVERSE:TIMEWARP:RATE = 1) {
+			// if the rate is still changing, do nothing
+			IF KUNIVERSE:TIMEWARP:ISSETTLED {
+				// calculate how long it will take to get to the target value in real-world seconds
+				SET timeLeft TO (targetTime - TIME:SECONDS) / (KUNIVERSE:TIMEWARP:RATE).
+				// warp slower, if not at min rate
+				IF (timeLeft < 1) AND (KUNIVERSE:TIMEWARP:RATE <> 1) {
+					SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP - 1.
+				}
+				// warp faster, if not at max rate - this assumes that the next rate is 10x faster than the current rate
+				IF (timeLeft > 15) AND (KUNIVERSE:TIMEWARP:WARP <> KUNIVERSE:TIMEWARP:RAILSRATELIST:LENGTH - 1) {
+					SET KUNIVERSE:TIMEWARP:WARP TO KUNIVERSE:TIMEWARP:WARP + 1.
+				}
+			}
+			WAIT 0.
+		}
+		SET KUNIVERSE:TIMEWARP:WARP TO 0.
+		RETURN "Surface mining started. Waited " + timeToString(timeRemaining) + ", the tanks should be full now".
 		})).
 	possibleCommands:ADD("FUELCELL", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER changeTo IS "Toggle".
