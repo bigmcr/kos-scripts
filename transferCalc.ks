@@ -453,6 +453,64 @@ IF errorCode = "None" {
 				PRINT "  Latitude binds; alt. LAN " + ROUND(designed["alternateLan"], 2) + " deg.".
 			}
 			PRINT "  (check residual " + ROUND(designed["verificationResidual"], 6) + " deg)".
+
+			// Save the plan on the ship's own disk (volume 1, never the archive) for a launch script to read
+			// back with READJSON. The ejection burn leaves the parking orbit one transit time before the
+			// ship crosses the SOI edge at tSOI. In the closed-form case (the designed plane contains the exit
+			// direction) that is a tangential burn at the orbit's own radius, so the hyperbola is rebuilt
+			// here from the orbit radius and the excess speed; otherwise the search result already has it.
+			LOCAL planMu IS fromOrbitable:MU.
+			LOCAL planRadius IS orbitSpec["radius"].
+			LOCAL planVInfinity IS 0.
+			LOCAL planTransit IS 0.
+			IF designed["ejection"]:ISTYPE("Lexicon") {
+				SET planVInfinity TO designed["ejection"]["vInfinity"].
+				SET planTransit TO designed["ejection"]["transitTime"].
+			} ELSE {
+				LOCAL parkSpeed IS SQRT(planMu / planRadius).
+				SET planVInfinity TO SQRT(MAX(0, (designed["deltaV"] + parkSpeed) ^ 2 - 2 * planMu / planRadius)).
+				IF planVInfinity > 0 {
+					LOCAL planEccentricity IS 1 + planRadius * planVInfinity ^ 2 / planMu.
+					LOCAL planSemiLatus IS planRadius * (1 + planEccentricity).
+					LOCAL planEdgeAnomaly IS ARCCOS(MAX(-1, MIN(1, (planSemiLatus / fromOrbitable:SOIRADIUS - 1) / planEccentricity))).
+					SET planTransit TO hyperbolaTransitTime(planMu, planVInfinity, planEccentricity, 0, planEdgeAnomaly).
+				}
+			}
+			LOCAL planBurnUT IS reportTSOI - planTransit.
+			LOCAL launchPlan IS LEXICON(
+				"version", 1,
+				"createdUT", TIME:SECONDS,
+				"departureBody", fromOrbitable:NAME,
+				"destination", toOrbitable:NAME,
+				"solverType", solverType,
+				"burnUT", planBurnUT,
+				"burnCalendar", TIME(planBurnUT):CALENDAR,
+				"burnClock", TIME(planBurnUT):CLOCK,
+				"soiExitUT", reportTSOI,
+				"transitTime", planTransit,
+				"flightTime", reportTimeOfFlight,
+				"arrivalUT", reportTSOI + reportTimeOfFlight,
+				"ejectionDeltaV", designed["deltaV"],
+				"arrivalDeltaV", reportStats["Arrival Delta V"],
+				"totalDeltaV", reportDV,
+				"vInfinity", planVInfinity,
+				"inclination", designed["inclination"],
+				"lan", designed["lan"],
+				"alternateLan", designed["alternateLan"],
+				"latitudeConstraintBinding", designed["latitudeConstraintBinding"],
+				"parkingAltitude", designAltitude,
+				"parkingRadius", planRadius,
+				"launchLatitude", launchLatitude).
+			IF debug debugLogValues("Launch plan", launchPlan).
+
+			LOCAL planFile IS "1:transferPlan.json".
+			IF VOLUME(1):FREESPACE < 4000 {
+				PRINT "Local disk full: plan not saved.".
+			} ELSE {
+				IF EXISTS(planFile) DELETEPATH(planFile).
+				WRITEJSON(launchPlan, planFile).
+				PRINT "Saved launch plan: " + planFile.
+			}
 		}
 
 		PRINT "".
