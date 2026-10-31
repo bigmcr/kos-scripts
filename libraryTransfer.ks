@@ -2810,7 +2810,7 @@ FUNCTION sameSOITransferDeltaV {
 // Returns a delegate f(departureTime, timeOfFlight, seed, statsOut) -> total dV for a transfer
 // from fromOrbitable (the ship, or another vessel) to toOrbitable inside the SOI of the body they
 // both orbit, with everything else bound - suitable for porkchopGrid and hillClimb2D. Both must
-// be in bound orbits.
+// be in bound orbits. If that body has no SOI (the Sun), arcs are not limited by an SOI radius.
 FUNCTION bindSameSOIDeltaV {
 	PARAMETER fromOrbitable.
 	PARAMETER toOrbitable.
@@ -2826,7 +2826,10 @@ FUNCTION bindSameSOIDeltaV {
 	SET bound TO bound:BIND(solverType).
 	SET bound TO bound:BIND(captureRadius).
 	SET bound TO bound:BIND(earliestDeparture).
-	SET bound TO bound:BIND(centralBody:SOIRADIUS).
+	// A central body with no parent (the Sun) has no SOI to leave, so no apoapsis limit applies.
+	LOCAL soiLimit IS 0.
+	IF centralBody:HASBODY SET soiLimit TO centralBody:SOIRADIUS.
+	SET bound TO bound:BIND(soiLimit).
 	RETURN bound.
 }
 
