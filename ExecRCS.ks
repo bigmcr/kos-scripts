@@ -109,13 +109,13 @@ IF errorCode = "None" {
 	SET globalSteer TO ND:DELTAV.
 	IF debug PRINT "Aligning with the maneuver node. Burn ETA: " + timeToString(ND:ETA - t_ign , 2).
 	//now we need to wait until the burn vector and ship's facing are aligned
-	IF isStockRockets() {
-		// In stock rockets, assume that we can control roll rate
+	IF isStock() {
+		// If isStock (no engine needs ullage or has limited ignitions), assume that we can control roll rate
 		WAIT UNTIL (ABS(ND:DELTAV:DIRECTION:PITCH - FACING:PITCH) < 0.15 AND ABS(ND:DELTAV:DIRECTION:YAW - FACING:YAW) < 0.15 AND SHIP:ANGULARVEL:MAG < 0.01).
 		// if the node is more than 5 minutes away, pause for twice as long as the steering manager's stopping time to allow all roll rotation to be damped out
 		IF ND:ETA > 5*60 WAIT STEERINGMANAGER:MAXSTOPPINGTIME*2.
 	} ELSE {
-		// If non-stock rockets, don't wait for the roll rate to be zero'd out.
+		// If not isStock, don't wait for the roll rate to be zero'd out.
 		WAIT UNTIL (ABS(ND:DELTAV:DIRECTION:PITCH - FACING:PITCH) < 0.15 AND ABS(ND:DELTAV:DIRECTION:YAW - FACING:YAW) < 0.15).
 	}
 

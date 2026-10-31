@@ -4,7 +4,7 @@
 // ship is stopped a standoff distance from the target. The burn is refused if the geometry or the ship cannot manage it.
 //
 // Passed the following:
-//   ullage       (scalar, seconds the RCS fires forward before ignition. Only used outside the stock universe.)
+//   ullage       (scalar, seconds the RCS fires forward before ignition. Only used when isStock is FALSE (an engine needs ullage or has limited ignitions).)
 //   standoff     (scalar, meters from the target where the ship is brought to a stop.)
 PARAMETER ullage IS 5.
 PARAMETER standoff IS 50.
@@ -96,7 +96,7 @@ IF (mode <> "Done") {
 IF (mode <> "Done") {
 	LOCAL oldRCS IS RCS.
 	LOCAL oldSAS IS SAS.
-	LOCAL needUllage IS ullage > 0 AND NOT isStockRockets().
+	LOCAL needUllage IS ullage > 0 AND NOT isStock().
 
 	SET globalSteer TO SHIP:FACING.
 	SET globalThrottle TO 0.

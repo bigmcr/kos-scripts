@@ -462,6 +462,6 @@ UNTIL mode > 6 {
 	WAIT 0.
 }
 
-SET dontKillAfterScript TO NOT isStockRockets().
+SET dontKillAfterScript TO NOT isStock().
 SET loopMessage TO endMessage.
 activateOmniAntennae().

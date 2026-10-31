@@ -2,7 +2,7 @@
 
 PARAMETER ullage IS 5.												// the number of seconds the RSC thrusters need to be firing forward to
 																							//		make the main engine's fuel be stable
-																							//		only applicable in RSS, so disabled if in stock universe
+																							//		only applicable when isStock is FALSE (engines that need ullage or have limited ignitions), so disabled otherwise
 PARAMETER useRCSforRotation IS FALSE.
 PARAMETER faceSun IS FALSE.										// during the waiting times, turn to face the sun
 																							//		intended to ensure that probes' solar panels are exposed to the Sun.
@@ -227,7 +227,7 @@ IF errorCode = "None" {
 	SET KUNIVERSE:TIMEWARP:MODE TO "RAILS".
 
 	// if ullage is not a concern, warp to 30 seconds before burntime
-	IF (isStockRockets() OR (ullage = 0)) {
+	IF (isStock() OR (ullage = 0)) {
 		warpToTime(TIME:SECONDS + ND:ETA - MAX(1.5*t_ign, 30)).
 		IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(ND:ETA - t_ign, 2).
 		SET globalSteer TO ND:DELTAV.
@@ -312,7 +312,7 @@ IF errorCode = "None" {
 		// If we are nearing the end of the burn (less than 1 second), stop physics warp to allow for more precision
 		IF ND:DELTAV:MAG <= a_f AND physicsWarpPerm {
 			IF NOT resetWarp {SET KUNIVERSE:TIMEWARP:WARP TO 0. SET resetWarp TO TRUE.}
-			IF (isStockRockets()) {
+			IF (isStock()) {
 				SET globalThrottle TO MAX(ND:DELTAV:MAG / a_f, 0.1).
 			} ELSE SET globalThrottle TO 1.
 		} ELSE { // we are not close to the end of the burn, so go at full blast.

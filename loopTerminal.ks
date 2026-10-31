@@ -716,7 +716,6 @@ FUNCTION scriptsCells {
 			}
 			SET localSize TO totalSize:TOSTRING.
 			SET form TO localFiles[0]:SUBSTRING(localFiles[0]:FINDLAST("."), localFiles[0]:LENGTH - localFiles[0]:FINDLAST(".")).
-			IF form = ".settings" SET form TO "set".
 			// a plus means that there is a .ks and a .ksm, and the .ksm is the one that runs
 			IF localFiles:LENGTH > 1 SET form TO form + "+".
 		}
@@ -746,8 +745,7 @@ FUNCTION scriptsSignature {
 // Information about the universe and rocket part types that kOS has loaded.
 FUNCTION universeCells {
 	LOCAL cells IS LIST().
-	addScreenRow(cells, "Stock Rockets: " + isStockRockets()).
-	addScreenRow(cells, "Stock World: " + isStockWorld()).
+	addScreenRow(cells, "Stock: " + isStock()).
 	RETURN cells.
 }
 

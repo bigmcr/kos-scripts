@@ -8,7 +8,7 @@ PARAMETER hardReentry IS TRUE.
 SET desiredPeri TO processScalarParameter(desiredPeri, errorValue).
 IF desiredPeri = errorValue {
 	IF SHIP:BODY:ATM:EXISTS {
-		IF isStockWorld() SET desiredPeri TO SHIP:BODY:ATM:HEIGHT * 0.45.
+		IF isStock() SET desiredPeri TO SHIP:BODY:ATM:HEIGHT * 0.45.
 		ELSE SET desiredPeri TO BODY:ATM:HEIGHT * 0.39.
 	} ELSE SET desiredPeri TO 25000.
 }

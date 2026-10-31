@@ -2273,7 +2273,7 @@ FUNCTION engineInfo {
 	LOCAL engineData IS LEXICON().
 	FOR eng IN myVariable {
 		IF eng:IGNITION {
-			IF isStockRockets() SET engTitle TO eng:CONFIG:SUBSTRING(0, eng:CONFIG:FINDLAST(CHAR(34)) + 1).
+			IF isStock() SET engTitle TO eng:CONFIG:SUBSTRING(0, eng:CONFIG:FINDLAST(CHAR(34)) + 1).
 			ELSE SET engTitle TO eng:CONFIG.
 			IF engineData:KEYS:CONTAINS(engTitle) {
 				SET engineData[engTitle]["number"] TO engineData[engTitle]["number"] + 1.

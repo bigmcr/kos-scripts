@@ -1,10 +1,8 @@
 @LAZYGLOBAL OFF.
 
 SET CONFIG:IPU TO 2000.
-LOCAL stockWorldDetermined IS FALSE.
-LOCAL stockRocketsDetermined IS FALSE.
-LOCAL lastStockWorld IS FALSE.
-LOCAL lastStockRockets IS FALSE.
+LOCAL stockDetermined IS FALSE.
+LOCAL lastStock IS FALSE.
 
 // The scripts that must be on the local drive for loop to run (without their file extensions).
 // The boot file is always required as well. These are also the files that loop loads when it starts, so it is
@@ -52,56 +50,27 @@ GLOBAL loadedVersions IS LEXICON().
 // The names of the scripts that were updated after they were loaded. Cleared by a reboot.
 GLOBAL rebootPending IS LIST().
 
-// Is Stock Universe
-// This function returns TRUE if the ship is operating in the stock KSP universe.
-// This is determined by seeing if a body is called "Kerbin" or "Minmus".
+// Is Stock
+// This function returns TRUE if none of the ship's engines needs the more complicated logic (limited ignitions,
+// ullage, slower turn times, restricted power, etc.), and FALSE if any of them does. The engines are asked directly,
+// because this runs before the library is loaded. The answer is kept after the first time, because it is the same for
+// a ship from boot to boot; after docking or staging, reboot to ask again. The suffixes used come from Real Fuels.
+// Without it, ULLAGE is FALSE and IGNITIONS is -1 for every engine, so the ship counts as stock.
 // Passed the following:
 //			no arguments
 // Returns the following:
-//			whether or not the ship is in KSP Universe (bool)
-FUNCTION isStockWorld {
-	IF stockWorldDetermined RETURN lastStockWorld.
-
-	LOCAL bodyList IS LIST().
-	LIST BODIES IN bodyList.
-	SET lastStockWorld TO FALSE.
-	FOR oneBody IN bodyList {
-		IF (oneBody:NAME = "Kerbin") OR (oneBody:NAME = "Minmus") {
-			SET stockWorldDetermined TO TRUE.
-			SET lastStockWorld TO TRUE.
-			RETURN TRUE.
-		}
+//			whether or not the ship's engines are all free of ullage and ignition limits (bool)
+FUNCTION isStock {
+	IF stockDetermined RETURN lastStock.
+	LOCAL engineList IS LIST().
+	LIST ENGINES IN engineList.
+	SET lastStock TO TRUE.
+	FOR eachEngine IN engineList {
+		IF eachEngine:ULLAGE SET lastStock TO FALSE.
+		IF eachEngine:IGNITIONS >= 0 SET lastStock TO FALSE.
 	}
-	RETURN FALSE.
-}
-
-// Is Stock Rockets
-// This function returns TRUE if the ship is composed of stock KSP parts only.
-// If this isn't true, code can take ullage, slower turn times, restricted power, etc. into account.
-// This is determined by reading the .settings file
-// Passed the following:
-//			no arguments
-// Returns the following:
-//			whether or not the ship uses only stock parts (bool)
-FUNCTION isStockRockets {
-	IF stockRocketsDetermined RETURN lastStockRockets.
-	LOCAL fileList IS LIST().
-	IF connectionToKSC() SET fileList TO ARCHIVE:FILES.
-	ELSE SET fileList TO CORE:VOLUME:FILES.
-	SET lastStockRockets TO FALSE.
-	FOR fileName IN fileList:KEYS {
-		IF (fileName = "StockRockets.settings") {
-			SET stockRocketsDetermined TO TRUE.
-			SET lastStockRockets TO TRUE.
-			RETURN TRUE.
-		}
-		IF (fileName = "RSSRockets.settings") {
-			SET stockRocketsDetermined TO TRUE.
-			SET lastStockRockets TO FALSE.
-			RETURN FALSE.
-		}
-	}
-	RETURN FALSE.
+	SET stockDetermined TO TRUE.
+	RETURN lastStock.
 }
 
 // Connection to KSC
@@ -269,16 +238,14 @@ FUNCTION fileFingerprint {
 
 // Archive Items
 // Returns the files on the archive that go to ships (lexicon). The key is the script name without an extension
-// ("boot" for 0:boot/boot.ks), or the whole file name for a .settings file. Each value is a lexicon with
-//			"kind" ("script" or "plain"), "source" (its path on the archive), and "sourceSize" (bytes).
+// ("boot" for 0:boot/boot.ks). Each value is a lexicon with
+//			"kind" ("script"), "source" (its path on the archive), and "sourceSize" (bytes).
 FUNCTION archiveItems {
 	LOCAL items IS LEXICON().
 	FOR item IN ARCHIVE:FILES:VALUES {
 		IF item:ISFILE {
 			IF item:EXTENSION = "ks" {
 				SET items[baseName(item:NAME)] TO LEXICON("kind", "script", "source", "0:" + item:NAME, "sourceSize", item:SIZE).
-			} ELSE IF item:EXTENSION = "settings" {
-				SET items[item:NAME] TO LEXICON("kind", "plain", "source", "0:" + item:NAME, "sourceSize", item:SIZE).
 			}
 		}
 	}
@@ -357,23 +324,17 @@ FUNCTION buildArchive {
 	FOR eachName IN items:KEYS {
 		LOCAL item IS items[eachName].
 		LOCAL entry IS FALSE.
-		IF item["kind"] = "plain" {
-			SET entry TO LEXICON("kind", "plain", "fingerprint", item["sourceSize"], "sourceSize", item["sourceSize"],
-				"form", "plain", "path", item["source"], "name", eachName, "size", item["sourceSize"]).
-			SET keptCount TO keptCount + 1.
-		} ELSE {
-			LOCAL fingerprint IS fileFingerprint(OPEN(item["source"]):READALL:STRING, item["sourceSize"]).
-			IF (NOT forceAll) AND oldFiles:HASKEY(eachName) {
-				LOCAL oldEntry IS oldFiles[eachName].
-				IF oldEntry["fingerprint"] = fingerprint {
-					IF oldEntry["form"] = "ks" OR EXISTS(oldEntry["path"]) SET entry TO oldEntry.
-				}
+		LOCAL fingerprint IS fileFingerprint(OPEN(item["source"]):READALL:STRING, item["sourceSize"]).
+		IF (NOT forceAll) AND oldFiles:HASKEY(eachName) {
+			LOCAL oldEntry IS oldFiles[eachName].
+			IF oldEntry["fingerprint"] = fingerprint {
+				IF oldEntry["form"] = "ks" OR EXISTS(oldEntry["path"]) SET entry TO oldEntry.
 			}
-			IF entry:ISTYPE("Boolean") {
-				SET entry TO compileEntry(eachName, item, fingerprint).
-				SET compiledCount TO compiledCount + 1.
-			} ELSE SET keptCount TO keptCount + 1.
 		}
+		IF entry:ISTYPE("Boolean") {
+			SET entry TO compileEntry(eachName, item, fingerprint).
+			SET compiledCount TO compiledCount + 1.
+		} ELSE SET keptCount TO keptCount + 1.
 		SET newFiles[eachName] TO entry.
 	}
 
@@ -428,7 +389,7 @@ FUNCTION buildStaleReason {
 // Returns the following:
 //			the paths of the files on the local drive that hold the script (list). That may be a .ks, a .ksm, or
 //			both, and is empty if there are none. Both are looked for, because an old .ksm left behind would be run
-//			instead of a new .ks. Only a .settings file has a dot in its name.
+//			instead of a new .ks. A name with a dot in it is a whole file name (this removes the files of an older kind that ships may still have).
 FUNCTION installedFiles {
 	PARAMETER scriptName.
 	LOCAL candidates IS LIST(scriptName + ".ks", scriptName + ".ksm").
@@ -875,8 +836,7 @@ setTerminalSize().
 
 LOCAL loopFound TO TRUE.
 
-isStockWorld().
-isStockRockets().
+isStock().
 
 // default to running on the local drive, if all the files are loaded already
 FOR criticalFileName IN criticalFileNames {
