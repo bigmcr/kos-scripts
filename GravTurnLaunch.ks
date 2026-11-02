@@ -55,6 +55,7 @@ LOCAL maxGs IS 3.
 // Max G related values. First is a delay before which maxGs is overridden to
 // unrealistically high (maxGInitial). After the delay, maxG is set to maxGFinal.
 LOCAL maxGDelay IS 90.
+IF isStock() SET maxGDelay TO 180.
 LOCAL maxGInitial IS 20.
 LOCAL maxGFinal IS 2.
 
