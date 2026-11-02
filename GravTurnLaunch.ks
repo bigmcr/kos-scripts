@@ -3,8 +3,11 @@
 // The altitude of the end of the gravity turn
 // If there is an atmosphere, it defaults to 5km below the top.
 // If there is not an atmosphere, it defaults to 25km.
-IF SHIP:BODY:ATM:EXISTS PARAMETER gravTurnEnd IS SHIP:BODY:ATM:HEIGHT - 5000.
-ELSE PARAMETER gravTurnEnd IS 25000.
+PARAMETER gravTurnEnd IS "Default".
+IF gravTurnEnd = "Default" {
+	IF SHIP:BODY:ATM:EXISTS SET gravTurnEnd TO SHIP:BODY:ATM:HEIGHT - 5000.
+	ELSE SET gravTurnEnd TO 25000.
+} ELSE SET gravTurnEnd TO processScalarParameter(gravTurnEnd).
 
 // The desired final inclination of the orbit
 // Negative values are allowed; the finalLAN will be adjusted to compensate
