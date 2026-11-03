@@ -174,6 +174,7 @@ FUNCTION mainScreenCells {
 		}
 		RETURN "  N/A".
 	}, 5)).
+	cells:ADD(screenCell(16, 4, "Stock     ", {RETURN isStock():TOSTRING:PADLEFT(5).}, 5)).
 
 	cells:ADD(screenCell(0, 5, "INC ", {RETURN ROUND(SHIP:ORBIT:INCLINATION, 3):TOSTRING:PADLEFT(8).}, 8)).
 	cells:ADD(screenCell(20, 5, "Auto Stopping Time")).
