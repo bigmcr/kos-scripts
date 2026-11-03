@@ -51,23 +51,18 @@ GLOBAL loadedVersions IS LEXICON().
 GLOBAL rebootPending IS LIST().
 
 // Is Stock
-// This function returns TRUE if none of the ship's engines needs the more complicated logic (limited ignitions,
-// ullage, slower turn times, restricted power, etc.), and FALSE if any of them does. The engines are asked directly,
-// because this runs before the library is loaded. The answer is kept after the first time, because it is the same for
-// a ship from boot to boot; after docking or staging, reboot to ask again. The suffixes used come from Real Fuels.
-// Without it, ULLAGE is FALSE and IGNITIONS is -1 for every engine, so the ship counts as stock.
+// This function returns TRUE if the size of the sun is less than 300,000,000 meters.
+// This is true for Kerbol but false for the Sun.
 // Passed the following:
 //			no arguments
 // Returns the following:
-//			whether or not the ship's engines are all free of ullage and ignition limits (bool)
+//			whether or not the ship is in a stock-sized solar system
 FUNCTION isStock {
 	IF stockDetermined RETURN lastStock.
-	LOCAL engineList IS LIST().
-	LIST ENGINES IN engineList.
-	SET lastStock TO TRUE.
-	FOR eachEngine IN engineList {
-		IF eachEngine:ULLAGE SET lastStock TO FALSE.
-		IF eachEngine:IGNITIONS >= 0 SET lastStock TO FALSE.
+	LOCAL bodyList IS LIST().
+	LIST BODIES in bodyList.
+	FOR eachBody IN bodyList {
+		IF NOT eachBody:HASBODY SET lastStock TO (eachBody:RADIUS < 300000000).
 	}
 	SET stockDetermined TO TRUE.
 	RETURN lastStock.
