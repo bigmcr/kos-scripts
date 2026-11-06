@@ -26,19 +26,30 @@ LOCAL deadband IS 0.05.					// m/s, smaller speeds are ignored
 LOCAL approachInterval IS 3.			// s between searches for the closest approach, which is slow
 LOCAL warpLead IS MAX(90, ullage).		// s, the first warp stops this long before the burn (or ullage) starts
 LOCAL refuseSlack IS 1.05.			// ratio, how far past what is possible a burn can be planned before it is refused
+LOCAL maxScanTime IS 1000000.			// s, how far ahead the closest approach is searched for on an orbit that does not repeat (a hyperbolic one)
+LOCAL stagePause IS 2.				// s, how long the ship coasts while a spent stage is dropped and the next one starts
+LOCAL awaySpeed IS 2.				// m/s, at or below this relative speed the ship is not counted as moving away from the target, which would only be noise
 
-// Finds the closest approach to the target within one orbit (or until the next change of orbit). The distance has a dip each
+// Finds the closest approach to the target within one orbit (maxScanTime on a hyperbolic one),
+// or until the next change of orbit of either ship. The distance has a dip each
 // time the two ships are near one another, so refining from now would settle on the nearest dip. So the distance is sampled
 // first, the earliest dip nearly as deep as the deepest is taken, and only that is refined.
 // Passed the following:
 //   relativeSpeed (scalar, m/s, the present relative speed. It sets what counts as nearly as deep as the deepest dip.)
-// Returns the same lexicon as closestApproach.
+// Returns the same lexicon as closestApproach, and "Found" (FALSE if the distance is still falling when the search ends, so that
+// the end of the search is not a closest approach) and "Horizon" (s, how far ahead the search looked).
 LOCAL FUNCTION scanForApproach {
 	PARAMETER relativeSpeed.
-	LOCAL horizon IS 3600.
+	LOCAL horizon IS maxScanTime.
 	IF SHIP:ORBIT:ECCENTRICITY < 1 SET horizon TO SHIP:ORBIT:PERIOD.
 	IF SHIP:ORBIT:HASNEXTPATCH SET horizon TO MIN(horizon, SHIP:ORBIT:NEXTPATCHETA).
-	LOCAL samples IS 300.
+	IF TARGET:ORBIT:HASNEXTPATCH SET horizon TO MIN(horizon, TARGET:ORBIT:NEXTPATCHETA).
+	SET horizon TO MAX(horizon, 10).
+	// whether the search stops short of a whole orbit. A bound orbit that is searched all the way round has nowhere to run out.
+	LOCAL windowCut IS TRUE.
+	IF SHIP:ORBIT:ECCENTRICITY < 1 SET windowCut TO horizon < SHIP:ORBIT:PERIOD.
+	// a long search gets more samples, which are then far apart in time
+	LOCAL samples IS MAX(300, MIN(600, ROUND(horizon / 600))).
 	LOCAL step IS horizon / samples.
 	LOCAL startUT IS TIME:SECONDS.
 	LOCAL distances IS LIST().
@@ -58,7 +69,63 @@ LOCAL FUNCTION scanForApproach {
 			BREAK.
 		}
 	}
-	RETURN closestApproach(startUT + chosen * step, step / 4).
+	// still falling at the end of the search: the dip is the edge of the search, and the real closest approach is further out
+	IF windowCut AND chosen = samples AND distances[samples] < distances[samples - 1] {
+		RETURN LEXICON("Time", startUT + horizon, "Distance", distances[samples], "Found", FALSE, "Horizon", horizon).
+	}
+	LOCAL result IS closestApproach(startUT + chosen * step, step / 4).
+	SET result["Found"] TO TRUE.
+	SET result["Horizon"] TO horizon.
+	RETURN result.
+}
+
+// Plans the braking from a speed, with the stages burning in turn. Each stage burns its remaining delta V, and what is left of the
+// speed goes to the next stage, with that stage's own thrust, exhaust velocity and mass. The ship coasts for stagePause between stages.
+// burnTime and burnDistance are the library's. They use the mass and the mass flow only as a ratio, v_e / acceleration, so those two
+// are passed in their place. burnDistance is for thrust along the direction of travel, so v_e is negated for braking.
+// Assumes that updateShipInfoCurrent has been run recently.
+// Passed the following:
+//   speed (scalar, m/s, the relative speed to cancel)
+//   tiltFactor (scalar, the cosine of the tilt, the part of the thrust that brakes)
+//   fraction (scalar, the part of the maximum thrust to plan with. -1 uses thrustFraction, or 1 for stages that cannot be throttled down.)
+// Returns a lexicon of the following:
+//   "Distance" (scalar, m, travelled while braking)
+//   "Time" (scalar, s)
+//   "Stages" (scalar, the number of stages that burn)
+//   "Fixed" (boolean, whether any stage that burns cannot be throttled down)
+//   "SpeedLeft" (scalar, m/s, what the stages cannot cancel)
+LOCAL FUNCTION brakePlan {
+	PARAMETER speed.
+	PARAMETER tiltFactor IS 1.
+	PARAMETER fraction IS -1.
+	LOCAL speedLeft IS speed.
+	LOCAL distance IS 0.
+	LOCAL duration IS 0.
+	LOCAL stagesUsed IS 0.
+	LOCAL anyFixed IS FALSE.
+	FROM {LOCAL stageNumber IS shipInfo["NumberOfStages"] - 1.} UNTIL stageNumber < 0 OR speedLeft <= deadband STEP {SET stageNumber TO stageNumber - 1.} DO {
+		LOCAL info IS shipInfo["Stage " + stageNumber].
+		IF info["Thrust"] > 0 AND info["Isp"] > 0 AND info["DeltaV"] > deadband {
+			LOCAL stageFixed IS NOT info["Throttleable"] OR info["HighestMinThrottle"] >= thrustFraction.
+			LOCAL planned IS thrustFraction.
+			IF stageFixed SET planned TO 1.
+			IF fraction >= 0 SET planned TO fraction.
+			IF stageFixed SET anyFixed TO TRUE.
+			LOCAL exhaustVelocity IS g_0 * info["Isp"].
+			LOCAL acceleration IS planned * info["Thrust"] / info["CurrentMass"] * tiltFactor.
+			LOCAL brakeSpeed IS MIN(speedLeft, info["DeltaV"] * tiltFactor).
+			LOCAL stageTime IS burnTime(exhaustVelocity, acceleration, brakeSpeed, exhaustVelocity).
+			SET distance TO distance + burnDistance(0, speedLeft, -exhaustVelocity, exhaustVelocity, acceleration, stageTime).
+			SET duration TO duration + stageTime.
+			SET speedLeft TO speedLeft - brakeSpeed.
+			SET stagesUsed TO stagesUsed + 1.
+			IF speedLeft > deadband {
+				SET distance TO distance + speedLeft * stagePause.
+				SET duration TO duration + stagePause.
+			}
+		}
+	}
+	RETURN LEXICON("Distance", distance, "Time", duration, "Stages", stagesUsed, "Fixed", anyFixed, "SpeedLeft", speedLeft).
 }
 
 IF shipInfo["Maximum"]["Accel"] = 0 {SET mode TO "Done". SET loopMessage TO "Error! Max accel is zero!".}
@@ -115,6 +182,8 @@ IF (mode <> "Done") {
 	LOCAL missVector IS V(0,0,0).
 	LOCAL lastApproachUT IS TIME:SECONDS - 1000.
 	LOCAL scanned IS FALSE.							// whether the whole orbit has been searched yet
+	LOCAL approachFound IS TRUE.					// whether the last full search found a closest approach, and not just the end of the search
+	LOCAL scanHorizon IS 0.							// s, how far ahead the last full search looked
 	LOCAL approachSpeed IS 0.						// the speed relative to the target at the closest approach
 	LOCAL ignitionUT IS TIME:SECONDS.				// when the burn has to start
 	LOCAL ignitionSpeed IS 0.						// the speed relative to the target then
@@ -130,10 +199,10 @@ IF (mode <> "Done") {
 	LOCAL tilt IS 0.
 
 	// ship performance, refreshed each pass to follow staging and thrust limit changes
-	LOCAL v_e IS g_0 * shipInfo["CurrentStage"]["Isp"].
 	LOCAL aMax IS shipInfo["Maximum"]["Accel"].
-	LOCAL aPlanned IS aMax.
-	LOCAL plannedAcceleration IS aMax.				// aPlanned less what the expected tilt costs along the braking direction
+	LOCAL plan IS LEXICON("Distance", 0, "Time", 0, "Stages", 1, "Fixed", FALSE, "SpeedLeft", 0).	// the braking plan from brakePlan
+	LOCAL expectedTilt IS 0.					// degrees, the tilt that the plan expects at ignition
+	LOCAL movingAway IS FALSE.					// whether the burn has started and the ship is going away from the target, which it has passed
 	LOCAL brakeDist IS 0.
 	LOCAL burnDuration IS 0.						// s, how long the burn takes
 	LOCAL timeToIgnite IS 0.
@@ -191,15 +260,11 @@ IF (mode <> "Done") {
 
 			// the ship: these follow staging and a change of the thrust limit
 			SET currentMass TO shipInfo["CurrentStage"]["CurrentMass"].
-			SET v_e TO g_0 * shipInfo["CurrentStage"]["Isp"].
 			SET aMax TO MAX(shipInfo["Maximum"]["Accel"], 0.001).
 			LOCAL lowestLimit IS shipInfo["CurrentStage"]["LowestThrustLimit"].
 			SET minThrottle TO shipInfo["CurrentStage"]["HighestMinThrottle"].
 			SET fixedThrust TO NOT shipInfo["CurrentStage"]["Throttleable"] OR minThrottle >= thrustFraction.
 			SET throttleFloor TO MAX(minThrottle, 0.05).
-			// an engine that cannot throttle down plans with its full acceleration, the others leave some for control
-			IF fixedThrust SET aPlanned TO aMax.
-			ELSE SET aPlanned TO thrustFraction * aMax.
 			SET limiterNote TO "".
 			IF lowestLimit < 100 SET limiterNote TO "Engine thrust limit is " + ROUND(lowestLimit, 1) + "%".
 
@@ -208,6 +273,7 @@ IF (mode <> "Done") {
 			SET targetVelocity TO SHIP:VELOCITY:ORBIT - targetOrbitable:VELOCITY:ORBIT.
 			SET targetSpeed TO targetVelocity:MAG.
 			SET targetDistance TO targetPosition:MAG.
+			SET movingAway TO mode = "Burning" AND VDOT(targetPosition, targetVelocity) < 0 AND targetSpeed > awaySpeed.
 
 			// the closest approach is searched for every so often, because the search is slow. The first search covers the whole orbit.
 			// After that it refines the previous result, unless that has gone by before the burn, which searches again.
@@ -215,29 +281,29 @@ IF (mode <> "Done") {
 				IF NOT scanned OR (approach["Time"] < TIME:SECONDS AND mode <> "Burning") {
 					SET approach TO scanForApproach(targetSpeed).
 					SET scanned TO TRUE.
+						SET approachFound TO approach["Found"].
+						SET scanHorizon TO approach["Horizon"].
 				} ELSE SET approach TO closestApproach(MAX(approach["Time"], TIME:SECONDS), 10).
 				SET lastApproachUT TO TIME:SECONDS.
 
 				// when the burn has to start: planDistance before the closest approach, at the speed the ships will have then. The time comes
 				// from the predicted time of the closest approach, not from the distance and the present speed, which is only right for a
-				// short straight path. planDistance is the larger of what the thrust needs (the standoff plus the braking distance, planned
-				// with the acceleration left after the tilt) and what the tilt needs (the path must be long enough that tiltGain times the
-				// miss angle stays within maxTilt).
-				// burnTime and burnDistance are the library's. They use the mass and the mass flow only as a ratio, v_e / acceleration, so
-				// those two are passed in their place. burnDistance is for thrust along the direction of travel, so v_e is negated.
+				// short straight path. planDistance is the larger of what the thrust needs (the standoff plus the braking distance from brakePlan,
+				// which burns the stages in turn and allows for the tilt) and what the tilt needs (the path must be long enough that tiltGain
+				// times the miss angle stays within maxTilt).
 				SET approachSpeed TO (VELOCITYAT(SHIP, approach["Time"]):ORBIT - VELOCITYAT(targetOrbitable, approach["Time"]):ORBIT):MAG.
 				SET ignitionSpeed TO approachSpeed.
 				SET ignitionUT TO approach["Time"].
-				SET plannedAcceleration TO aPlanned.
+				SET expectedTilt TO 0.
 				LOCAL tiltDistance IS approach["Distance"] / TAN(maxTilt / tiltGain).
 				LOCAL thrustDistance IS standoff.
 				LOCAL planDistance IS standoff.
-				LOCAL expectedTilt IS 0.
 				FROM {LOCAL pass IS 0.} UNTIL pass >= 3 STEP {SET pass TO pass + 1.} DO {
-					SET planDistance TO MAX(standoff + burnDistance(0, ignitionSpeed, -v_e, v_e, plannedAcceleration, burnTime(v_e, plannedAcceleration, ignitionSpeed, v_e)), tiltDistance).
+					SET plan TO brakePlan(ignitionSpeed, COS(expectedTilt)).
+					SET planDistance TO MAX(standoff + plan["Distance"], tiltDistance).
 					SET expectedTilt TO MIN(tiltGain * ARCTAN(approach["Distance"] / planDistance), maxTilt).
-					SET plannedAcceleration TO aPlanned * COS(expectedTilt).
-					SET thrustDistance TO standoff + burnDistance(0, ignitionSpeed, -v_e, v_e, plannedAcceleration, burnTime(v_e, plannedAcceleration, ignitionSpeed, v_e)).
+					SET plan TO brakePlan(ignitionSpeed, COS(expectedTilt)).
+					SET thrustDistance TO standoff + plan["Distance"].
 					SET planDistance TO MAX(thrustDistance, tiltDistance).
 					SET ignitionUT TO approach["Time"] - planDistance / MAX((ignitionSpeed + approachSpeed) / 2, deadband).
 					LOCAL ignitionTime IS MAX(ignitionUT, TIME:SECONDS).
@@ -247,22 +313,25 @@ IF (mode <> "Done") {
 				// whether the burn can be done at all. It is checked before the burn starts, while it can still be refused.
 				IF mode = "Waiting" {
 					LOCAL refusal IS "".
-					IF ignitionUT < TIME:SECONDS {
-						// the burn should have started already, so the path that is left has to be stopped in with the thrust there is
+					IF NOT approachFound SET refusal TO "No closest approach in the next " + timeToString(scanHorizon) + "! The ships are still getting closer when the search ends".
+					ELSE IF approach["Time"] <= TIME:SECONDS SET refusal TO "Already past the closest approach! The ships are moving apart".
+					ELSE IF ignitionUT < TIME:SECONDS {
+						// the burn should have started already, so the path that is left has to be stopped in with all of the thrust there is
 						LOCAL pathLeft IS MAX((approach["Time"] - TIME:SECONDS) * (targetSpeed + approachSpeed) / 2, 1).
 						LOCAL lateTilt IS tiltGain * ARCTAN(approach["Distance"] / pathLeft).
-						LOCAL lateAccel IS targetSpeed^2 / (2 * MAX(pathLeft - standoff, 1)) / COS(MIN(lateTilt, maxTilt)).
+						LOCAL lateBrake IS brakePlan(targetSpeed, COS(MIN(lateTilt, maxTilt)), 1).
 						IF lateTilt > maxTilt SET refusal TO "Too late! A miss of " + distanceToString(approach["Distance"], 1) + " in the " + distanceToString(pathLeft, 1) + " left needs more than " + maxTilt + " degrees of tilt".
-						ELSE IF lateAccel > aMax * refuseSlack SET refusal TO "Too late! Stopping in the " + distanceToString(pathLeft, 1) + " left needs " + ROUND(lateAccel, 2) + " m/s2, the ship has " + ROUND(aMax, 2).
-					} ELSE IF fixedThrust {
+						ELSE IF lateBrake["Distance"] > MAX(pathLeft - standoff, 1) * refuseSlack SET refusal TO "Too late! Stopping from " + ROUND(targetSpeed, 1) + " m/s takes " + distanceToString(lateBrake["Distance"], 1) + " with all of the thrust there is, and only " + distanceToString(pathLeft, 1) + " is left".
+					} ELSE IF plan["Fixed"] {
 						// full thrust cannot be reduced, so a burn that has to start earlier than it needs would stop short
 						IF planDistance > thrustDistance * refuseSlack SET refusal TO "Cannot throttle down! The miss needs the burn to start " + distanceToString(planDistance, 1) + " out, full thrust only needs " + distanceToString(thrustDistance, 1).
 					} ELSE {
-						LOCAL neededThrottle IS ignitionSpeed^2 / (2 * MAX(planDistance - standoff, 1)) / (aMax * COS(expectedTilt)).
+						LOCAL neededThrottle IS thrustFraction * plan["Distance"] / MAX(planDistance - standoff, 1).
 						IF neededThrottle < throttleFloor SET refusal TO "Cannot throttle down! The burn needs " + ROUND(100 * neededThrottle, 1) + "% throttle, the engines go no lower than " + ROUND(100 * throttleFloor) + "%".
 					}
 					// the tilt makes the burn cost 1 / COS(tilt) times the speed
 					IF refusal = "" AND ignitionSpeed * 1.1 / COS(expectedTilt) > shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"] SET refusal TO "Not enough delta V! The burn needs " + ROUND(ignitionSpeed / COS(expectedTilt), 1) + " m/s".
+					IF refusal = "" AND plan["SpeedLeft"] > 1 SET refusal TO "The stages with engines cannot cancel the last " + ROUND(plan["SpeedLeft"], 1) + " m/s".
 					IF refusal <> "" {
 						SET mode TO "Done".
 						SET loopMessage TO refusal.
@@ -278,14 +347,10 @@ IF (mode <> "Done") {
 			// zero, so the burn ends at the standoff from the target.
 			SET distanceToStop TO MAX(targetDistance - standoff, 0).
 
-			// the burn: how far it takes, and when it has to start. Once the engines are lit it is what is left of the speed.
-			IF mode = "Burning" {
-				SET burnDuration TO burnTime(v_e, aPlanned * COS(tilt), targetSpeed, v_e).
-				SET brakeDist TO burnDistance(0, targetSpeed, -v_e, v_e, aPlanned * COS(tilt), burnDuration).
-			} ELSE {
-				SET burnDuration TO burnTime(v_e, plannedAcceleration, ignitionSpeed, v_e).
-				SET brakeDist TO burnDistance(0, ignitionSpeed, -v_e, v_e, plannedAcceleration, burnDuration).
-			}
+			// the burn: how far it takes. Once the engines are lit it is planned again on each pass, from what is left of the speed and of the stages.
+			IF mode = "Burning" SET plan TO brakePlan(targetSpeed, COS(tilt)).
+			SET burnDuration TO plan["Time"].
+			SET brakeDist TO plan["Distance"].
 			SET timeToIgnite TO ignitionUT - TIME:SECONDS.
 
 			// the direction of the burn: retrograde, offset by tiltGain times the angle between the (gravity-bent) path and the target
@@ -296,7 +361,7 @@ IF (mode <> "Done") {
 			// and losing it suddenly would be a sudden turn.
 			LOCAL distanceFade IS MAX(MIN((targetDistance - tiltMinDistance) / (tiltFullDistance - tiltMinDistance), 1), 0).
 			LOCAL speedFade IS MAX(MIN((targetSpeed - tiltMinSpeed) / tiltMinSpeed, 1), 0).
-			IF MIN(distanceFade, speedFade) > 0 AND chord:MAG > 1 {
+			IF MIN(distanceFade, speedFade) > 0 AND chord:MAG > 1 AND NOT movingAway {
 				SET missAngle TO VANG(chord, targetPosition).
 				IF missAngle > 0.01 {
 					SET tilt TO MIN(tiltGain * missAngle, maxTilt) * MIN(distanceFade, speedFade).
@@ -363,12 +428,12 @@ IF (mode <> "Done") {
 
 			IF (mode = "Burning") {
 				SET globalSteer TO steerVector.
-				// the throttle is the deceleration that stops the ship at the stop point, less what the tilt costs along the braking direction.
-				// An engine that cannot be throttled down burns at full thrust.
-				IF fixedThrust SET throttleCommand TO 1.
+				// the throttle is the planned part of the thrust, scaled by how the distance that the plan needs (the stages in turn, and the tilt)
+				// compares with the distance left. An engine that cannot be throttled down burns at full thrust, and so does a ship that is
+				// moving away from the target, which has gone past it.
+				IF fixedThrust OR movingAway SET throttleCommand TO 1.
 				ELSE {
-					LOCAL decelerationNeeded IS targetSpeed^2 / (2 * MAX(distanceToStop, 1)).
-					SET throttleCommand TO decelerationNeeded / (aMax * MAX(COS(tilt), 0.3)).
+					SET throttleCommand TO thrustFraction * brakeDist / MAX(distanceToStop, 1).
 					// near the end the speed is cancelled smoothly, so that the burn does not overshoot zero
 					SET throttleCommand TO MIN(throttleCommand, targetSpeed / (aMax * controlTime)).
 					SET throttleCommand TO MAX(MIN(throttleCommand, 1), throttleFloor).
@@ -451,6 +516,7 @@ IF (mode <> "Done") {
 			PRINT limiterNote + "                              " AT (0, 12).
 			PRINT "AG1 or ENTER aborts." AT (0, 13).
 			PRINT "Speed At Closest Approach: " + distanceToString(approachSpeed, 1) + "/s    " AT (0, 14).
+			PRINT "Braking stages: " + plan["Stages"] + "    " AT (0, 16).
 
 			SET tgtPos:START TO CORE:PART:POSITION.
 			SET tgtVel:START TO CORE:PART:POSITION.
