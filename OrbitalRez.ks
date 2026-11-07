@@ -28,6 +28,7 @@ LOCAL warpLead IS MAX(90, ullage).		// s, the first warp stops this long before 
 LOCAL refuseSlack IS 1.05.			// ratio, how far past what is possible a burn can be planned before it is refused
 LOCAL maxScanTime IS 1000000.			// s, how far ahead the closest approach is searched for on an orbit that does not repeat (a hyperbolic one)
 LOCAL stagePause IS 2.				// s, how long the ship coasts while a spent stage is dropped and the next one starts
+LOCAL needUllage IS ullage > 0 AND NOT isStock().	// whether RCS settles the propellant before each ignition, the first and those after staging
 LOCAL awaySpeed IS 2.				// m/s, at or below this relative speed the ship is not counted as moving away from the target, which would only be noise
 
 // Finds the closest approach to the target within one orbit (maxScanTime on a hyperbolic one),
@@ -80,7 +81,8 @@ LOCAL FUNCTION scanForApproach {
 }
 
 // Plans the braking from a speed, with the stages burning in turn. Each stage burns its remaining delta V, and what is left of the
-// speed goes to the next stage, with that stage's own thrust, exhaust velocity and mass. The ship coasts for stagePause between stages.
+// speed goes to the next stage, with that stage's own thrust, exhaust velocity and mass. The ship coasts for stagePause between stages,
+// and for the ullage as well when needUllage.
 // burnTime and burnDistance are the library's. They use the mass and the mass flow only as a ratio, v_e / acceleration, so those two
 // are passed in their place. burnDistance is for thrust along the direction of travel, so v_e is negated for braking.
 // Assumes that updateShipInfoCurrent has been run recently.
@@ -103,6 +105,8 @@ LOCAL FUNCTION brakePlan {
 	LOCAL duration IS 0.
 	LOCAL stagesUsed IS 0.
 	LOCAL anyFixed IS FALSE.
+	LOCAL gap IS stagePause.
+	IF needUllage SET gap TO stagePause + ullage.
 	FROM {LOCAL stageNumber IS shipInfo["NumberOfStages"] - 1.} UNTIL stageNumber < 0 OR speedLeft <= deadband STEP {SET stageNumber TO stageNumber - 1.} DO {
 		LOCAL info IS shipInfo["Stage " + stageNumber].
 		IF info["Thrust"] > 0 AND info["Isp"] > 0 AND info["DeltaV"] > deadband {
@@ -120,8 +124,8 @@ LOCAL FUNCTION brakePlan {
 			SET speedLeft TO speedLeft - brakeSpeed.
 			SET stagesUsed TO stagesUsed + 1.
 			IF speedLeft > deadband {
-				SET distance TO distance + speedLeft * stagePause.
-				SET duration TO duration + stagePause.
+				SET distance TO distance + speedLeft * gap.
+				SET duration TO duration + gap.
 			}
 		}
 	}
@@ -163,7 +167,6 @@ IF (mode <> "Done") {
 IF (mode <> "Done") {
 	LOCAL oldRCS IS RCS.
 	LOCAL oldSAS IS SAS.
-	LOCAL needUllage IS ullage > 0 AND NOT isStock().
 
 	SET globalSteer TO SHIP:FACING.
 	SET globalThrottle TO 0.
@@ -222,6 +225,7 @@ IF (mode <> "Done") {
 	LOCAL railsWarped IS FALSE.
 	LOCAL warpOn IS FALSE.
 	LOCAL ullageStart IS 0.
+	LOCAL stageUllageStart IS -1.				// UT when the ullage before staging began, -1 when there is none
 	LOCAL burnStartVelocity IS V(0,0,0).
 	LOCAL ignited IS FALSE.						// whether the engines have been started, after which the pointing error no longer cuts the throttle
 	LOCAL abortRequested IS FALSE.
@@ -283,7 +287,11 @@ IF (mode <> "Done") {
 					SET scanned TO TRUE.
 						SET approachFound TO approach["Found"].
 						SET scanHorizon TO approach["Horizon"].
-				} ELSE SET approach TO closestApproach(MAX(approach["Time"], TIME:SECONDS), 10).
+				} ELSE {
+					// the last answer is close, by about as much as it can have moved since, so the search starts with a smaller step and ends sooner
+					LOCAL refineStep IS MAX(1, MIN(10, 2 * (TIME:SECONDS - lastApproachUT))).
+					SET approach TO closestApproach(MAX(approach["Time"], TIME:SECONDS), refineStep, "", 12).
+				}
 				SET lastApproachUT TO TIME:SECONDS.
 
 				// when the burn has to start: planDistance before the closest approach, at the speed the ships will have then. The time comes
@@ -450,15 +458,32 @@ IF (mode <> "Done") {
 
 				// drop spent stages (stageIfNeeded). The no-thrust and empty-tank checks wait until the stage has been seen producing
 				// thrust, so that a stage that has not started is not dropped. The throttle is not touched, because shutting an engine
-				// down can use up an ignition.
-				IF throttleCommand > 0 {
+				// down can use up an ignition. With ullage, the ship coasts with RCS firing forward first, and the stage is dropped
+				// (and the next one lit) with the RCS still on.
+				IF stageUllageStart >= 0 {
+					SET throttleCommand TO 0.
+					IF TIME:SECONDS - stageUllageStart >= ullage {
+						LOCAL stageReason IS stageIfNeeded(everThrust).
+						SET SHIP:CONTROL:FORE TO 0.
+						RCS OFF.
+						SET stageUllageStart TO -1.
+						IF stageReason <> "None" PRINT "Staged from " + stageReason + "          " AT (0, 15).
+						SET everThrust TO FALSE.
+						SET noThrustSince TO -1.
+					}
+				} ELSE IF throttleCommand > 0 {
 					IF MAXTHRUST > 0 {
 						SET everThrust TO TRUE.
 						SET engineLit TO TRUE.
 						SET noThrustSince TO -1.
 					}
-					LOCAL stageReason IS stageIfNeeded(everThrust).
-					IF stageReason <> "None" {
+					LOCAL stageReason IS stageIfNeeded(everThrust, NOT needUllage).
+					IF stageReason <> "None" AND needUllage {
+						SET stageUllageStart TO TIME:SECONDS.
+						RCS ON.
+						SET SHIP:CONTROL:FORE TO 1.
+						SET throttleCommand TO 0.
+					} ELSE IF stageReason <> "None" {
 						PRINT "Staged from " + stageReason + "          " AT (0, 15).
 						// the engines of the new stage have to be seen working before the next stage can be dropped
 						SET everThrust TO FALSE.
@@ -517,6 +542,8 @@ IF (mode <> "Done") {
 			PRINT "AG1 or ENTER aborts." AT (0, 13).
 			PRINT "Speed At Closest Approach: " + distanceToString(approachSpeed, 1) + "/s    " AT (0, 14).
 			PRINT "Braking stages: " + plan["Stages"] + "    " AT (0, 16).
+			IF stageUllageStart >= 0 PRINT "Ullage before staging          " AT (0, 17).
+			ELSE PRINT "                                " AT (0, 17).
 
 			SET tgtPos:START TO CORE:PART:POSITION.
 			SET tgtVel:START TO CORE:PART:POSITION.
