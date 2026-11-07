@@ -1,9 +1,25 @@
 @LAZYGLOBAL OFF.
 
+// The name of the target, a body or a vessel. If it is not given, or is not found, the target that is selected is used,
+// and if none is selected, the script waits until one is.
+PARAMETER targetName IS "Default".
+
 LOCAL finalAltitude IS 25000.
 IF SHIP:BODY:ATM:EXISTS SET finalAltitude TO SHIP:BODY:ATM:HEIGHT - 5000.
 
 CLEARSCREEN.
+
+// If the name resolves to an orbitable, that is the target. The ship itself does not count.
+IF targetName <> "Default" {
+	LOCAL namedTarget IS resolveOrbitable("" + targetName).
+	IF namedTarget:ISTYPE("Scalar") OR (namedTarget:ISTYPE("Vessel") AND namedTarget:NAME = SHIP:NAME) {
+		PRINT "No target named " + targetName + " was found.".
+		IF HASTARGET PRINT "Using the selected target, " + TARGET:NAME + ".".
+	} ELSE {
+		SET TARGET TO namedTarget.
+		WAIT 0.
+	}
+}
 
 IF NOT HASTARGET {
 	PRINT "Select a target.".

@@ -3752,8 +3752,14 @@ FUNCTION firstCommonBody {
 
 // Returns BODY(objectName) or VESSEL(objectName) (a vessel wins if both exist),
 // or the scalar 0 if neither exists - check with :ISTYPE("Scalar").
+// If the parameter is already a BODY or a VESSEL, it is returned as it is.
+// A docking port (or any other part) passed as the parameter is rejected the same way, with the scalar 0, because it is not
+// an orbitable and has no name that resolves to one. To use the vessel that a port is on, pass its :SHIP:NAME instead.
 FUNCTION resolveOrbitable {
 	PARAMETER objectName.
+
+	IF objectName:ISTYPE("Body") OR objectName:ISTYPE("Vessel") RETURN objectName.
+	IF objectName:ISTYPE("DockingPort") OR objectName:ISTYPE("Part") RETURN 0.
 
 	LOCAL result IS 0.
 	IF BODYEXISTS(objectName) SET result TO BODY(objectName).
