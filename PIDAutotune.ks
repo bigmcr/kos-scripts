@@ -302,6 +302,9 @@ FUNCTION getRCSThrusts {
 GLOBAL foreDirectionVector IS V(0,0,0).
 GLOBAL topDirectionVector IS V(0,0,0).
 GLOBAL starboardDirectionVector IS V(0,0,0).
+// TRUE if the ship faces away from the target's facing (the original behavior), FALSE if it faces the same way. The operator
+// chooses with the Q and A keys.
+GLOBAL facingAway IS TRUE.
 
 // getMaxAccel
 // Inputs:
@@ -614,7 +617,9 @@ FUNCTION printStatus {
             PRINT ("  [UP/DOWN] setpoint     [S/D] step size   [M] edit tuning preset instead"):PADRIGHT(terminalWidth) AT (0, 12).
             PRINT ("  [0] reset setpoint"):PADRIGHT(terminalWidth) AT (0, 13).
         }
-        PRINT ("  [X/ESC] exit"):PADRIGHT(terminalWidth) AT (0, 14).
+        LOCAL facingText IS "same way as target".
+        IF facingAway SET facingText TO "away from target".
+        PRINT ("  [Q] face same way  [A] face away (now " + facingText + ")   [X/ESC] exit"):PADRIGHT(terminalWidth) AT (0, 14).
     } ELSE {
         PRINT " ":PADRIGHT(terminalWidth) AT (0,  9).
         PRINT " ":PADRIGHT(terminalWidth) AT (0, 10).
@@ -1532,9 +1537,23 @@ IF NOT HASTARGET {
     LOCAL rotationSettleThreshold IS 0.01.
     LOCAL rotationSettleTimeout IS 30.
 
-    SET foreDirectionVector TO -TARGET:FACING:FOREVECTOR.
-    SET topDirectionVector TO TARGET:FACING:TOPVECTOR.
-    SET starboardDirectionVector TO -TARGET:FACING:STARVECTOR.
+    // Sets the axes that the control works in, and points the ship along them. Facing away from the target's facing turns the
+    // ship half a turn around its top direction, so the fore and starboard axes are reversed and the top axis is not.
+    LOCAL applyFacing IS {
+        PARAMETER faceAway.
+        SET facingAway TO faceAway.
+        IF faceAway {
+            SET foreDirectionVector TO -TARGET:FACING:FOREVECTOR.
+            SET topDirectionVector TO TARGET:FACING:TOPVECTOR.
+            SET starboardDirectionVector TO -TARGET:FACING:STARVECTOR.
+        } ELSE {
+            SET foreDirectionVector TO TARGET:FACING:FOREVECTOR.
+            SET topDirectionVector TO TARGET:FACING:TOPVECTOR.
+            SET starboardDirectionVector TO TARGET:FACING:STARVECTOR.
+        }
+        SET globalSteer TO LOOKDIRUP(foreDirectionVector, topDirectionVector).
+    }.
+    applyFacing(TRUE).
 
     LOCAL foreVector IS VECDRAW(SHIP:CONTROLPART:POSITION, V(0,0,0), YELLOW, "Fore", 1.0, TRUE, 0.2).
     LOCAL topVector  IS VECDRAW(SHIP:CONTROLPART:POSITION, V(0,0,0), RED, "Top" , 1.0, TRUE, 0.2).
@@ -1590,6 +1609,29 @@ IF NOT HASTARGET {
 		SET currentVel TO getRelativeVelocity().
 		SET currentPos TO getRelativePosition().
 		logRow().
+
+		// [Q] and [A] choose whether the ship faces the same way as the target or away from it. This works while the ship is
+		// settling at the start and in manual control, but not while an autotune stage is running.
+		LOCAL facingKey IS tempChar:TOLOWER().
+		IF (mode = "setup" OR mode = "Manual Control") AND (facingKey = "q" OR facingKey = "a") {
+			LOCAL wantAway IS (facingKey = "a").
+			IF wantAway <> facingAway {
+				applyFacing(wantAway).
+				SET rotationWaitStart TO TIME:SECONDS.
+				IF mode = "Manual Control" {
+					// the fore and starboard axes have turned around, so the same wanted motion has the opposite sign on them
+					SET setpointLex["X"] TO -setpointLex["X"].
+					SET setpointLex["Z"] TO -setpointLex["Z"].
+					vectorPIDReset(velocityPIDLoop).
+					vectorPIDReset(positionPIDLoop).
+				}
+				SET currentVel TO getRelativeVelocity().
+				SET currentPos TO getRelativePosition().
+				IF wantAway logStatus("Facing away from the target's facing.").
+				ELSE logStatus("Facing the same way as the target's facing.").
+			}
+			SET tempChar TO "".
+		}
 
 		// Wait for steering to stabilize
         IF mode = "setup" {
@@ -1654,8 +1696,15 @@ IF NOT HASTARGET {
 
 			vectorPIDSetMaxOutput(velocityPIDLoop, maxAccel).
 			vectorPIDSetMinOutput(velocityPIDLoop, -1 * maxAccel).
-			LOCAL effortVec IS vectorPIDUpdate(velocityPIDLoop, TIME:SECONDS, currentVel).
-			applyRCSAccel(effortVec, maxAccel).
+			// while the ship is turning to a new facing, its RCS axes are not the ones that the loops work in, so hold still
+			IF VANG(SHIP:FACING:FOREVECTOR, foreDirectionVector) < 10 AND VANG(SHIP:FACING:TOPVECTOR, topDirectionVector) < 10 {
+				LOCAL effortVec IS vectorPIDUpdate(velocityPIDLoop, TIME:SECONDS, currentVel).
+				applyRCSAccel(effortVec, maxAccel).
+			} ELSE {
+				vectorPIDReset(velocityPIDLoop).
+				vectorPIDReset(positionPIDLoop).
+				applyRCSAccel(V(0,0,0), maxAccel).
+			}
 
 			// Letter keys are matched case-insensitively so CAPS LOCK/shift
 			// doesn't silently do nothing.
