@@ -21,6 +21,13 @@
 //     actually dictates, which can cost more.
 //   Case 3 (same SOI): the ship burns straight onto a Lambert arc to the destination and matches its
 //     velocity there. The burn time is the departure time, so there is no exit-time or phase logic.
+//   Case 4 (ship on an escape orbit around the departure body, e.g. after the main ejection burn): a
+//     correction burn. It does not repeat, so there is no burn phase to lock to, and its exit time can
+//     only move by minutes, so exit time is not searched. Every price is for the cheapest burn, between
+//     now and a few minutes before the ship's own SOI exit, that reaches the wanted exit velocity
+//     (ejectionFreeExit), whenever it then exits, and tSOI is pinned to the ship's own exit time, so only
+//     the flight time is searched. The winner's departure is then moved to the burn's real exit time and
+//     its flight time searched once more there (escapeLockedDeparture).
 //
 // The steps:
 //   1. buildTransferWindow picks the departure and flight-time samples: a COARSE search over
@@ -33,30 +40,33 @@
 //      are several refinements, and the cheapest of them wins. Cases 1 and 2 use the quick ejection
 //      cost here; the winner is then re-priced at full precision.
 //   4. Case 2 only: phaseLockedDeparture moves the departure to the best burn phase of the ship's
-//      orbit. Cases 2 and 3: addEjectionNode adds the maneuver node (radial + normal + prograde).
+//      orbit (case 4: escapeLockedDeparture moves it to the correction burn's exit time). Cases 2, 3
+//      and 4: addEjectionNode adds the maneuver node (radial + normal + prograde).
 //
 // "tSOI" below is the moment the ship leaves the departure body's sphere of influence - the
 // departure time Lambert sees. The ejection burn itself happens earlier, by the hyperbolic
 // transit time from the burn to the SOI edge.
 //
 // PARAMETERs:
-//   destinationName  - the destination: a body, or a vessel (a vessel wins a name clash)
+//   destinationName  - the destination: a body, or a vessel (a vessel wins a name clash). If it is valid
+//                      it also becomes the ship's target. "Default" uses the current target
 //   startOffset      - s from now to the start of the search window (>= 30)
 //   departureWindows - how many departure windows to search. Between bodies a window is a synodic
 //                      period; in the same SOI it is a synodic period or four ship orbits, whichever is shorter
 //   samplesPerWindow - departure times sampled in each window; the grid covers
-//                      departureWindows x samplesPerWindow departure times in all. -1 (the default) chooses:
+//                      departureWindows x samplesPerWindow departure times in all (in case 4, the total, 1 by default: the departure is pinned there). -1 (the default) chooses:
 //                      between bodies 8 per period of the quicker body in the window (4 to 24), 12 per ship orbit in the same SOI
 //   tofSamples       - flight times sampled (1 to 4 times the Hohmann time). -1 (the default) chooses:
 //                      5 between bodies, 7 in the same SOI
-//   sourceName       - "" (the default) takes the source from where the ship is. Otherwise the source to
-//                      use instead: it must orbit the same body as the destination, and the ship must be
-//                      it or be in orbit around it
 //   parkingAltitude  - m, case 1 only: altitude of the parking orbit to design. -1 (the default) chooses
 //                      50 km, or 30 km above the atmosphere if there is one.
 //   captureAltitude  - m above the destination's surface to capture into a circular orbit.
 //                      -1 (the default) prices only matching the arrival excess speed.
 //   solverType       - the Lambert solver: "Gooding" (the default) or "Gauss"
+//   searchDays       - game days, the length of the departure range, in place of departureWindows windows.
+//                      -1 (the default) uses departureWindows. Searches only the departures soon, instead of
+//                      a whole synodic period; also needed when a vessel is on an escape orbit with no SOI
+//                      change to end the search (see buildTransferWindow)
 // ============================================================================
 
 PARAMETER destinationName IS "Default".
@@ -64,10 +74,12 @@ PARAMETER startOffset IS 120.
 PARAMETER departureWindows IS 1.
 PARAMETER samplesPerWindow IS -1.
 PARAMETER tofSamples IS -1.
-PARAMETER sourceName IS "".
 PARAMETER parkingAltitude IS "Default".
 PARAMETER captureAltitude IS "Default".
 PARAMETER solverType IS "Gooding".
+PARAMETER searchDays IS -1.
+// The source is always where the ship is: this script is run by the ship that will do the burn.
+LOCAL sourceName IS "".
 SET parkingAltitude TO processScalarParameter(parkingAltitude, errorValue).
 IF parkingAltitude = errorValue SET parkingAltitude TO -1.
 SET captureAltitude TO processScalarParameter(captureAltitude, errorValue).
@@ -229,7 +241,7 @@ IF debug {
 	debugLine("Run", "start", "UT " + TIME:SECONDS + ", " + SHIP:NAME + " in " + SHIP:BODY:NAME + "'s SOI, " + SHIP:STATUS).
 	debugLogValues("Parameters", LEXICON("destinationName", destinationName, "startOffset", startOffset, "departureWindows", departureWindows,
 		"samplesPerWindow", samplesPerWindow, "tofSamples", tofSamples, "sourceName", sourceName,
-		"parkingAltitude", parkingAltitude, "captureAltitude", captureAltitude, "solverType", solverType)).
+		"parkingAltitude", parkingAltitude, "captureAltitude", captureAltitude, "solverType", solverType, "searchDays", searchDays)).
 }
 LOCAL errorCode IS "None".
 
@@ -238,6 +250,14 @@ SET errorCode TO endpoints["error"].
 LOCAL fromOrbitable IS endpoints["from"].
 LOCAL toOrbitable IS endpoints["to"].
 LOCAL sameSOI IS endpoints["sameSOI"].
+// A valid destination becomes the ship's target (the one named, or the one already targeted).
+IF errorCode = "None" {
+	IF HASTARGET {
+		IF TARGET:NAME <> toOrbitable:NAME SET TARGET TO toOrbitable.
+	} ELSE {
+		SET TARGET TO toOrbitable.
+	}
+}
 IF errorCode = "None" AND solverType <> "Gauss" AND solverType <> "Gooding" {
 	SET errorCode TO "solverType must be Gauss or Gooding, not " + solverType + "!".
 }
@@ -258,9 +278,45 @@ IF errorCode = "None" AND sameSOI {
 	}
 }
 
+// Burns earlier than this (the next minute) can't be flown.
+LOCAL minimumBurnLead IS 60.
+
+// A ship already leaving the departure body on an escape orbit (case 4, a correction burn after the main
+// ejection burn): there is no parking orbit to burn from, and its own SOI exit is already close to the
+// wanted one: a burn can move the exit by minutes, not hours. So exit time is not searched: every price
+// pins tSOI to the ship's own exit (orbitSpec["pinExit"], see transferDeltaV), the departure axis is a
+// single sample (searchDays and samplesPerWindow, here the total, can change that, to no effect), and the
+// flight time carries the search. The window is only exitSpread seconds before the ship's own exit.
+// escapeLockedDeparture then moves the winner's tSOI to the correction burn's real exit time and searches
+// the flight time once more there.
+LOCAL exitSpread IS 1800.
+LOCAL shipEscaping IS FALSE.
+LOCAL searchSpan IS -1.
+IF searchDays > 0 SET searchSpan TO searchDays * timeUnitSeconds("Days").
+LOCAL departureCount IS -1.
+IF errorCode = "None" AND NOT sameSOI AND SHIP:BODY:NAME = fromOrbitable:NAME
+		AND SHIP:STATUS <> "PRELAUNCH" AND SHIP:STATUS <> "LANDED" AND SHIP:STATUS <> "SPLASHED" {
+	LOCAL shipOrbitSpec IS orbitSpecFromVessel(SHIP).
+	IF SHIP:ORBIT:ECCENTRICITY >= 1 OR shipOrbitSpec["period"] = 0 SET shipEscaping TO TRUE.
+}
+IF shipEscaping {
+	LOCAL shipExitUT IS orbitPatchUT(SHIP).
+	LOCAL searchStartUT IS TIME:SECONDS + startOffset.
+	IF shipExitUT = 0 {
+		SET errorCode TO "No SOI exit is predicted for the ship's escape orbit!".
+	} ELSE IF shipExitUT <= searchStartUT {
+		SET errorCode TO "The ship leaves " + fromOrbitable:NAME + "'s sphere of influence before the search could start!".
+	} ELSE {
+		IF shipExitUT - exitSpread > searchStartUT SET startOffset TO shipExitUT - exitSpread - TIME:SECONDS.
+		IF searchSpan <= 0 SET searchSpan TO shipExitUT - (TIME:SECONDS + startOffset).
+		SET departureCount TO 1.
+		IF samplesPerWindow >= 1 SET departureCount TO samplesPerWindow.
+	}
+}
+
 LOCAL window IS 0.
 IF errorCode = "None" {
-	SET window TO buildTransferWindow(endpoints, startOffset, departureWindows, samplesPerWindow, tofSamples, TRUE).
+	SET window TO buildTransferWindow(endpoints, startOffset, departureWindows, samplesPerWindow, tofSamples, TRUE, searchSpan, departureCount).
 	SET errorCode TO window["error"].
 }
 
@@ -284,18 +340,27 @@ IF errorCode = "None" AND NOT sameSOI {
 		}
 		SET orbitSpec TO designSpec(fromOrbitable, designAltitude, launchLatitude).
 		PRINT "On the ground: designing " + ROUND(designAltitude / 1000, 1) + " km orbit at " + fromOrbitable:NAME + ".".
-	} ELSE IF SHIP:BODY:NAME = fromOrbitable:NAME AND SHIP:ORBIT:ECCENTRICITY < 1 {
+	} ELSE IF SHIP:BODY:NAME = fromOrbitable:NAME {
 		SET orbitSpec TO orbitSpecFromVessel(SHIP).
-		SET shipInParkingOrbit TO TRUE.
-		PRINT "In orbit at " + fromOrbitable:NAME + ": using that orbit.".
+		IF shipEscaping {
+			// No burn before the earliest one that can be flown; ejectionDeltaVForExit reads this.
+			SET orbitSpec["earliestBurnUT"] TO TIME:SECONDS + minimumBurnLead.
+			// Price every cell at the ship's own exit time (transferDeltaV): its exit time is not a free variable.
+			SET orbitSpec["pinExit"] TO TRUE.
+			PRINT "On an escape orbit at " + fromOrbitable:NAME + ": pricing a correction burn from it.".
+		} ELSE {
+			SET shipInParkingOrbit TO TRUE.
+			PRINT "In orbit at " + fromOrbitable:NAME + ": using that orbit.".
+		}
 	} ELSE {
-		SET errorCode TO "The ship must be on the ground, or in a bound orbit around " + fromOrbitable:NAME + "!".
+		SET errorCode TO "The ship must be on the ground, or in orbit around " + fromOrbitable:NAME + "!".
 	}
 }
 
 IF errorCode = "None" {
-	// Burns earlier than this (the next minute) can't be flown.
-	LOCAL minimumBurnLead IS 60.
+	IF HASNODE AND (shipEscaping OR shipInParkingOrbit OR sameSOI) {
+		PRINT "Note: " + ALLNODES:LENGTH + " maneuver node(s) exist; they may change the predicted orbit.".
+	}
 
 	LOCAL captureRadius IS 0.
 	IF captureAltitude >= 0 AND toOrbitable:ISTYPE("Body") SET captureRadius TO toOrbitable:RADIUS + captureAltitude.
@@ -403,16 +468,27 @@ IF errorCode = "None" {
 				PRINT "WARNING: node dV off by " + ROUND(nodeResult["nodeError"], 2) + " m/s.".
 			}
 			SET soiProblems TO reportSOIPath(fromOrbitable, toOrbitable, sameSOI).
-		} ELSE IF shipInParkingOrbit {
-			// The search priced the best burn point anywhere in the orbit. The orbit repeats every
-			// period, so the cheapest burn the ship can really make is that same point at the repeat
-			// nearest the grid's departure: lock tSOI to the best burn phase (burn time + transit time,
-			// shifted by whole periods), recompute Lambert there, and repeat until it settles.
-			PRINT "Locking to the best burn phase.".
-			LOCAL timed IS phaseLockedDeparture(fromOrbitable, toOrbitable, window["sunBody"], solverType, orbitSpec, captureRadius,
-				reportTSOI, reportTimeOfFlight, TIME:SECONDS + minimumBurnLead).
-			PRINT "Phase lock: " + timed["passes"] + " passes. Any phase " + ROUND(timed["phaseFreeDeltaV"], 1) +
-				" m/s, timed " + ROUND(timed["deltaV"], 1) + " m/s.".
+		} ELSE IF shipInParkingOrbit OR shipEscaping {
+			LOCAL timed IS 0.
+			IF shipEscaping {
+				// An escape orbit does not repeat, so there is no burn phase to lock to. Every price in the
+				// search was for the cheapest correction burn whenever it exits, so what is left is to move
+				// tSOI to the exit time that burn really has and price again.
+				PRINT "Moving the departure to the correction burn's exit time.".
+				SET timed TO escapeLockedDeparture(fromOrbitable, toOrbitable, window["sunBody"], solverType, orbitSpec, captureRadius,
+					reportTSOI, reportTimeOfFlight).
+				PRINT "Exit time lock: " + timed["passes"] + " passes, " + ROUND(timed["deltaV"], 1) + " m/s.".
+			} ELSE {
+				// The search priced the best burn point anywhere in the orbit. The orbit repeats every
+				// period, so the cheapest burn the ship can really make is that same point at the repeat
+				// nearest the grid's departure: lock tSOI to the best burn phase (burn time + transit time,
+				// shifted by whole periods), recompute Lambert there, and repeat until it settles.
+				PRINT "Locking to the best burn phase.".
+				SET timed TO phaseLockedDeparture(fromOrbitable, toOrbitable, window["sunBody"], solverType, orbitSpec, captureRadius,
+					reportTSOI, reportTimeOfFlight, TIME:SECONDS + minimumBurnLead).
+				PRINT "Phase lock: " + timed["passes"] + " passes. Any phase " + ROUND(timed["phaseFreeDeltaV"], 1) +
+					" m/s, timed " + ROUND(timed["deltaV"], 1) + " m/s.".
+			}
 			IF debug {
 				debugLogValues("Phase lock", LEXICON("passes", timed["passes"], "phaseFreeDeltaV", timed["phaseFreeDeltaV"],
 					"timedDeltaV", timed["deltaV"], "tSOI", timed["tSOI"])).
@@ -420,6 +496,7 @@ IF errorCode = "None" {
 			}
 			IF timed["deltaV"] < invalidDeltaV {
 				SET reportTSOI TO timed["tSOI"].
+				IF timed:HASKEY("flightTime") SET reportTimeOfFlight TO timed["flightTime"].
 				SET reportDV TO timed["deltaV"].
 				SET reportStats TO timed["stats"].
 				LOCAL ejection IS reportStats["Ejection"].
@@ -432,7 +509,8 @@ IF errorCode = "None" {
 				}
 				SET soiProblems TO reportSOIPath(fromOrbitable, toOrbitable, sameSOI).
 			} ELSE {
-				PRINT "No burn in this orbit reaches it: no node.".
+				IF shipEscaping PRINT "No correction burn on this escape orbit reaches it: no node.".
+				ELSE PRINT "No burn in this orbit reaches it: no node.".
 			}
 		} ELSE {
 			// Case 1: no real orbit to check a plane mismatch against, so report the parking
@@ -516,6 +594,8 @@ IF errorCode = "None" {
 		PRINT "".
 		IF sameSOI {
 			PRINT "Departure " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
+		} ELSE IF shipEscaping {
+			PRINT "Correction " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
 		} ELSE {
 			PRINT "Ejection " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
 		}

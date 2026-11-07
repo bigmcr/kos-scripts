@@ -3188,6 +3188,8 @@ FUNCTION distanceToTargetOrbitalPlane {
 	RETURN distanceFromPlane(timeoffset, TRUE) / 1000.
 }
 
+// smallestStepRatio: the search ends when the step is initialStepSize / 2^smallestStepRatio. A guess that is already close
+// can start with a small step and end sooner with a lower ratio.
 // returns a lexicon
 // "Time" time until closest approach (seconds UT)
 // "Distance" distance of closest approach (meters)
@@ -3195,6 +3197,7 @@ FUNCTION closestApproach {
 	PARAMETER initialGuess IS TIME:SECONDS.
 	PARAMETER initialStepSize IS 10.
 	PARAMETER logFileName IS "".
+	PARAMETER smallestStepRatio IS 15.
 	IF (initialGuess < TIME:SECONDS) SET initialGuess TO TIME:SECONDS.
 	IF NOT HASTARGET RETURN LEXICON("Time", 0, "Distance", 0).
 
@@ -3208,15 +3211,17 @@ FUNCTION closestApproach {
 		initialGuess,
 		initialStepSize,
 		logFileName,
-		1000).
-	// if things didn't work here with the default, try again half an orbit later.
-	IF results["finalGuess"] < TIME:SECONDS {
+		1000,
+		smallestStepRatio).
+	// if things didn't work here with the default, try again half an orbit later. A hyperbolic orbit has no period, so it is not retried.
+	IF results["finalGuess"] < TIME:SECONDS AND SHIP:ORBIT:ECCENTRICITY < 1 {
 		SET results TO hillClimb(
 			distanceAtTime@,
 			initialGuess + SHIP:ORBIT:PERIOD/2,
 			initialStepSize,
 			logFileName,
-			1000).
+			1000,
+			smallestStepRatio).
 	}
 	RETURN LEXICON("Time", results["finalGuess"], "Distance", results["finalValue"]).
 }
@@ -4007,10 +4012,12 @@ FUNCTION findZeroBrent {
 // Passed the following:
 //   thrustSeen (boolean, whether the engines of the current stage have been seen producing thrust. The no-thrust and
 //               empty-tank checks only apply when it is TRUE, so that a stage that has not started yet is not dropped.)
+//   execute (boolean, FALSE to only report the reason without staging, so that the caller can prepare first, for ullage)
 // Returns the following:
-//   "max thrust", "flameout" or "resources" if the ship was staged, "None" if it was not
+//   "max thrust", "flameout" or "resources" if the ship was staged (or would be, if execute is FALSE), "None" if it was not
 FUNCTION stageIfNeeded {
 	PARAMETER thrustSeen IS TRUE.
+	PARAMETER execute IS TRUE.
 	LOCAL reason IS "None".
 
 	IF thrustSeen AND MAXTHRUST = 0 SET reason TO "max thrust".
@@ -4028,7 +4035,7 @@ FUNCTION stageIfNeeded {
 
 	IF reason = "None" AND thrustSeen AND shipInfo["CurrentStage"]["ResourceMass"] < 1.0 SET reason TO "resources".
 
-	IF reason <> "None" {
+	IF reason <> "None" AND execute {
 		IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
 		ELSE stageFunction().
 	}

@@ -359,140 +359,11 @@ FUNCTION bindPorkchopDeltaV {
 	RETURN bound.
 }
 
-// Chooses the departure and time-of-flight samples for a transfer between two orbitables
-// that share a parent body. Everything is absolute: departure times are UT, flight times are
-// seconds - nothing is a fraction of a synodic period or of the Hohmann time (except the
-// defaults, which are chosen that way).
-//
-// Passed:
-//   fromOrbitable, toOrbitable - bodies or vessels (see resolveOrbitable)
-//   departureSamples - how many departure times to sample (>= 1). They are evenly spaced
-//       starting at departureStart and stop short of departureEnd, so the end itself is not
-//       sampled and consecutive windows tile without repeating a time. Passing 5 gives 5
-//       departure times.
-//   tofSamples       - how many flight times to sample (>= 1), evenly spaced from tofStart to
-//       tofEnd inclusive (a count of 1 gives just tofStart)
-//   departureWindows - how many synodic periods the departure range covers when departureEnd
-//       is not given (default 1; a bigger number searches several launch windows)
-//   departureStart   - UT of the first departure, which must be in the future. -1 (the default)
-//       means 120 s from now.
-//   departureEnd     - UT where the departure range ends. -1 (the default) means
-//       departureStart + departureWindows synodic periods.
-//   tofStart, tofEnd - s, the shortest and longest flight time. -1 (the defaults) mean 0.5
-//       and four times the Hohmann transfer time.
-// Returns a LEXICON. "error" is "None" if everything is fine; otherwise it holds a message
-// and no other key is set. Otherwise:
-//   "sunBody", "synodicPeriod", "hohmannTime" (s)
-//   "startTime", "departureStart", "departureEnd" - UT (startTime is the same as departureStart)
-//   "tofStart", "tofEnd" - s
-//   "departureSamples", "tofSamples" - as passed
-//   "departureTimes" - LIST of departure UTs; "timeOfFlights" - LIST of flight times (s), ascending
-//   "departureStep", "tofStep" - the spacing between samples, in seconds (handy as the
-//       starting step for a hill climb)
-//   "departureUnit", "tofUnit" - "Days"/"Hours"/"Minutes", for labelling
-//   "departureUnitSeconds", "tofUnitSeconds" - seconds per label unit
-FUNCTION transferSearchWindow {
-	PARAMETER fromOrbitable.
-	PARAMETER toOrbitable.
-	PARAMETER departureSamples IS 20.
-	PARAMETER tofSamples IS 21.
-	PARAMETER departureWindows IS 1.
-	PARAMETER departureStart IS -1.
-	PARAMETER departureEnd IS -1.
-	PARAMETER tofStart IS -1.
-	PARAMETER tofEnd IS -1.
-
-	LOCAL window IS LEXICON("error", "None").
-	IF fromOrbitable:BODY:NAME <> toOrbitable:BODY:NAME {
-		SET window["error"] TO "Bodies must have the same parent!".
-		RETURN window.
-	}
-	IF fromOrbitable:ORBIT:PERIOD = toOrbitable:ORBIT:PERIOD {
-		SET window["error"] TO "Bodies have identical orbital periods - no synodic period!".
-		RETURN window.
-	}
-	IF departureSamples < 1 OR tofSamples < 1 {
-		SET window["error"] TO "There must be at least one departure sample and one time-of-flight sample!".
-		RETURN window.
-	}
-	IF departureWindows <= 0 {
-		SET window["error"] TO "The number of departure windows must be positive!".
-		RETURN window.
-	}
-
-	LOCAL sunBody IS firstCommonBody(fromOrbitable, toOrbitable).
-	LOCAL synodicPeriod IS 1 / ABS((1 / fromOrbitable:ORBIT:PERIOD) - (1 / toOrbitable:ORBIT:PERIOD)).
-	LOCAL hohmannTime IS CONSTANT:PI * SQRT(((fromOrbitable:ORBIT:SEMIMAJORAXIS + toOrbitable:ORBIT:SEMIMAJORAXIS) / 2) ^ 3 / sunBody:MU).
-
-	// Fill in the defaults.
-	LOCAL firstDeparture IS departureStart.
-	IF firstDeparture < 0 SET firstDeparture TO TIME:SECONDS + 120.
-	LOCAL lastDeparture IS departureEnd.
-	IF lastDeparture < 0 SET lastDeparture TO firstDeparture + departureWindows * synodicPeriod.
-	LOCAL shortestFlight IS tofStart.
-	IF shortestFlight < 0 SET shortestFlight TO 0.5 * hohmannTime.
-	LOCAL longestFlight IS tofEnd.
-	IF longestFlight < 0 SET longestFlight TO 4 * hohmannTime.
-
-	IF firstDeparture <= TIME:SECONDS {
-		SET window["error"] TO "The first departure must be in the future!".
-		RETURN window.
-	}
-	IF lastDeparture <= firstDeparture {
-		SET window["error"] TO "The departure range must end after it starts!".
-		RETURN window.
-	}
-	IF shortestFlight <= 0 OR longestFlight < shortestFlight {
-		SET window["error"] TO "The time-of-flight range must be positive, and end no earlier than it starts!".
-		RETURN window.
-	}
-
-	LOCAL departureStep IS (lastDeparture - firstDeparture) / departureSamples.
-	// With a single flight time there is no spacing to speak of; give a hill climb something sensible.
-	LOCAL tofStep IS MAX(longestFlight - shortestFlight, 0.1 * shortestFlight).
-	IF tofSamples > 1 SET tofStep TO (longestFlight - shortestFlight) / (tofSamples - 1).
-
-	LOCAL departureTimes IS LIST().
-	FROM {LOCAL index IS 0.} UNTIL index >= departureSamples STEP {SET index TO index + 1.} DO {
-		departureTimes:ADD(firstDeparture + index * departureStep).
-	}
-	LOCAL timeOfFlights IS LIST().
-	FROM {LOCAL index IS 0.} UNTIL index >= tofSamples STEP {SET index TO index + 1.} DO {
-		timeOfFlights:ADD(shortestFlight + index * tofStep).
-	}
-
-	// Departure labels are sized by the whole departure range; flight-time labels by the shortest flight.
-	LOCAL departureUnit IS timeUnitFor(lastDeparture - firstDeparture).
-	LOCAL tofUnit IS timeUnitFor(shortestFlight).
-
-	SET window["sunBody"] TO sunBody.
-	SET window["synodicPeriod"] TO synodicPeriod.
-	SET window["hohmannTime"] TO hohmannTime.
-	SET window["startTime"] TO firstDeparture.
-	SET window["departureStart"] TO firstDeparture.
-	SET window["departureEnd"] TO lastDeparture.
-	// How long one "window" is: a synodic period here (a same-SOI window, see buildTransferWindow, is shorter).
-	SET window["windowLength"] TO synodicPeriod.
-	SET window["tofStart"] TO shortestFlight.
-	SET window["tofEnd"] TO longestFlight.
-	SET window["departureSamples"] TO departureSamples.
-	SET window["tofSamples"] TO tofSamples.
-	SET window["departureTimes"] TO departureTimes.
-	SET window["timeOfFlights"] TO timeOfFlights.
-	SET window["departureStep"] TO departureStep.
-	SET window["tofStep"] TO tofStep.
-	SET window["departureUnit"] TO departureUnit.
-	SET window["tofUnit"] TO tofUnit.
-	SET window["departureUnitSeconds"] TO timeUnitSeconds(departureUnit).
-	SET window["tofUnitSeconds"] TO timeUnitSeconds(tofUnit).
-	RETURN window.
-}
-
-// Runs the coarse porkchop grid search over a window from transferSearchWindow.
+// Runs the coarse porkchop grid search over a window from buildTransferWindow.
 //
 // Passed:
 //   dvDelegate - f(departureTime, timeOfFlight, seed, statsOut) -> total dV; see bindPorkchopDeltaV
-//   window     - LEXICON from transferSearchWindow
+//   window     - LEXICON from buildTransferWindow
 // Computation runs departure-outer, TOF-inner so the solver's warm-start seed
 // (fresh per departure) stays valid across a departure's whole TOF sweep. The
 // returned grid is TOF-major, with TOF in DESCENDING order (the window's flight times
@@ -501,7 +372,7 @@ FUNCTION transferSearchWindow {
 //   "dv"                - LIST of rows, one per entry of "timeOfFlights"; each row a LIST of dV across "departureTimes". Failed cells hold invalidDeltaV.
 //   "timeOfFlights"     - LIST - flight time (s) of each row, descending
 //   "departureTimes"    - LIST - departure UT (s) of each column
-//   "departureBands"    - LIST - which synodic period (0 for the first, 1 for the next, ...) each column's departure falls in
+//   "departureBands"    - LIST - which window (0 for the first, 1 for the next, ...) each column's departure falls in
 //   "minDeltaV"         - LEXICON("value", "departureTime", "timeOfFlight") - best cell
 //   "motionTypeCounts"  - LEXICON - cells per motion type, including "Failed"
 //   "winningWay", "transferAngle", "rejectedArcs" - LISTs of rows laid out like "dv": the way round the winning arc
@@ -743,7 +614,8 @@ FUNCTION writePorkchopCsv {
 	LOG "End Time:," + grid["endClock"] TO fileName.
 	LOG "Duration:," + grid["duration"] + "," + timeToString(grid["duration"]) TO fileName.
 	LOG "Real-World Duration:," + grid["realDuration"] + "," + realTimeToString(grid["realDuration"]) TO fileName.
-	LOG "Synodic Period:," + synodicPeriod + "," + timeToString(synodicPeriod) TO fileName.
+	IF synodicPeriod > 0 LOG "Synodic Period:," + synodicPeriod + "," + timeToString(synodicPeriod) TO fileName.
+	ELSE LOG "Synodic Period:,N/A,an escape orbit has no period" TO fileName.
 	LOG "Hohmann Transfer Time:," + hohmannTime + "," + timeToString(hohmannTime) TO fileName.
 	LOG "" TO fileName.
 
@@ -1081,55 +953,19 @@ FUNCTION lambertTimeResidual {
 // Orbit propagation
 // ----------------------------------------------------------------------------
 
-// Propagates a bound (elliptical) two-body orbit from a state vector.
-//   startPosition, startVelocity - relative to the central body (any inertial frame)
-//   deltaTime - s, may be negative or longer than a period
-//   mu        - gravitational parameter of the central body
-// Returns LEXICON("position", "velocity"). Not valid for parabolic/hyperbolic orbits.
-// (Checked against a numerical integration: ~1e-6 m position error.)
-FUNCTION propagateKepler {
-	PARAMETER startPosition.
-	PARAMETER startVelocity.
-	PARAMETER deltaTime.
-	PARAMETER mu.
+// The state (relative to the central body) of the real orbit behind an orbit spec at a UT, from
+// the game's own prediction (POSITIONAT and VELOCITYAT). Only for a spec of a real orbitable,
+// which has "orbitable" and "central" (see attachLiveOrbit). POSITIONAT holds the central body at
+// its position now, so that is what is subtracted: its position at ut would add the central
+// body's own motion. The prediction follows the orbitable's patches, so ut must be before the
+// spec's "patchUT" (see attachLiveOrbit).
+// Returns LEXICON("position", "velocity").
+FUNCTION orbitStateAt {
+	PARAMETER orbitSpec.
+	PARAMETER ut.
 
-	LOCAL radToDeg IS CONSTANT:RadToDeg.
-	LOCAL startRadius IS startPosition:MAG.
-	LOCAL sma IS 1 / (2 / startRadius - startVelocity:MAG ^ 2 / mu).
-	LOCAL meanMotion IS SQRT(mu / sma ^ 3).
-	LOCAL period IS 2 * CONSTANT:PI / meanMotion.
-
-	// A whole number of periods changes nothing, so keep the time small.
-	LOCAL reducedTime IS deltaTime - FLOOR(deltaTime / period) * period.
-	LOCAL meanAnomalyChange IS meanMotion * reducedTime.
-
-	// Kepler's equation in the change in eccentric anomaly (radians), by Newton's method.
-	LOCAL radialTerm IS VDOT(startPosition, startVelocity) / SQRT(mu).
-	LOCAL coefficientOne IS radialTerm / SQRT(sma).
-	LOCAL coefficientTwo IS 1 - startRadius / sma.
-	LOCAL eccentricAnomalyChange IS meanAnomalyChange.
-	LOCAL pass IS 0.
-	UNTIL pass >= 30 {
-		LOCAL sineValue IS SIN(eccentricAnomalyChange * radToDeg).
-		LOCAL cosineValue IS COS(eccentricAnomalyChange * radToDeg).
-		LOCAL residual IS eccentricAnomalyChange + coefficientOne * (1 - cosineValue) - coefficientTwo * sineValue - meanAnomalyChange.
-		LOCAL slope IS 1 + coefficientOne * sineValue - coefficientTwo * cosineValue.
-		LOCAL correction IS residual / slope.
-		SET eccentricAnomalyChange TO eccentricAnomalyChange - correction.
-		IF ABS(correction) < 1e-12 BREAK.
-		SET pass TO pass + 1.
-	}
-
-	LOCAL sineFinal IS SIN(eccentricAnomalyChange * radToDeg).
-	LOCAL cosineFinal IS COS(eccentricAnomalyChange * radToDeg).
-	LOCAL endRadius IS sma + (startRadius - sma) * cosineFinal + radialTerm * SQRT(sma) * sineFinal.
-	LOCAL positionScale IS 1 - (sma / startRadius) * (1 - cosineFinal).
-	LOCAL positionVelocityScale IS reducedTime - SQRT(sma ^ 3 / mu) * (eccentricAnomalyChange - sineFinal).
-	LOCAL velocityPositionScale IS -SQRT(mu * sma) / (endRadius * startRadius) * sineFinal.
-	LOCAL velocityScale IS 1 - (sma / endRadius) * (1 - cosineFinal).
-
-	RETURN LEXICON("position", startPosition * positionScale + startVelocity * positionVelocityScale,
-					"velocity", startPosition * velocityPositionScale + startVelocity * velocityScale).
+	RETURN LEXICON("position", POSITIONAT(orbitSpec["orbitable"], ut) - orbitSpec["central"]:POSITION,
+					"velocity", VELOCITYAT(orbitSpec["orbitable"], ut):ORBIT).
 }
 
 
@@ -1146,7 +982,8 @@ FUNCTION hyperbolaTransitTime {
 	PARAMETER startAnomaly.
 	PARAMETER endAnomaly.
 
-	LOCAL sqrtTerm IS SQRT(eccentricity ^ 2 - 1).
+	// (Rounding can put a near-parabolic eccentricity a hair below 1; that is a parabola, not an error.)
+	LOCAL sqrtTerm IS SQRT(MAX(0, eccentricity ^ 2 - 1)).
 	LOCAL semiMajorAbs IS mu / vInfinity ^ 2.
 	LOCAL meanMotion IS SQRT(mu / semiMajorAbs ^ 3).
 
@@ -1235,7 +1072,7 @@ FUNCTION solveEjectionAtPoint {
 			// The velocity heading keeps turning, by headingGap, between the SOI edge
 			// and the asymptote. The asymptote therefore lies headingGap beyond the
 			// wanted exit heading, in the direction of travel - rotate the target by it.
-			LOCAL asymptoteAnomaly IS ARCCOS(-1 / eccentricity).
+			LOCAL asymptoteAnomaly IS ARCCOS(MAX(-1, MIN(1, -1 / eccentricity))).
 			LOCAL headingGap IS ARCTAN2(eccentricity + COS(asymptoteAnomaly), -SIN(asymptoteAnomaly))
 				- ARCTAN2(eccentricity + COS(soiAnomaly), -SIN(soiAnomaly)).
 			LOCAL perpendicularUnit IS radialUnit * (-VDOT(edgeUnit, sideUnit)) + sideUnit * VDOT(edgeUnit, radialUnit).
@@ -1272,7 +1109,14 @@ FUNCTION bodyClearanceRadius {
 }
 
 // Builds an "orbit"-mode spec from a state vector (relative to the central body, at
-// time epoch UT). The orbit must be bound.
+// time epoch UT). An escape orbit (eccentricity of 1 or more) is allowed and has "period" 0 (and a
+// negative "sma"). A ship on one is handled by ejectionForExitTime and ejectionDeltaVForExit as a correction
+// burn; the searches that need a repeating orbit (bestEjectionFromOrbit, phaseLockedDeparture) must not be
+// given it.
+// A parabola has no semi-major axis (1/sma is 0), so one is treated as the mildest hyperbola that can be
+// told apart from it - 1/sma of -1e-9 times 2/r, an excess speed of about 3e-5 of the escape speed - and the
+// spec says so with "parabolic". Nothing then divides by zero, and the error that adds is far below the
+// precision of a state vector.
 FUNCTION makeOrbitSpec {
 	PARAMETER parkPosition.
 	PARAMETER parkVelocity.
@@ -1280,11 +1124,20 @@ FUNCTION makeOrbitSpec {
 	PARAMETER mu.
 	PARAMETER minPeriapsis IS 0.
 
-	LOCAL sma IS 1 / (2 / parkPosition:MAG - parkVelocity:MAG ^ 2 / mu).
+	LOCAL inverseSMA IS 2 / parkPosition:MAG - parkVelocity:MAG ^ 2 / mu.
+	LOCAL parabolicLimit IS 1e-9 * 2 / parkPosition:MAG.
+	LOCAL parabolic IS ABS(inverseSMA) < parabolicLimit.
+	IF parabolic SET inverseSMA TO -parabolicLimit.
+	LOCAL sma IS 1 / inverseSMA.
 	// h^2 = mu * sma * (1 - e^2); the periapsis radius is what ejectionLowerBound needs.
 	LOCAL momentumSize IS VCRS(parkPosition, parkVelocity):MAG.
 	LOCAL eccentricity IS SQRT(MAX(0, 1 - momentumSize ^ 2 / (mu * sma))).
+	// An escape orbit (negative sma) has no period; 0 marks that, and nothing that needs one (the
+	// burn-phase searches, which are for a parking orbit) may be given such a spec.
+	LOCAL orbitPeriod IS 0.
+	IF sma > 0 SET orbitPeriod TO 2 * CONSTANT:PI * SQRT(sma ^ 3 / mu).
 	RETURN LEXICON("mode", "orbit",
+					"parabolic", parabolic,
 					"position", parkPosition,
 					"velocity", parkVelocity,
 					"epoch", epoch,
@@ -1292,8 +1145,23 @@ FUNCTION makeOrbitSpec {
 					"sma", sma,
 					"eccentricity", eccentricity,
 					"periapsisRadius", sma * (1 - eccentricity),
-					"period", 2 * CONSTANT:PI * SQRT(sma ^ 3 / mu),
+					"period", orbitPeriod,
 					"minPeriapsis", minPeriapsis).
+}
+
+// Marks an "orbit"-mode spec as the orbit of a real orbitable, so orbitStateAt can predict its
+// state. Adds "orbitable", "central" (the body it orbits) and "patchUT": the UT its orbit changes
+// patch (an SOI change), or 0 if it has no next patch. A prediction after that UT is not on this
+// orbit. Returns the spec.
+FUNCTION attachLiveOrbit {
+	PARAMETER orbitSpec.
+	PARAMETER orbitable.
+	PARAMETER centralBody.
+
+	SET orbitSpec["orbitable"] TO orbitable.
+	SET orbitSpec["central"] TO centralBody.
+	SET orbitSpec["patchUT"] TO orbitPatchUT(orbitable).
+	RETURN orbitSpec.
 }
 
 // Case 2: the spec for a vessel that is already in its parking orbit, as of right now.
@@ -1303,8 +1171,9 @@ FUNCTION orbitSpecFromVessel {
 	PARAMETER vesselObject IS SHIP.
 
 	LOCAL parentBody IS vesselObject:BODY.
-	RETURN makeOrbitSpec(vesselObject:POSITION - parentBody:POSITION, vesselObject:VELOCITY:ORBIT,
-							TIME:SECONDS, parentBody:MU, bodyClearanceRadius(parentBody)).
+	RETURN attachLiveOrbit(makeOrbitSpec(vesselObject:POSITION - parentBody:POSITION, vesselObject:VELOCITY:ORBIT,
+											TIME:SECONDS, parentBody:MU, bodyClearanceRadius(parentBody)),
+							vesselObject, parentBody).
 }
 
 // Case 1: the spec for a ship that has not launched yet. A circular parking orbit
@@ -1637,6 +1506,94 @@ FUNCTION bestEjectionFromOrbit {
 	RETURN best.
 }
 
+// The cheapest correction burn for a ship already on an escape orbit, with the SOI exit time left free:
+// whichever burn time on the ship's own orbit reaches vExit at the SOI edge for the least delta-V, at
+// whatever time that burn then exits. This is the escape orbit's counterpart of bestEjectionFromOrbit.
+// (Fixing the exit time as well, as ejectionForExitTime does, asks too much of a ship that has already
+// left: for a given exit velocity its exit time can only move by minutes, so a grid of exit times hours
+// apart found almost no burn that fitted, and what it did find was the wrong way round the planet.)
+// The burn times looked at run from earliestBurnUT to exitMargin before the ship's own SOI exit, where
+// the predictions (POSITIONAT) are still on this patch and the burn can be over before the ship leaves.
+// A coarse scan of precision["samples"] burn times, then a golden-section polish round the best one.
+//   orbitSpec      - "orbit" mode, an escape orbit (period 0), with "patchUT"
+//   vExit          - velocity wanted at the SOI edge, relative to the body
+//   earliestBurnUT - burns earlier than this are not allowed
+// Returns a LEXICON like ejectionForExitTime's, with "exitUT" (burnUT + transitTime) as well; "deltaV" is
+// invalidDeltaV if no burn works. The exit time it gives is where the burn really leaves the SOI, so a
+// caller that priced the transfer at some other tSOI moves tSOI to "exitUT" and prices again (see
+// escapeLockedDeparture).
+FUNCTION ejectionFreeExit {
+	PARAMETER orbitSpec.
+	PARAMETER vExit.
+	PARAMETER soiRadius.
+	PARAMETER earliestBurnUT IS 0.
+	PARAMETER precision IS ejectionPrecision("full").
+
+	LOCAL result IS LEXICON("deltaV", invalidDeltaV, "ejection", 0).
+	IF NOT orbitSpec:HASKEY("patchUT") RETURN result.
+	IF orbitSpec["patchUT"] <= 0 RETURN result.
+
+	// How long before the ship's own exit the last burn can be: the burn has a length of its own, which
+	// is not known here.
+	LOCAL exitMargin IS 300.
+	LOCAL probeStart IS MAX(earliestBurnUT, orbitSpec["epoch"]).
+	LOCAL lastBurnUT IS orbitSpec["patchUT"] - exitMargin.
+	IF lastBurnUT <= probeStart RETURN result.
+
+	// The cheapest valid burn at one burn time, over both sweep directions. The periapsis limit applies
+	// only ahead of the burn: past the new hyperbola's periapsis (a positive true anomaly) it is never flown.
+	FUNCTION bestAt {
+		PARAMETER burnUT.
+
+		LOCAL state IS orbitStateAt(orbitSpec, burnUT).
+		LOCAL best IS LEXICON("deltaV", invalidDeltaV).
+		FOR option IN solveEjectionAtPoint(state["position"], vExit, orbitSpec["mu"], soiRadius, state["velocity"], 0, precision["soiIterations"], LIST(1, 2)) {
+			IF option["periapsis"] >= orbitSpec["minPeriapsis"] OR option["trueAnomalyBurn"] >= 0 {
+				LOCAL optionDV IS (option["burnVelocity"] - state["velocity"]):MAG.
+				IF optionDV < best["deltaV"] {
+					SET best TO LEXICON("deltaV", optionDV,
+										"burnUT", burnUT,
+										"dvVector", option["burnVelocity"] - state["velocity"],
+										"burnVelocity", option["burnVelocity"],
+										"burnPosition", state["position"],
+										"parkVelocity", state["velocity"],
+										"transitTime", option["transitTime"],
+										"exitUT", burnUT + option["transitTime"],
+										"ejection", option).
+				}
+			}
+		}
+		RETURN best.
+	}
+
+	FUNCTION costAt {
+		PARAMETER burnUT.
+
+		RETURN bestAt(burnUT)["deltaV"].
+	}
+
+	LOCAL samples IS precision["samples"].
+	LOCAL stepSeconds IS (lastBurnUT - probeStart) / samples.
+	LOCAL bestSampleUT IS probeStart.
+	LOCAL bestSampleCost IS 4 * invalidDeltaV.
+	FROM {LOCAL sampleIndex IS 0.} UNTIL sampleIndex > samples STEP {SET sampleIndex TO sampleIndex + 1.} DO {
+		LOCAL sampleUT IS probeStart + sampleIndex * stepSeconds.
+		LOCAL sampleCost IS costAt(sampleUT).
+		IF sampleCost < bestSampleCost {
+			SET bestSampleCost TO sampleCost.
+			SET bestSampleUT TO sampleUT.
+		}
+	}
+	IF bestSampleCost >= invalidDeltaV RETURN result.
+
+	LOCAL polishedUT IS goldenSectionMinimum(costAt@, MAX(probeStart, bestSampleUT - stepSeconds), MIN(lastBurnUT, bestSampleUT + stepSeconds), precision["polishIterations"]).
+	SET result TO bestAt(polishedUT).
+	LOCAL sampleResult IS bestAt(bestSampleUT).
+	IF sampleResult["deltaV"] < result["deltaV"] SET result TO sampleResult.
+	IF result["deltaV"] >= invalidDeltaV RETURN LEXICON("deltaV", invalidDeltaV, "ejection", 0).
+	RETURN result.
+}
+
 // The ejection burn when the SOI exit time tSOI is fixed ("exact timing"): the burn
 // happens transitTime before tSOI, and transitTime depends on where in the orbit the
 // burn is, so the burn time is the root of
@@ -1646,6 +1603,11 @@ FUNCTION bestEjectionFromOrbit {
 // it can diverge). The transit-time range over one orbit sets the search window; the
 // window is sampled for sign changes, each bracket is polished with findZeroBrent, and
 // the cheapest valid root over both directions wins.
+// An escape orbit (period 0) does not repeat, so the burn times looked at run from earliestBurnUT to
+// the ship's SOI exit (orbitSpec["patchUT"]) or tSOI, whichever is sooner. This is the correction
+// burn of a ship already on its way out: it moves the exit onto the wanted exit velocity and time.
+// (Only worth asking for when the exit time really is fixed. For a ship already on its way out that
+// is a very narrow target, so the search uses ejectionFreeExit instead and moves tSOI to its exit time.)
 //   orbitSpec - "orbit" mode (a real orbit; the burn point is then dictated)
 //   vExit     - velocity wanted at the SOI edge, relative to the body
 //   tSOI      - UT the ship should cross the SOI edge
@@ -1668,6 +1630,23 @@ FUNCTION ejectionForExitTime {
 
 	LOCAL result IS LEXICON("deltaV", invalidDeltaV, "ejection", 0).
 
+	// The burn times to look at: round one parking orbit from the spec's epoch or, for an escape orbit
+	// (period 0), which does not repeat, from the earliest burn there can be to the last moment a burn can
+	// help (the ship's own SOI exit, or the wanted exit time if that is sooner).
+	LOCAL escapeOrbit IS orbitSpec["period"] = 0.
+	LOCAL probeStart IS orbitSpec["epoch"].
+	LOCAL probeSpan IS orbitSpec["period"].
+	LOCAL probeCount IS scanSamples.
+	IF escapeOrbit {
+		SET probeStart TO MAX(earliestBurnUT, orbitSpec["epoch"]).
+		LOCAL lastBurnUT IS tSOI.
+		// A second short of the SOI exit, so the prediction is still on this patch.
+		IF orbitSpec["patchUT"] > 0 AND orbitSpec["patchUT"] - 1 < lastBurnUT SET lastBurnUT TO orbitSpec["patchUT"] - 1.
+		SET probeSpan TO lastBurnUT - probeStart.
+		SET probeCount TO scanSamples + 1.
+		IF probeSpan <= 0 RETURN result.
+	}
+
 	// The ejection candidate for one sweep direction at one burn time. The periapsis
 	// limit is left off here (it would make the residual below jump) and is checked
 	// on the final answer instead.
@@ -1675,7 +1654,7 @@ FUNCTION ejectionForExitTime {
 		PARAMETER senseNumber.
 		PARAMETER burnUT.
 
-		LOCAL state IS propagateKepler(orbitSpec["position"], orbitSpec["velocity"], burnUT - orbitSpec["epoch"], orbitSpec["mu"]).
+		LOCAL state IS orbitStateAt(orbitSpec, burnUT).
 		LOCAL options IS solveEjectionAtPoint(state["position"], vExit, orbitSpec["mu"], soiRadius, state["velocity"], 0, soiIterations, LIST(senseNumber)).
 		IF options:LENGTH = 0 RETURN LEXICON("valid", FALSE, "state", state).
 		RETURN LEXICON("valid", TRUE, "state", state, "option", options[0]).
@@ -1695,8 +1674,8 @@ FUNCTION ejectionForExitTime {
 		// The range of transit times this sweep direction has around the orbit.
 		LOCAL transitMin IS 1e15.
 		LOCAL transitMax IS -1e15.
-		FROM {LOCAL sampleIndex IS 0.} UNTIL sampleIndex >= scanSamples STEP {SET sampleIndex TO sampleIndex + 1.} DO {
-			LOCAL probe IS candidateAt(senseNumber, orbitSpec["epoch"] + sampleIndex * orbitSpec["period"] / scanSamples).
+		FROM {LOCAL sampleIndex IS 0.} UNTIL sampleIndex >= probeCount STEP {SET sampleIndex TO sampleIndex + 1.} DO {
+			LOCAL probe IS candidateAt(senseNumber, probeStart + sampleIndex * probeSpan / scanSamples).
 			IF probe["valid"] {
 				SET transitMin TO MIN(transitMin, probe["option"]["transitTime"]).
 				SET transitMax TO MAX(transitMax, probe["option"]["transitTime"]).
@@ -1704,9 +1683,13 @@ FUNCTION ejectionForExitTime {
 		}
 
 		// Any burn that exits at tSOI lies in this window, and the residual changes sign across it.
-		IF transitMax >= transitMin {
-			LOCAL windowStart IS tSOI - transitMax - 1.
-			LOCAL windowEnd IS tSOI - transitMin + 1.
+		LOCAL windowStart IS tSOI - transitMax - 1.
+		LOCAL windowEnd IS tSOI - transitMin + 1.
+		IF escapeOrbit {
+			SET windowStart TO MAX(windowStart, probeStart).
+			SET windowEnd TO MIN(windowEnd, probeStart + probeSpan).
+		}
+		IF transitMax >= transitMin AND windowEnd > windowStart {
 			LOCAL residualDelegate IS exitTimeResidual@:BIND(senseNumber).
 			LOCAL previousUT IS windowStart.
 			LOCAL previousResidual IS residualDelegate(windowStart).
@@ -1717,7 +1700,9 @@ FUNCTION ejectionForExitTime {
 				IF previousResidual * sampleResidual < 0 {
 					LOCAL rootUT IS findZeroBrent(residualDelegate, previousUT, sampleUT, 0.01).
 					LOCAL root IS candidateAt(senseNumber, rootUT).
-					IF root["valid"] AND root["option"]["periapsis"] >= orbitSpec["minPeriapsis"] {
+					// On an escape orbit a burn past the hyperbola's periapsis (a positive true anomaly) never
+					// flies it, so a periapsis below the clearance only matters ahead of the burn.
+					IF root["valid"] AND (root["option"]["periapsis"] >= orbitSpec["minPeriapsis"] OR (escapeOrbit AND root["option"]["trueAnomalyBurn"] >= 0)) {
 						LOCAL rootDV IS (root["option"]["burnVelocity"] - root["state"]["velocity"]):MAG.
 						IF rootDV < result["deltaV"] AND rootUT >= earliestBurnUT {
 							SET result TO LEXICON("deltaV", rootDV,
@@ -1789,6 +1774,13 @@ FUNCTION ejectionDeltaVForExit {
 	LOCAL workingSpec IS orbitSpec.
 	IF isDesign SET workingSpec TO designParkingOrbit(orbitSpec, vExit).
 
+	// A ship on an escape orbit (period 0) has no repeating burn phase to lock to. Its burn is the cheapest
+	// one anywhere between the spec's own "earliestBurnUT" (if it has one) and its SOI exit (ejectionFreeExit),
+	// or, with exactTiming, the one that exits at tSOI.
+	LOCAL escapeOrbit IS NOT isDesign AND workingSpec["period"] = 0.
+	LOCAL burnNotBefore IS earliestBurnUT.
+	IF escapeOrbit AND workingSpec:HASKEY("earliestBurnUT") SET burnNotBefore TO MAX(earliestBurnUT, workingSpec["earliestBurnUT"]).
+
 	LOCAL vInfinitySquared IS vExit:MAG ^ 2 - 2 * workingSpec["mu"] / soiRadius.
 	LOCAL result IS 0.
 	IF vInfinitySquared <= 0 {
@@ -1796,8 +1788,10 @@ FUNCTION ejectionDeltaVForExit {
 		SET result TO LEXICON("deltaV", invalidDeltaV, "ejection", 0).
 	} ELSE IF isDesign AND NOT workingSpec["latitudeConstraintBinding"] AND workingSpec["periapsisRadius"] >= workingSpec["minPeriapsis"] {
 		SET result TO LEXICON("deltaV", ejectionLowerBound(workingSpec, SQRT(vInfinitySquared)), "ejection", 0, "closedForm", TRUE).
-	} ELSE IF exactTiming AND NOT isDesign {
-		SET result TO ejectionForExitTime(workingSpec, vExit, tSOI, soiRadius, earliestBurnUT, precision["soiIterations"]).
+	} ELSE IF escapeOrbit AND NOT exactTiming {
+		SET result TO ejectionFreeExit(workingSpec, vExit, soiRadius, burnNotBefore, precision).
+	} ELSE IF (exactTiming OR escapeOrbit) AND NOT isDesign {
+		SET result TO ejectionForExitTime(workingSpec, vExit, tSOI, soiRadius, burnNotBefore, precision["soiIterations"]).
 	} ELSE {
 		SET result TO bestEjectionFromOrbit(workingSpec, vExit, soiRadius, precision).
 	}
@@ -1882,6 +1876,14 @@ FUNCTION transferDeltaV {
 	PARAMETER statsOut IS LEXICON().
 	PARAMETER exactTiming IS FALSE.
 	PARAMETER earliestBurnUT IS 0.
+
+	// A ship on an escape orbit that is priced with its exit time free (ejectionFreeExit) leaves the SOI at
+	// about its own exit time whatever tSOI says, so a tSOI far from that prices a departure the ship cannot
+	// make, and a search free to move tSOI chases that. With orbitSpec["pinExit"] set, tSOI is the ship's own
+	// exit time (the spec's "patchUT"): the departure axis then does nothing, and the flight time is searched.
+	IF orbitSpec:HASKEY("pinExit") AND orbitSpec:HASKEY("patchUT") {
+		IF orbitSpec["pinExit"] AND orbitSpec["patchUT"] > 0 SET tSOI TO orbitSpec["patchUT"].
+	}
 
 	LOCAL shortStartSeed IS 0.5.
 	IF seed:HASKEY("shortSeed") SET shortStartSeed TO seed["shortSeed"].
@@ -2071,8 +2073,9 @@ FUNCTION bindTransferDeltaV {
 // Exact timing, and the node
 // ----------------------------------------------------------------------------
 
-// Exact timing for a ship already in orbit: lock the departure to the best burn PHASE instead of
-// scanning departure times.
+// Exact timing for a ship already in a BOUND orbit: lock the departure to the best burn PHASE instead of
+// scanning departure times. (A ship on an escape orbit has no phase to lock to: see
+// escapeLockedDeparture.)
 //
 // The parking orbit repeats every period, so every burn phase occurs once per period. The
 // cheapest exact-timing burn is therefore the phase-free best burn point (bestEjectionFromOrbit),
@@ -2158,6 +2161,84 @@ FUNCTION phaseLockedDeparture {
 		SET result["stats"] TO finalStats.
 	}
 	RETURN result.
+}
+
+// The departure time to report for a ship on an escape orbit, which has no burn phase to lock to
+// (phaseLockedDeparture's counterpart). The search prices each transfer with the exit time left free
+// (ejectionFreeExit) and tSOI pinned to the ship's own exit (see "pinExit" in transferDeltaV), so the burn
+// it finds exits the SOI at a slightly different time. Lambert has to start from where the ship really is
+// then, so this moves tSOI to that exit time and prices again, until the two agree. The exit time barely
+// depends on the Lambert start, so it settles in a pass or two; the stats it returns are from a pass priced
+// at the tSOI it returns. The flight time the search found was priced at the pinned departure, so the
+// flight time is then searched again here, at the settled departure, and the departure settled again.
+//   tSOI, timeOfFlight - from the grid / hill climb
+//   maxPasses          - at most this many passes per settling; it stops early once the exit time is
+//                        within 2 s of tSOI
+// Returns a LEXICON: "tSOI", "flightTime", "deltaV" (invalidDeltaV if nothing works), "stats"
+// (stats["Ejection"] has the burn), "phaseFreeDeltaV" (the same price, kept so the caller can treat it
+// like phaseLockedDeparture's) and "passes" (in all).
+FUNCTION escapeLockedDeparture {
+	PARAMETER fromBody.
+	PARAMETER toBody.
+	PARAMETER sunBody.
+	PARAMETER solverType.
+	PARAMETER orbitSpec.
+	PARAMETER captureRadius.
+	PARAMETER tSOI.
+	PARAMETER timeOfFlight.
+	PARAMETER maxPasses IS 5.
+
+	// The search prices with the exit pinned to the ship's own (orbitSpec["pinExit"]); here tSOI is the one given.
+	LOCAL freeSpec IS orbitSpec:COPY.
+	SET freeSpec["pinExit"] TO FALSE.
+
+	LOCAL currentTSOI IS tSOI.
+	LOCAL flight IS timeOfFlight.
+	LOCAL passesUsed IS 0.
+	LOCAL best IS LEXICON("tSOI", tSOI, "deltaV", invalidDeltaV, "stats", LEXICON(),
+							"phaseFreeDeltaV", invalidDeltaV, "passes", 0, "flightTime", timeOfFlight).
+
+	// The price of a flight time at the departure the lock has settled on (quick precision: it is only searched).
+	FUNCTION costAtFlight {
+		PARAMETER flightTime.
+
+		RETURN transferDeltaV(fromBody, toBody, sunBody, solverType, freeSpec, captureRadius, ejectionPrecision("quick"),
+								currentTSOI, flightTime, LEXICON(), LEXICON(), FALSE, 0).
+	}
+
+	// Phase 1 settles the departure for the flight time the search found. That flight time was found with the
+	// departure pinned and the Lambert start a little off the burn's real exit, so phase 2 searches the flight
+	// time again, at the settled departure (a golden-section search, +-10% of the flight time), and settles
+	// the departure once more. The cheaper settled result wins.
+	FOR phase IN LIST(1, 2) {
+		IF phase = 2 {
+			IF best["deltaV"] >= invalidDeltaV BREAK.
+			SET currentTSOI TO best["tSOI"].
+			SET flight TO goldenSectionMinimum(costAtFlight@, flight * 0.9, flight * 1.1, 10).
+		}
+
+		LOCAL phaseResult IS LEXICON("deltaV", invalidDeltaV).
+		LOCAL passesInPhase IS 0.
+		UNTIL passesInPhase >= maxPasses {
+			LOCAL stats IS LEXICON().
+			LOCAL totalDV IS transferDeltaV(fromBody, toBody, sunBody, solverType, freeSpec, captureRadius, ejectionPrecision("full"),
+											currentTSOI, flight, LEXICON(), stats, FALSE, 0).
+			SET passesInPhase TO passesInPhase + 1.
+			SET passesUsed TO passesUsed + 1.
+			IF totalDV >= invalidDeltaV OR NOT stats:HASKEY("Ejection") BREAK.
+			LOCAL ejection IS stats["Ejection"].
+			IF NOT ejection:HASKEY("exitUT") BREAK.
+
+			// Each pass is priced at the tSOI it used, so the last one is the settled one; the first one need not be.
+			SET phaseResult TO LEXICON("tSOI", currentTSOI, "deltaV", totalDV, "stats", stats,
+										"phaseFreeDeltaV", totalDV, "passes", passesUsed, "flightTime", flight).
+			IF ABS(ejection["exitUT"] - currentTSOI) < 2 BREAK.
+			SET currentTSOI TO ejection["exitUT"].
+		}
+		IF phaseResult["deltaV"] < best["deltaV"] SET best TO phaseResult.
+	}
+	SET best["passes"] TO passesUsed.
+	RETURN best.
 }
 
 // The bodies whose SOIs the ship's predicted path passes through, in order, once the maneuver node is
@@ -2547,26 +2628,123 @@ FUNCTION resolveTransferEndpoints {
 	RETURN endpoints.
 }
 
-// The search window for either kind of transfer, with default sample counts chosen to suit it.
+// The UT at which an orbitable's orbit changes patch (an SOI change), or 0 if it has no next patch.
+FUNCTION orbitPatchUT {
+	PARAMETER orbitable.
+
+	IF orbitable:ORBIT:HASNEXTPATCH RETURN TIME:SECONDS + orbitable:ORBIT:NEXTPATCHETA.
+	RETURN 0.
+}
+
+// A size for an orbit around centralBody: the semi-major axis if it is bound, else (an escape
+// orbit has no semi-major axis to speak of) the orbitable's distance from the central body now.
+FUNCTION orbitSizeRadius {
+	PARAMETER orbitable.
+	PARAMETER centralBody.
+
+	IF orbitable:ORBIT:ECCENTRICITY < 1 RETURN orbitable:ORBIT:SEMIMAJORAXIS.
+	RETURN (orbitable:POSITION - centralBody:POSITION):MAG.
+}
+
+// A time scale for an orbit around centralBody: its period if it is bound, else (an escape orbit has
+// no period) the period of a circular orbit at the orbitable's distance from the central body now.
+FUNCTION orbitTimeScale {
+	PARAMETER orbitable.
+	PARAMETER centralBody.
+
+	IF orbitable:ORBIT:ECCENTRICITY < 1 RETURN orbitable:ORBIT:PERIOD.
+	RETURN 2 * CONSTANT:PI * SQRT(orbitSizeRadius(orbitable, centralBody) ^ 3 / centralBody:MU).
+}
+
+// How far out, as a fraction of the central body's SOI radius, an arrival may be in a same-SOI transfer.
+// Further out the real path changes patch, so the two-body arc stops being the orbit the ship flies.
+// sameSOITransferDeltaV rejects a later arrival and buildTransferWindow ends its flight times there.
+FUNCTION soiEdgeFraction {
+	RETURN 0.95.
+}
+
+// Seconds from now until an orbitable, on its escape orbit around centralBody, is next at the given
+// distance from the central body's centre on its way out (radius, m). 0 if it is already further out
+// than that on the way out, -1 if the orbit never gets that close (a periapsis above the radius) or is
+// not an escape orbit. Uses the orbit's own elements, so it holds past a patch change.
+FUNCTION orbitTimeToRadius {
+	PARAMETER orbitable.
+	PARAMETER centralBody.
+	PARAMETER radius.
+
+	LOCAL eccentricity IS orbitable:ORBIT:ECCENTRICITY.
+	IF eccentricity <= 1 RETURN -1.
+	LOCAL semiMajorAbs IS ABS(orbitable:ORBIT:SEMIMAJORAXIS).
+	LOCAL semiLatus IS semiMajorAbs * (eccentricity ^ 2 - 1).
+	LOCAL cosAnomaly IS (semiLatus / radius - 1) / eccentricity.
+	IF ABS(cosAnomaly) > 1 RETURN -1.
+	LOCAL wantedAnomaly IS ARCCOS(cosAnomaly).
+	LOCAL nowAnomaly IS orbitable:ORBIT:TRUEANOMALY.
+	IF nowAnomaly > 180 SET nowAnomaly TO nowAnomaly - 360.
+	IF nowAnomaly >= wantedAnomaly RETURN 0.
+	RETURN hyperbolaTransitTime(centralBody:MU, SQRT(centralBody:MU / semiMajorAbs), eccentricity, nowAnomaly, wantedAnomaly).
+}
+
+// The search window for a transfer between two orbitables that orbit the same body (the source is the
+// ship or a body, the destination a body or a vessel; see resolveTransferEndpoints). It chooses the
+// departure and flight-time samples, with defaults to suit the kind of transfer. Either orbit may be an
+// escape orbit (eccentricity >= 1).
 //   endpoints        - from resolveTransferEndpoints
 //   startOffset      - s from now to the start of the first window (>= 30)
-//   departureWindows - how many windows to search, back to back. Between two bodies a window is a
-//                      synodic period. In the same SOI it is shorter (see below).
-//   samplesPerWindow - departure times per window; below 1 (-1) chooses a default
+//   departureWindows - how many windows to search, back to back (see "A window" below)
+//   samplesPerWindow - departure times per window; below 1 (-1) chooses a default. The grid has
+//                      samplesPerWindow x (the departure range / a window) departure times in all.
 //   tofSamples       - flight times; below 1 (-1) chooses a default
 //   coarse           - TRUE for a coarse search that is refined afterwards (transferCalc), FALSE for
 //                      a fine one that is plotted (porkchopplot): only affects the defaults
-// A same-SOI window is one synodic period of the two orbits, or four orbits of the ship if that is
-// shorter (the cost repeats with the ship's orbit, so the departure axis needs a dozen or two
-// samples per ship orbit; two nearly-equal orbits have a synodic period of thousands of orbits).
-// Defaults: between bodies the departures scale with the window. The geometry changes as fast as the
-// quicker of the two bodies moves, so the count is the window length in periods of that body times 8
-// (coarse) or 24 (fine): never fewer than 4 (coarse) or 40 (fine), never more than 24 (coarse) or 120
-// (fine). A window of a synodic period is 1.15 periods of the Mun against Minmus (9 coarse, 40 fine), but
-// about 2.1 years of Kerbin against Duna (17 coarse, 51 fine). Flight times: 5 (coarse) or 41 (fine). In the
-// same SOI: 12 (coarse) or 24 (fine) departures per ship orbit and 7 or 31 flight times.
-// Returns a window LEXICON as for transferSearchWindow ("error" set if something is wrong), with
-// "windowLength" (s) and "samplesPerWindow" added.
+//   searchSpan       - s, the length of the departure range, or -1 (the default) for departureWindows
+//                      windows. departureWindows is ignored when this is given. It is the way to ask only
+//                      for departures soon (a window a day away, say) rather than a whole synodic period.
+//   departureCount   - the number of departure times in all, or -1 (the default) to work it out from
+//                      samplesPerWindow and the range. For a range much shorter than a window, where
+//                      the per-window counts give too few.
+// A window: between two bodies, one synodic period of the two orbits. In the same SOI, a synodic period or
+// four orbits of the ship, whichever is shorter (the cost repeats with the ship's orbit, so the departure
+// axis needs a dozen or two samples per ship orbit; two nearly-equal orbits have a synodic period of
+// thousands of orbits). If either orbit is an escape orbit there is no period to take a synodic period
+// from, so a window is the time until the first SOI change of either orbit (a prediction after that is not
+// on the orbit any more) or, with no SOI change to end it, searchSpan, which is then required.
+// The search is trimmed to the feasible triangle, so cells that could never arrive in time are not sampled:
+// the destination's last usable moment is its SOI change or, in the same SOI, the time it climbs to
+// soiEdgeFraction (95%) of the central body's SOI radius (orbitTimeToRadius). The longest flight ends there,
+// and the departure range ends at that moment less the shortest flight, or at the source's own SOI change if
+// that is sooner. (The shortest flight is not raised for geometry: no minimum flight time follows from the
+// positions alone.)
+// Defaults, with a "period" being the period of a bound orbit or, for an escape orbit, the period of a
+// circular orbit at its current distance (orbitTimeScale):
+//   - between bodies: departures scale with the window. The geometry changes as fast as the quicker of the
+//     two moves, so the count is the window length in periods of that one times 8 (coarse) or 24 (fine):
+//     never fewer than 4 (coarse) or 40 (fine), never more than 24 (coarse) or 120 (fine). A window of a
+//     synodic period is 1.15 periods of the Mun against Minmus (9 coarse, 40 fine), but about 2.1 years of
+//     Kerbin against Duna (17 coarse, 51 fine). Flight times: 5 (coarse) or 41 (fine).
+//   - in the same SOI: 12 (coarse) or 24 (fine) departures per ship orbit (12 to 240), and 7 (coarse) or 31
+//     (fine) flight times.
+//   A departure range shorter than a window gets proportionally fewer departures, but never fewer than the
+//   lower limit above (4, 40 or 12) unless samplesPerWindow is given.
+// Flight times run from 0.5 to 4 times the Hohmann time between the two orbits (an escape orbit is sized
+// by its current distance, see orbitSizeRadius).
+// Everything is absolute: departure times are UT, flight times are seconds.
+// Returns a LEXICON. "error" is "None" if everything is fine; otherwise it holds a message and no other
+// key is set. Otherwise:
+//   "sunBody"                          - the body both orbit
+//   "synodicPeriod", "hohmannTime" (s) - the synodic period is 0 if either orbit is an escape orbit
+//   "hyperbolic"                       - TRUE if either orbit is an escape orbit
+//   "windowLength" (s), "samplesPerWindow" - as above
+//   "startTime", "departureStart", "departureEnd" - UT (startTime is the same as departureStart). Departures
+//       are evenly spaced from departureStart and stop short of departureEnd, so the end itself is not
+//       sampled and consecutive windows tile without repeating a time.
+//   "tofStart", "tofEnd" - s, the shortest and longest flight time, evenly spaced and both sampled
+//   "departureSamples", "tofSamples" - how many of each
+//   "departureTimes" - LIST of departure UTs; "timeOfFlights" - LIST of flight times (s), ascending
+//   "departureStep", "tofStep" - the spacing between samples, in seconds (handy as the
+//       starting step for a hill climb)
+//   "departureUnit", "tofUnit" - "Days"/"Hours"/"Minutes", for labelling
+//   "departureUnitSeconds", "tofUnitSeconds" - seconds per label unit
 FUNCTION buildTransferWindow {
 	PARAMETER endpoints.
 	PARAMETER startOffset.
@@ -2574,64 +2752,159 @@ FUNCTION buildTransferWindow {
 	PARAMETER samplesPerWindow.
 	PARAMETER tofSamples.
 	PARAMETER coarse IS TRUE.
+	PARAMETER searchSpan IS -1.
+	PARAMETER departureCount IS -1.
 
 	IF startOffset < 30 RETURN LEXICON("error", "Start time offset must be >= 30 seconds!").
+	IF departureWindows <= 0 RETURN LEXICON("error", "The number of departure windows must be positive!").
 	LOCAL fromOrbitable IS endpoints["from"].
 	LOCAL toOrbitable IS endpoints["to"].
+	IF fromOrbitable:BODY:NAME <> toOrbitable:BODY:NAME RETURN LEXICON("error", "Bodies must have the same parent!").
+
+	LOCAL sameSOI IS endpoints["sameSOI"].
 	LOCAL startUT IS TIME:SECONDS + startOffset.
+	LOCAL sunBody IS firstCommonBody(fromOrbitable, toOrbitable).
+	LOCAL hyperbolic IS fromOrbitable:ORBIT:ECCENTRICITY >= 1 OR toOrbitable:ORBIT:ECCENTRICITY >= 1.
+	LOCAL fromScale IS orbitTimeScale(fromOrbitable, sunBody).
+	LOCAL toScale IS orbitTimeScale(toOrbitable, sunBody).
 
-	LOCAL window IS 0.
+	// The last UT the source can depart (its own SOI change) and the last the destination can be met: its
+	// SOI change or, in the same SOI, the moment it climbs to soiEdgeFraction of the central body's SOI
+	// radius (sameSOITransferDeltaV rejects an arrival further out), whichever is sooner. 0 for none.
+	LOCAL fromPatchUT IS orbitPatchUT(fromOrbitable).
+	LOCAL toCapUT IS orbitPatchUT(toOrbitable).
+	IF sameSOI AND sunBody:HASBODY AND toOrbitable:ORBIT:ECCENTRICITY >= 1 {
+		LOCAL edgeTime IS orbitTimeToRadius(toOrbitable, sunBody, soiEdgeFraction() * sunBody:SOIRADIUS).
+		IF edgeTime >= 0 AND (toCapUT = 0 OR TIME:SECONDS + edgeTime < toCapUT) SET toCapUT TO TIME:SECONDS + edgeTime.
+	}
+	// The earliest of those, for the length of a window.
+	LOCAL patchLimit IS fromPatchUT.
+	IF toCapUT > 0 AND (patchLimit = 0 OR toCapUT < patchLimit) SET patchLimit TO toCapUT.
+
+	// How long one window is.
+	LOCAL synodicPeriod IS 0.
+	LOCAL windowLength IS 0.
+	IF hyperbolic {
+		IF searchSpan > 0 {
+			SET windowLength TO searchSpan.
+		} ELSE IF patchLimit > startUT {
+			SET windowLength TO patchLimit - startUT.
+		} ELSE IF patchLimit = 0 {
+			RETURN LEXICON("error", "An escape orbit has no period to size the search window from, and no SOI change to end it - give a search span!").
+		}
+	} ELSE {
+		LOCAL tooClose IS 1e-12.
+		IF sameSOI SET tooClose TO 1e-9.
+		IF ABS(1 / fromScale - 1 / toScale) < tooClose {
+			IF sameSOI RETURN LEXICON("error", "The two orbits have the same period - there is no relative motion to plan around!").
+			RETURN LEXICON("error", "Bodies have identical orbital periods - no synodic period!").
+		}
+		SET synodicPeriod TO 1 / ABS(1 / fromScale - 1 / toScale).
+		SET windowLength TO synodicPeriod.
+		IF sameSOI SET windowLength TO MIN(synodicPeriod, 4 * fromScale).
+	}
+
+	// The flight times: 0.5 to 4 times the Hohmann time, ended by the destination's last usable moment.
+	LOCAL hohmannTime IS CONSTANT:PI * SQRT(((orbitSizeRadius(fromOrbitable, sunBody) + orbitSizeRadius(toOrbitable, sunBody)) / 2) ^ 3 / sunBody:MU).
+	LOCAL shortestFlight IS 0.5 * hohmannTime.
+	LOCAL longestFlight IS 4 * hohmannTime.
+	IF toCapUT > 0 {
+		LOCAL flightLimit IS toCapUT - startUT.
+		IF flightLimit <= 0 RETURN LEXICON("error", "The destination changes SOI or leaves the usable part of the SOI before the search window starts!").
+		IF flightLimit < longestFlight {
+			SET longestFlight TO flightLimit.
+			IF shortestFlight >= longestFlight SET shortestFlight TO 0.1 * longestFlight.
+		}
+	}
+
+	// The departure range, trimmed to the feasible triangle: nothing departs after the source's own SOI
+	// change, and a departure later than the destination's last usable moment less the shortest flight
+	// cannot arrive in time for any flight time in the range.
+	LOCAL departureRange IS departureWindows * windowLength.
+	IF searchSpan > 0 SET departureRange TO searchSpan.
+	LOCAL lastDeparture IS startUT + departureRange.
+	IF fromPatchUT > 0 AND fromPatchUT < lastDeparture SET lastDeparture TO fromPatchUT.
+	IF toCapUT > 0 AND toCapUT - shortestFlight < lastDeparture SET lastDeparture TO toCapUT - shortestFlight.
+	IF lastDeparture <= startUT RETURN LEXICON("error", "An orbit changes SOI, or the destination leaves the usable part of the SOI, before the search window starts!").
+	LOCAL searchLength IS lastDeparture - startUT.
+
+	// The sample counts.
 	LOCAL perWindow IS samplesPerWindow.
+	LOCAL fewestSamples IS 1.
 	LOCAL flightSamples IS tofSamples.
-
-	IF endpoints["sameSOI"] {
-		IF fromOrbitable:ORBIT:ECCENTRICITY >= 1 OR toOrbitable:ORBIT:ECCENTRICITY >= 1 {
-			RETURN LEXICON("error", "Both orbits must be bound (not escape trajectories) for a transfer inside one SOI!").
+	IF sameSOI {
+		IF perWindow < 1 {
+			LOCAL perOrbit IS 24.
+			IF coarse SET perOrbit TO 12.
+			SET perWindow TO MAX(12, MIN(240, ROUND(windowLength / fromScale * perOrbit))).
+			SET fewestSamples TO 12.
 		}
-		LOCAL shipPeriod IS fromOrbitable:ORBIT:PERIOD.
-		LOCAL targetPeriod IS toOrbitable:ORBIT:PERIOD.
-		IF ABS(1 / shipPeriod - 1 / targetPeriod) < 1e-9 {
-			RETURN LEXICON("error", "The two orbits have the same period - there is no relative motion to plan around!").
-		}
-		LOCAL windowLength IS MIN(1 / ABS(1 / shipPeriod - 1 / targetPeriod), 4 * shipPeriod).
-		LOCAL perOrbit IS 24.
-		IF coarse SET perOrbit TO 12.
-		IF perWindow < 1 SET perWindow TO MAX(12, MIN(240, ROUND(windowLength / shipPeriod * perOrbit))).
 		IF flightSamples < 1 {
 			SET flightSamples TO 31.
 			IF coarse SET flightSamples TO 7.
 		}
-		SET window TO transferSearchWindow(fromOrbitable, toOrbitable, MAX(1, ROUND(departureWindows * perWindow)), flightSamples,
-			departureWindows, startUT, startUT + departureWindows * windowLength).
-		IF window["error"] = "None" SET window["windowLength"] TO windowLength.
 	} ELSE {
 		IF perWindow < 1 {
-			// Scale with how many periods of the quicker body the window covers.
+			// Scale with how many periods of the quicker orbit the window covers.
 			LOCAL perPeriod IS 24.
-			LOCAL fewest IS 40.
 			LOCAL most IS 120.
+			SET fewestSamples TO 40.
 			IF coarse {
 				SET perPeriod TO 8.
-				SET fewest TO 4.
+				SET fewestSamples TO 4.
 				SET most TO 24.
 			}
-			SET perWindow TO fewest.
-			LOCAL periodFrom IS fromOrbitable:ORBIT:PERIOD.
-			LOCAL periodTo IS toOrbitable:ORBIT:PERIOD.
-			IF ABS(1 / periodFrom - 1 / periodTo) > 1e-12 {
-				LOCAL synodic IS 1 / ABS(1 / periodFrom - 1 / periodTo).
-				SET perWindow TO MAX(fewest, MIN(most, ROUND(synodic / MIN(periodFrom, periodTo) * perPeriod))).
-			}
+			SET perWindow TO MAX(fewestSamples, MIN(most, ROUND(windowLength / MIN(fromScale, toScale) * perPeriod))).
 		}
 		IF flightSamples < 1 {
 			SET flightSamples TO 41.
 			IF coarse SET flightSamples TO 5.
 		}
-		SET window TO transferSearchWindow(fromOrbitable, toOrbitable, MAX(1, ROUND(departureWindows * perWindow)), flightSamples,
-			departureWindows, startUT).
 	}
-	IF window["error"] = "None" SET window["samplesPerWindow"] TO perWindow.
-	RETURN window.
+	LOCAL departureSamples IS MAX(1, ROUND(searchLength / windowLength * perWindow)).
+	IF samplesPerWindow < 1 SET departureSamples TO MAX(fewestSamples, departureSamples).
+	IF departureCount > 0 SET departureSamples TO departureCount.
+
+	LOCAL departureStep IS searchLength / departureSamples.
+	// With a single flight time there is no spacing to speak of; give a hill climb something sensible.
+	LOCAL tofStep IS MAX(longestFlight - shortestFlight, 0.1 * shortestFlight).
+	IF flightSamples > 1 SET tofStep TO (longestFlight - shortestFlight) / (flightSamples - 1).
+
+	LOCAL departureTimes IS LIST().
+	FROM {LOCAL index IS 0.} UNTIL index >= departureSamples STEP {SET index TO index + 1.} DO {
+		departureTimes:ADD(startUT + index * departureStep).
+	}
+	LOCAL timeOfFlights IS LIST().
+	FROM {LOCAL index IS 0.} UNTIL index >= flightSamples STEP {SET index TO index + 1.} DO {
+		timeOfFlights:ADD(shortestFlight + index * tofStep).
+	}
+
+	// Departure labels are sized by the whole departure range; flight-time labels by the shortest flight.
+	LOCAL departureUnit IS timeUnitFor(searchLength).
+	LOCAL tofUnit IS timeUnitFor(shortestFlight).
+
+	RETURN LEXICON("error", "None",
+					"sunBody", sunBody,
+					"synodicPeriod", synodicPeriod,
+					"hohmannTime", hohmannTime,
+					"hyperbolic", hyperbolic,
+					"windowLength", windowLength,
+					"samplesPerWindow", perWindow,
+					"startTime", startUT,
+					"departureStart", startUT,
+					"departureEnd", lastDeparture,
+					"tofStart", shortestFlight,
+					"tofEnd", longestFlight,
+					"departureSamples", departureSamples,
+					"tofSamples", flightSamples,
+					"departureTimes", departureTimes,
+					"timeOfFlights", timeOfFlights,
+					"departureStep", departureStep,
+					"tofStep", tofStep,
+					"departureUnit", departureUnit,
+					"tofUnit", tofUnit,
+					"departureUnitSeconds", timeUnitSeconds(departureUnit),
+					"tofUnitSeconds", timeUnitSeconds(tofUnit)).
 }
 
 // The orbit of an orbitable around centralBody, as an orbit spec (see makeOrbitSpec), as of now.
@@ -2643,8 +2916,9 @@ FUNCTION orbitSpecAround {
 	PARAMETER centralBody.
 
 	IF orbitable:ISTYPE("Vessel") AND orbitable:NAME = SHIP:NAME RETURN orbitSpecFromVessel(SHIP).
-	RETURN makeOrbitSpec(orbitable:POSITION - centralBody:POSITION, VELOCITYAT(orbitable, TIME:SECONDS):ORBIT,
-							TIME:SECONDS, centralBody:MU, bodyClearanceRadius(centralBody)).
+	RETURN attachLiveOrbit(makeOrbitSpec(orbitable:POSITION - centralBody:POSITION, VELOCITYAT(orbitable, TIME:SECONDS):ORBIT,
+											TIME:SECONDS, centralBody:MU, bodyClearanceRadius(centralBody)),
+							orbitable, centralBody).
 }
 
 // Why a Lambert arc is not flyable, or "" if it is. The arc stays clear of the central body and inside
@@ -2694,7 +2968,9 @@ FUNCTION transferArcProblem {
 // time IS the departure time and no exit hyperbola is involved. The better of Lambert's short-way and
 // long-way arcs is taken; an arc that dips below the central body's surface (or atmosphere) is
 // rejected, and so is a transfer angle within 0.05 degrees of 0 or 180 where Lambert's plane is
-// undefined. Both orbits are propagated as Kepler orbits from the specs.
+// undefined. Both orbits are predicted with orbitStateAt, and a departure or arrival after either
+// orbit's next SOI change is rejected ("Orbit changes SOI first"), as is an arrival further out than 95%
+// of the central body's SOI radius ("Meets the target at the SOI edge").
 //   fromSpec, toSpec  - orbit specs of the ship and the target (orbitSpecAround)
 //   toOrbitable       - the target (a vessel: arrival matches its velocity; a body: see arrivalDeltaV)
 //   solverType        - "Gauss" or "Gooding"
@@ -2724,6 +3000,8 @@ FUNCTION sameSOITransferDeltaV {
 	IF seed:HASKEY("longSeed") SET longStartSeed TO seed["longSeed"].
 
 	LOCAL mu IS fromSpec["mu"].
+	// An arrival further out than this fraction of the SOI radius is rejected (see arrivesAtEdge).
+	LOCAL soiEdgeMargin IS soiEdgeFraction().
 	LOCAL bestTotalDV IS invalidDeltaV.
 	LOCAL winningTrajectory IS 0.
 	LOCAL winningDeparture IS 0.
@@ -2734,12 +3012,20 @@ FUNCTION sameSOITransferDeltaV {
 	LOCAL failureRank IS 0.
 	LOCAL rejectedArcs IS 0.
 
-	IF timeOfFlight > 0 AND departureTime >= earliestDeparture {
-		LOCAL departureState IS propagateKepler(fromSpec["position"], fromSpec["velocity"], departureTime - fromSpec["epoch"], mu).
-		LOCAL arrivalState IS propagateKepler(toSpec["position"], toSpec["velocity"], departureTime + timeOfFlight - toSpec["epoch"], mu).
-		LOCAL separation IS VANG(departureState["position"], arrivalState["position"]).
+	// The predictions follow each orbit's patches, so a time after an SOI change is not on the orbit.
+	LOCAL leavesPatch IS (fromSpec["patchUT"] > 0 AND departureTime > fromSpec["patchUT"])
+						OR (toSpec["patchUT"] > 0 AND departureTime + timeOfFlight > toSpec["patchUT"]).
 
-		IF separation > 0.05 AND separation < 179.95 {
+	IF timeOfFlight > 0 AND departureTime >= earliestDeparture AND NOT leavesPatch {
+		LOCAL departureState IS orbitStateAt(fromSpec, departureTime).
+		LOCAL arrivalState IS orbitStateAt(toSpec, departureTime + timeOfFlight).
+		LOCAL separation IS VANG(departureState["position"], arrivalState["position"]).
+		// Meeting the target out at the SOI edge is no use: the real path changes patch there, so the
+		// two-body arc stops being the orbit the ship flies. (A target that flies through the SOI otherwise
+		// makes the cheapest intercept the one at the edge, where it moves slowest.)
+		LOCAL arrivesAtEdge IS maxRadius > 0 AND arrivalState["position"]:MAG > soiEdgeMargin * maxRadius.
+
+		IF separation > 0.05 AND separation < 179.95 AND NOT arrivesAtEdge {
 			LOCAL shortTrajectory IS 0.
 			LOCAL longTrajectory IS 0.
 			IF solverType = "Gooding" {
@@ -2785,11 +3071,14 @@ FUNCTION sameSOITransferDeltaV {
 					IF trajectory:HASKEY("Failure Reason") SET failureReason TO trajectory["Failure Reason"].
 				}
 			}
+		} ELSE IF arrivesAtEdge {
+			SET failureReason TO "Meets the target at the SOI edge".
 		} ELSE {
 			SET failureReason TO "Transfer angle near 0 or 180".
 		}
 	} ELSE IF timeOfFlight > 0 {
-		SET failureReason TO "Departure before window start".
+		IF departureTime < earliestDeparture SET failureReason TO "Departure before window start".
+		ELSE SET failureReason TO "Orbit changes SOI first".
 	}
 
 	// Mutate the caller's statsOut in place (see the note in porkchopDeltaV on why).
