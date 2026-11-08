@@ -146,17 +146,16 @@ IF (mode <> "Done") {
 
 	// Checks before anything is moved
 	LOCAL errorMessage IS "".
-	IF TARGET:ISTYPE("Part") OR TARGET:ISTYPE("DockingPort") SET errorMessage TO "Error! Target must be a vessel or a body, not a part!".
+	IF TARGET:ISTYPE("Part") OR TARGET:ISTYPE("DockingPort") SET errorMessage TO "Error! Target is a part, not a vessel or body.".
 	ELSE {
-		IF targetOrbitable:BODY:NAME <> SHIP:BODY:NAME SET errorMessage TO "Error! Target is not orbiting " + SHIP:BODY:NAME + "!".
+		IF targetOrbitable:BODY:NAME <> SHIP:BODY:NAME SET errorMessage TO "Error! Target orbits " + targetOrbitable:BODY:NAME + ", not " + SHIP:BODY:NAME + ".".
 		IF shipInfo["CurrentStage"]["Isp"] = 0 SET errorMessage TO "Error! Isp is zero!".
-		IF shipInfo["CurrentStage"]["ENGINES"]:LENGTH = 0 SET errorMessage TO "Error! Ship has no engines in the current stage!".
+		IF shipInfo["CurrentStage"]["ENGINES"]:LENGTH = 0 SET errorMessage TO "Error! No engines in the current stage.".
 	}
 	IF errorMessage = "" {
 		LOCAL relativeSpeed IS (SHIP:VELOCITY:ORBIT - targetOrbitable:VELOCITY:ORBIT):MAG.
-		IF VANG(shipInfo["CurrentStage"]["Engines"][0]:FACING:VECTOR, SHIP:FACING:VECTOR) > 45 SET errorMessage TO "Error! Engines are facing the wrong way!".
-		IF relativeSpeed * 1.1 > shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"] SET errorMessage TO "Error! Not enough delta V to cancel the relative velocity!".
-		IF relativeSpeed < stopSpeed SET errorMessage TO "Error! Already at rest relative to the target!".
+		IF VANG(shipInfo["CurrentStage"]["Engines"][0]:FACING:VECTOR, SHIP:FACING:VECTOR) > 45 SET errorMessage TO "Error! Engines point " + ROUND(VANG(shipInfo["CurrentStage"]["Engines"][0]:FACING:VECTOR, SHIP:FACING:VECTOR)) + " deg off the ship's facing.".
+		IF relativeSpeed < stopSpeed SET errorMessage TO "Error! Already at rest: " + ROUND(relativeSpeed, 2) + " m/s relative.".
 	}
 	IF errorMessage <> "" {
 		SET mode TO "Done".
@@ -321,25 +320,25 @@ IF (mode <> "Done") {
 				// whether the burn can be done at all. It is checked before the burn starts, while it can still be refused.
 				IF mode = "Waiting" {
 					LOCAL refusal IS "".
-					IF NOT approachFound SET refusal TO "No closest approach in the next " + timeToString(scanHorizon) + "! The ships are still getting closer when the search ends".
-					ELSE IF approach["Time"] <= TIME:SECONDS SET refusal TO "Already past the closest approach! The ships are moving apart".
+					IF NOT approachFound SET refusal TO "No closest approach within " + timeToString(scanHorizon) + ", still closing.".
+					ELSE IF approach["Time"] <= TIME:SECONDS SET refusal TO "Closest approach has passed, moving apart.".
 					ELSE IF ignitionUT < TIME:SECONDS {
 						// the burn should have started already, so the path that is left has to be stopped in with all of the thrust there is
 						LOCAL pathLeft IS MAX((approach["Time"] - TIME:SECONDS) * (targetSpeed + approachSpeed) / 2, 1).
 						LOCAL lateTilt IS tiltGain * ARCTAN(approach["Distance"] / pathLeft).
 						LOCAL lateBrake IS brakePlan(targetSpeed, COS(MIN(lateTilt, maxTilt)), 1).
-						IF lateTilt > maxTilt SET refusal TO "Too late! A miss of " + distanceToString(approach["Distance"], 1) + " in the " + distanceToString(pathLeft, 1) + " left needs more than " + maxTilt + " degrees of tilt".
-						ELSE IF lateBrake["Distance"] > MAX(pathLeft - standoff, 1) * refuseSlack SET refusal TO "Too late! Stopping from " + ROUND(targetSpeed, 1) + " m/s takes " + distanceToString(lateBrake["Distance"], 1) + " with all of the thrust there is, and only " + distanceToString(pathLeft, 1) + " is left".
+						IF lateTilt > maxTilt SET refusal TO "Too late: a " + distanceToString(approach["Distance"], 1) + " miss in " + distanceToString(pathLeft, 1) + " needs over " + maxTilt + " deg tilt.".
+						ELSE IF lateBrake["Distance"] > MAX(pathLeft - standoff, 1) * refuseSlack SET refusal TO "Too late: stopping from " + ROUND(targetSpeed, 1) + " m/s needs " + distanceToString(lateBrake["Distance"], 1) + " at full thrust, " + distanceToString(pathLeft, 1) + " left.".
 					} ELSE IF plan["Fixed"] {
 						// full thrust cannot be reduced, so a burn that has to start earlier than it needs would stop short
-						IF planDistance > thrustDistance * refuseSlack SET refusal TO "Cannot throttle down! The miss needs the burn to start " + distanceToString(planDistance, 1) + " out, full thrust only needs " + distanceToString(thrustDistance, 1).
+						IF planDistance > thrustDistance * refuseSlack SET refusal TO "Cannot throttle down: the miss needs a start " + distanceToString(planDistance, 1) + " out, full thrust needs " + distanceToString(thrustDistance, 1) + ".".
 					} ELSE {
 						LOCAL neededThrottle IS thrustFraction * plan["Distance"] / MAX(planDistance - standoff, 1).
-						IF neededThrottle < throttleFloor SET refusal TO "Cannot throttle down! The burn needs " + ROUND(100 * neededThrottle, 1) + "% throttle, the engines go no lower than " + ROUND(100 * throttleFloor) + "%".
+						IF neededThrottle < throttleFloor SET refusal TO "Cannot throttle down: burn needs " + ROUND(100 * neededThrottle, 1) + "% throttle, engines go to " + ROUND(100 * throttleFloor) + "%.".
 					}
 					// the tilt makes the burn cost 1 / COS(tilt) times the speed
-					IF refusal = "" AND ignitionSpeed * 1.1 / COS(expectedTilt) > shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"] SET refusal TO "Not enough delta V! The burn needs " + ROUND(ignitionSpeed / COS(expectedTilt), 1) + " m/s".
-					IF refusal = "" AND plan["SpeedLeft"] > 1 SET refusal TO "The stages with engines cannot cancel the last " + ROUND(plan["SpeedLeft"], 1) + " m/s".
+					IF refusal = "" AND ignitionSpeed * 1.1 / COS(expectedTilt) > shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"] SET refusal TO "Delta V: burn needs " + ROUND(ignitionSpeed * 1.1 / COS(expectedTilt)) + " m/s (with tilt, 10%), have " + ROUND(shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"]) + ".".
+					IF refusal = "" AND plan["SpeedLeft"] > 1 SET refusal TO "Engine stages leave " + ROUND(plan["SpeedLeft"], 1) + " m/s uncancelled.".
 					IF refusal <> "" {
 						SET mode TO "Done".
 						SET loopMessage TO refusal.
