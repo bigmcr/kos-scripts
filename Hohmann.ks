@@ -16,6 +16,7 @@ IF finalAltitude = "Default" {
 
 LOCAL errorCode IS "None".
 LOCAL transferToTarget IS FALSE.
+LOCAL burnAtApoapsis IS FALSE.
 IF finalAltitude:TYPENAME = "String" {
   IF finalAltitude = "target" OR finalAltitude = "tar" {
     IF HASTARGET SET transferToTarget TO TRUE.
@@ -30,7 +31,12 @@ IF errorCode = "None" {
   } ELSE {
     SET finalAltitude TO processScalarParameter(finalAltitude, -1).
     IF finalAltitude <= 0 SET errorCode TO "Invalid final altitude".
-    ELSE IF (finalAltitude > SHIP:ORBIT:PERIAPSIS) AND (finalAltitude < SHIP:ORBIT:APOAPSIS) SET errorCode TO "Apo > Final Alt > Peri".
+    ELSE IF (finalAltitude > SHIP:ORBIT:PERIAPSIS) AND (finalAltitude < SHIP:ORBIT:APOAPSIS) {
+      // The final altitude is within the current orbit. That is only usable if the periapsis
+      // dips into the atmosphere, in which case burn at the apoapsis to move the periapsis to the final altitude.
+      IF BODY:ATM:EXISTS AND SHIP:ORBIT:PERIAPSIS < BODY:ATM:HEIGHT SET burnAtApoapsis TO TRUE.
+      ELSE SET errorCode TO "Apo > Final Alt > Peri".
+    }
   }
 }
 IF errorCode = "None" {
@@ -112,6 +118,7 @@ IF errorCode = "None" {
     // Burn at the apsis on the opposite side of the orbit from the final altitude.
     SET r_2 TO finalAltitude + BODY:RADIUS.
     IF finalAltitude > SHIP:ORBIT:APOAPSIS SET nodeTime TO TIME:SECONDS + ETA:PERIAPSIS.
+    ELSE IF burnAtApoapsis SET nodeTime TO TIME:SECONDS + ETA:APOAPSIS.
     ELSE SET nodeTime TO TIME:SECONDS + ETA:APOAPSIS.
     SET r_1 TO (POSITIONAT(SHIP, nodeTime) - BODY:POSITION):MAG.
   }
