@@ -3125,7 +3125,7 @@ FUNCTION greatCircleDistance
 {
 	PARAMETER toPosition.
 	PARAMETER fromPosition IS SHIP:GEOPOSITION.
-	RETURN SHIP:BODY:RADIUS * Constant:DegToRad * ARCCOS(MAX(MIN(SIN(fromPosition:LAT) * SIN(toPosition:LAT) + COS(fromPosition:LAT) * COS(toPosition:LAT) * COS(ABS(fromPosition:LNG - toPosition:LNG))), 1), -1).
+	RETURN SHIP:BODY:RADIUS * Constant:DegToRad * ARCCOS(MAX(MIN(SIN(fromPosition:LAT) * SIN(toPosition:LAT) + COS(fromPosition:LAT) * COS(toPosition:LAT) * COS(ABS(fromPosition:LNG - toPosition:LNG)), 1), -1)).
 }
 
 // Function that returns the unit vectors showing the direction of prograde,
