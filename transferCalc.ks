@@ -60,8 +60,9 @@
 //                      5 between bodies, 7 in the same SOI
 //   parkingAltitude  - m, case 1 only: altitude of the parking orbit to design. -1 (the default) chooses
 //                      50 km, or 30 km above the atmosphere if there is one.
-//   captureAltitude  - m above the destination's surface to capture into a circular orbit.
-//                      -1 (the default) prices only matching the arrival excess speed.
+//   captureAltitude  - m above the destination body's surface to capture into a circular orbit.
+//                      -1 (the default) chooses 15 km, or 5 km above the atmosphere if there is one.
+//                      A vessel destination has no capture: only its arrival excess speed is priced.
 //   solverType       - the Lambert solver: "Gooding" (the default) or "Gauss"
 //   searchDays       - game days, the length of the departure range, in place of departureWindows windows.
 //                      -1 (the default) uses departureWindows. Searches only the departures soon, instead of
@@ -363,7 +364,14 @@ IF errorCode = "None" {
 	}
 
 	LOCAL captureRadius IS 0.
-	IF captureAltitude >= 0 AND toOrbitable:ISTYPE("Body") SET captureRadius TO toOrbitable:RADIUS + captureAltitude.
+	IF toOrbitable:ISTYPE("Body") {
+		IF captureAltitude < 0 {
+			// The default: 15 km up with no atmosphere, 5 km above the top of one.
+			SET captureAltitude TO 15000.
+			IF toOrbitable:ATM:EXISTS SET captureAltitude TO toOrbitable:ATM:HEIGHT + 5000.
+		}
+		SET captureRadius TO toOrbitable:RADIUS + captureAltitude.
+	}
 
 	IF debug {
 		debugLogValues("Setup", LEXICON("solver", solverType, "captureRadius", captureRadius, "shipInParkingOrbit", shipInParkingOrbit,

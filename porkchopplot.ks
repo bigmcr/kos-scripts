@@ -23,8 +23,8 @@
 //   tofSamples       - flight times sampled (1 to 4 times the Hohmann time). -1 (the default) chooses:
 //                      41 between bodies, 31 in the same SOI
 //   captureAltitude  - m above the destination's surface to capture into a circular orbit, for a
-//                      destination body in the same SOI. -1 (the default) prices matching the arrival
-//                      excess speed. Between bodies the arrival is always the bare relative speed.
+//                      destination body in the same SOI. -1 (the default) chooses 15 km, or 5 km above
+//                      the atmosphere if there is one. Between bodies the arrival is always the bare relative speed.
 //   searchDays       - game days, the length of the departure range, in place of departureWindows windows.
 //                      -1 (the default) uses departureWindows. Needed when a vessel is on an escape orbit
 //                      with no SOI change to end the search (see buildTransferWindow)
@@ -101,7 +101,14 @@ IF errorCode = "None" {
 IF errorCode = "None" {
 	LOCAL startTime IS window["startTime"].
 	LOCAL captureRadius IS 0.
-	IF captureAltitude >= 0 AND toOrbitable:ISTYPE("Body") SET captureRadius TO toOrbitable:RADIUS + captureAltitude.
+	IF toOrbitable:ISTYPE("Body") {
+		IF captureAltitude < 0 {
+			// The default: 15 km up with no atmosphere, 5 km above the top of one.
+			SET captureAltitude TO 15000.
+			IF toOrbitable:ATM:EXISTS SET captureAltitude TO toOrbitable:ATM:HEIGHT + 5000.
+		}
+		SET captureRadius TO toOrbitable:RADIUS + captureAltitude.
+	}
 
 	IF sameSOI {
 		PRINT fromOrbitable:NAME + " -> " + toOrbitable:NAME + " (same SOI).".
