@@ -498,12 +498,15 @@ FUNCTION createCommandList {
 
 	// Leaves a flag that makes the next boot delete every local script and install them all again from the archive,
 	// and then reboots. Nothing is changed unless the archive is connected and has a build that is current.
-	possibleCommands:ADD("reinstall", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
+	// With T, everything else on the local drive (the command history, saved data and so on) is deleted as well.
+	possibleCommands:ADD("reinstall", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
+		PARAMETER deleteEverything IS FALSE.
+		IF NOT deleteEverything:ISTYPE("Boolean") RETURN "The argument must be T or F".
 		IF NOT connectionToKSC() RETURN "Not connected to KSC - cannot reinstall".
 		LOCAL state IS compareWithArchive().
 		IF NOT state["hasBuild"] RETURN "No archive build: use build".
 		IF state["buildStale"] <> "" RETURN "Build out of date: use build".
-		LOG "reinstall" TO reinstallFlagPath.
+		LOG (CHOOSE "all" IF deleteEverything ELSE "reinstall") TO reinstallFlagPath.
 		REBOOT.
 		})).
 

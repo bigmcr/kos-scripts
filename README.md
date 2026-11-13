@@ -75,6 +75,6 @@ The ship runs its own local copies of the scripts, so editing a file on the arch
 
 - `build` compiles the changed scripts on the archive into `0:Compiled`. Run it from a ship that is not doing anything important, since compiling pauses the program.
 - `update` copies changed and new scripts from that build to the ship (`update, T` copies everything again). A script that was already loaded needs a `reboot` before the new version is used.
-- `reinstall` deletes the ship's local scripts and installs them all again from the archive on the next boot.
+- `reinstall` deletes the ship's local scripts and installs them all again from the archive on the next boot. It also deletes saved `.json` data, but keeps the command history. `reinstall,T` deletes everything on the local drive, the history included.
 
 `reboot` restarts the kOS processor, which runs `boot.ks` again.
