@@ -802,8 +802,9 @@ FUNCTION syncScripts {
 	RETURN outcome.
 }
 // Wipe Local Scripts
-// Deletes every script on the local drive (.ks and .ksm files), the manifest and the update leftovers, so that a fresh
-// copy from the archive has all of the room. Other files (the command history, logs and so on) are left alone.
+// Deletes every script on the local drive (.ks and .ksm files), the manifest, the update leftovers and the .json files
+// that other scripts saved, so that a fresh copy from the archive has all of the room. Other files (the command history
+// in history.json, logs and so on) are left alone.
 // Passed the following:
 //			no arguments
 // Returns the following:
@@ -813,6 +814,8 @@ FUNCTION wipeLocalScripts {
 	FOR item IN CORE:VOLUME:FILES:VALUES {
 		IF item:ISFILE {
 			IF item:EXTENSION = "ks" OR item:EXTENSION = "ksm" OR item:EXTENSION = "new" doomed:ADD("1:" + item:NAME).
+			// data left by other scripts (tuning, plans and so on), but not loop's command history
+			IF item:EXTENSION = "json" AND item:NAME <> "history.json" doomed:ADD("1:" + item:NAME).
 		}
 	}
 	FOR eachFile IN doomed {
