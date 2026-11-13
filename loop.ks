@@ -20,6 +20,7 @@ LIST BODIES IN bodList.
 // avoiding the use of a file extension allows RUNPATH to determine the file extension
 RUNPATH("library").
 RUNPATH("libraryTransfer").
+RUNPATH("libraryPID").
 RUNPATH("loopCommands").
 RUNPATH("loopTerminal").
 

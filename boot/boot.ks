@@ -7,7 +7,7 @@ LOCAL lastStock IS FALSE.
 // The scripts that must be on the local drive for loop to run (without their file extensions).
 // The boot file is always required as well. These are also the files that loop loads when it starts, so it is
 // global for loop.ks to use: loop refuses to run them again from the terminal.
-GLOBAL criticalFileNames IS LIST("library", "libraryTransfer", "loop", "loopCommands", "loopTerminal").
+GLOBAL criticalFileNames IS LIST("library", "libraryTransfer", "libraryPID", "loop", "loopCommands", "loopTerminal").
 
 // How scripts get from the archive to a ship
 // -------------------------------------------
@@ -804,15 +804,20 @@ FUNCTION syncScripts {
 // Wipe Local Scripts
 // Deletes every script on the local drive (.ks and .ksm files), the manifest, the update leftovers and the .json files
 // that other scripts saved, so that a fresh copy from the archive has all of the room. Other files (the command history
-// in history.json, logs and so on) are left alone.
+// in history.json, logs and so on) are left alone. If the reinstall flag holds "all" (reinstall,T), everything on the
+// local drive is deleted instead, the history included.
 // Passed the following:
 //			no arguments
 // Returns the following:
 //			nothing
 FUNCTION wipeLocalScripts {
 	LOCAL doomed IS LIST(manifestPath, oldManifestPath, journalPath).
+	LOCAL everything IS FALSE.
+	IF EXISTS(reinstallFlagPath) SET everything TO (OPEN(reinstallFlagPath):READALL:STRING:TRIM = "all").
 	FOR item IN CORE:VOLUME:FILES:VALUES {
-		IF item:ISFILE {
+		IF everything {
+			doomed:ADD("1:" + item:NAME).
+		} ELSE IF item:ISFILE {
 			IF item:EXTENSION = "ks" OR item:EXTENSION = "ksm" OR item:EXTENSION = "new" doomed:ADD("1:" + item:NAME).
 			// data left by other scripts (tuning, plans and so on), but not loop's command history
 			IF item:EXTENSION = "json" AND item:NAME <> "history.json" doomed:ADD("1:" + item:NAME).
@@ -867,13 +872,22 @@ ELSE {
 	IF (connectionToKSC()) {
 		// a missing critical file means a fresh start: the archive's build must be usable before anything is deleted
 		LOCAL freshState IS compareWithArchive().
-		IF (NOT freshState["hasBuild"]) OR freshState["buildStale"] <> "" buildArchive(FALSE).
+		IF (NOT freshState["hasBuild"]) OR freshState["buildStale"] <> "" {
+			PRINT "Building the archive's scripts...".
+			PRINT "Build: " + buildArchive(FALSE).
+		}
 		IF compareWithArchive()["hasBuild"] wipeLocalScripts().
+		ELSE PRINT "No usable archive build, so the local scripts were not deleted".
 		PRINT "Copying scripts to local hard drive".
-		IF syncScripts(TRUE)["installed"] > 0 {
+		LOCAL copyResult IS syncScripts(TRUE).
+		PRINT copyResult["message"].
+		IF copyResult["installed"] > 0 {
 			PRINT "Successfully copied files to local drive".
 			SET loopFound TO TRUE.
-		} ELSE PRINT "Failed to copy files to local drive".
+		} ELSE {
+			PRINT "Failed to copy files to local drive: " + copyResult["message"].
+			SET bootMessage TO "Boot copy failed: " + copyResult["message"].
+		}
 	} ELSE {
 		PRINT "Loop.ksm does not exist on the local drive".
 		PRINT "Or there are not valid settings".

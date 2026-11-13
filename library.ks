@@ -2758,13 +2758,20 @@ FUNCTION logPID
 	IF NOT recordsToArchive OR (recordsToArchive AND connectionToKSC()) {
 		IF (initPIDLog:KEYS:EMPTY OR NOT initPIDLog:KEYS:CONTAINS(filename))
 		{
+			// The connection can be lost after the check at the top of this function (building a row takes several ticks, and time warp can change the
+			// connection), and writing to the archive without one stops the script, so check again just before each write.
+			IF recordsToArchive AND NOT connectionToKSC() { RETURN. }
 			IF EXISTS(filename) DELETEPATH(filename).
+			IF recordsToArchive AND NOT connectionToKSC() { RETURN. }
 			IF detailed	{LOG "Timestamp,Last Sample Time,Input,Setpoint,Error,Output,P Term,I Term,D Term,Kp,Ki,Kd,Max Output,Min Output,Change Rate,Error Sum" TO filename. }
 			ELSE {LOG "Timestamp,Input,Setpoint,Error,Output" TO filename.}
 			initPIDLog:ADD(filename, TIME:SECONDS).
 		}
-		IF detailed {LOG (TIME:SECONDS - initPIDLog[filename]) + "," + PID:LastSampleTime + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output + "," + PID:PTerm + "," + PID:ITerm + "," + PID:DTerm + "," + PID:Kp + "," + PID:KI + "," + PID:Kd + "," + PID:MAXOUTPUT + "," + PID:MINOUTPUT + "," + PID:CHANGERATE + "," + PID:ERRORSUM TO filename.}
-		ELSE {LOG (TIME:SECONDS - initPIDLog[filename]) + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output TO filename.}
+		LOCAL rowData IS "".
+		IF detailed {SET rowData TO (TIME:SECONDS - initPIDLog[filename]) + "," + PID:LastSampleTime + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output + "," + PID:PTerm + "," + PID:ITerm + "," + PID:DTerm + "," + PID:Kp + "," + PID:KI + "," + PID:Kd + "," + PID:MAXOUTPUT + "," + PID:MINOUTPUT + "," + PID:CHANGERATE + "," + PID:ERRORSUM.}
+		ELSE {SET rowData TO (TIME:SECONDS - initPIDLog[filename]) + "," + PID:Input + "," + PID:Setpoint + "," + PID:Error + "," + PID:Output.}
+		IF recordsToArchive AND NOT connectionToKSC() { RETURN. }
+		LOG rowData TO filename.
 	}
 }
 
@@ -2782,6 +2789,9 @@ FUNCTION logPIDMultiple
 	IF NOT recordsToArchive OR (recordsToArchive AND connectionToKSC()) {
 		IF (initPIDLogMultiple:KEYS:EMPTY OR NOT initPIDLogMultiple:KEYS:CONTAINS(filename))
 		{
+			// The connection can be lost after the check at the top of this function (building a row takes several ticks, and time warp can change the
+			// connection), and writing to the archive without one stops the script, so check again just before each write.
+			IF recordsToArchive AND NOT connectionToKSC() { RETURN. }
 			IF EXISTS(filename) DELETEPATH(filename).
 			LOCAL labelRow IS "Time,".
 			LOCAL valueRow IS "Stamp,".
@@ -2797,6 +2807,7 @@ FUNCTION logPIDMultiple
 				SET labelRow TO labelRow + additionalData["LabelRow"].
 				SET valueRow TO valueRow + additionalData["valueRow"].
 			}
+			IF recordsToArchive AND NOT connectionToKSC() { RETURN. }
 			LOG labelRow TO fileName.
 			LOG valueRow TO fileName.
 			initPIDLogMultiple:ADD(filename, TIME:SECONDS).
@@ -2809,6 +2820,7 @@ FUNCTION logPIDMultiple
 			}
 		}
 		IF useAdditional SET rowData TO rowData + additionalData["rowData"].
+		IF recordsToArchive AND NOT connectionToKSC() { RETURN. }
 		LOG rowData TO filename.
 	}
 }
@@ -4040,4 +4052,198 @@ FUNCTION stageIfNeeded {
 		ELSE stageFunction().
 	}
 	RETURN reason.
+}
+
+// getRCSThrusts
+// Inputs:
+//   None.
+// Outputs:
+//   Vector - summed AVAILABLETHRUST (Newtons) of all enabled RCS parts on
+//   the current SHIP, split by translation axis: X = Fore, Y = Top,
+//   Z = Starboard.
+// Side Effects:
+//   None.
+FUNCTION getRCSThrusts {
+	LOCAL RCSThrusters IS LIST().
+	LIST RCS IN RCSThrusters.
+	LOCAL maxRCSThrust IS V(0, 0, 0).
+	FOR eachRCS IN RCSThrusters {
+		IF eachRCS:ENABLED {
+			IF eachRCS:FOREENABLED SET maxRCSThrust:X TO maxRCSThrust:X + eachRCS:AVAILABLETHRUST * 1000.
+			IF eachRCS:TOPENABLED SET maxRCSThrust:Y TO maxRCSThrust:Y + eachRCS:AVAILABLETHRUST * 1000.
+			IF eachRCS:STARBOARDENABLED SET maxRCSThrust:Z TO maxRCSThrust:Z + eachRCS:AVAILABLETHRUST * 1000.
+		}
+	}
+	RETURN maxRCSThrust.
+}
+
+// modulateInput
+// Inputs:
+//   input (Scalar, range [-inf, inf]) - desired control input.
+//   threshold (Scalar, range [0, inf]) - minimum input magnitude the
+//        actuator can respond to continuously.
+//   period (Scalar, > 0) - PWM period, seconds, used when
+//        ABS(input) < threshold.
+// Outputs:
+//   Scalar - input unchanged if ABS(input) >= threshold; otherwise
+//   +/-threshold during the PWM "on" phase, or 0 during the "off" phase.
+// Side Effects:
+//   None.
+FUNCTION modulateInput {
+    PARAMETER input.
+    PARAMETER threshold.
+    PARAMETER period.
+	
+	IF threshold < 0 SET threshold TO ABS(threshold).
+
+    IF ABS(input) >= threshold { RETURN input. }
+
+    LOCAL sign IS 1.
+    IF input < 0 { SET sign TO -1. }
+
+    LOCAL dutyCycle IS ABS(input) / threshold.
+    IF dutyCycle < 0 { SET dutyCycle TO 0. }
+    IF dutyCycle > 1 { SET dutyCycle TO 1. }
+
+    LOCAL phase IS MOD(TIME:SECONDS, period) / period.
+    IF phase < dutyCycle RETURN threshold * sign.
+
+    RETURN 0.
+}
+
+// applyRCSAccel
+// Inputs:
+//   effortVec (Vector) - desired acceleration, m/s^2, ship-local Fore/
+//        Top/Starboard frame.
+//   maxLimits (Vector, default V(1,1,1)) - per-axis maximum achievable
+//        acceleration, m/s^2, used to normalize effortVec into a
+//        [-1, 1] SHIP:CONTROL command. Axes with maxLimits <= 0 are
+//        commanded to 0.
+//   rcsDeadzoneThreshold (Scalar, range [0, 1], default 0.05) - minimum
+//        continuous RCS command, as a fraction of full thrust.
+//   rcsPwmPeriod (Scalar, > 0, default 0.2) - PWM period, seconds, used
+//        for commands below rcsDeadzoneThreshold.
+//   effortDeadband (Scalar, range [0, 1], default 0) - commands smaller
+//        than this fraction of full thrust, on an axis, are not sent at
+//        all. Tiny commands that change sign with the noise would otherwise
+//        be turned into pulses that fire the thrusters in both directions.
+// Outputs:
+//   None.
+// Side Effects:
+//   Sets SHIP:CONTROL:FORE, SHIP:CONTROL:TOP, SHIP:CONTROL:STARBOARD.
+FUNCTION applyRCSAccel {
+    PARAMETER effortVec.
+    PARAMETER maxLimits IS V(1, 1, 1).
+    PARAMETER rcsDeadzoneThreshold IS 0.05.
+    PARAMETER rcsPwmPeriod IS 0.2.
+    PARAMETER effortDeadband IS 0.
+
+    LOCAL effort IS V(0, 0, 0).
+    IF maxLimits:X > 0 { SET effort:X TO effortVec:X / maxLimits:X. }
+    IF maxLimits:Y > 0 { SET effort:Y TO effortVec:Y / maxLimits:Y. }
+    IF maxLimits:Z > 0 { SET effort:Z TO effortVec:Z / maxLimits:Z. }
+
+    IF effort:X > 1 { SET effort:X TO 1. }
+    IF effort:X < -1 { SET effort:X TO -1. }
+    IF effort:Y > 1 { SET effort:Y TO 1. }
+    IF effort:Y < -1 { SET effort:Y TO -1. }
+    IF effort:Z > 1 { SET effort:Z TO 1. }
+    IF effort:Z < -1 { SET effort:Z TO -1. }
+
+    IF ABS(effort:X) < effortDeadband { SET effort:X TO 0. }
+    IF ABS(effort:Y) < effortDeadband { SET effort:Y TO 0. }
+    IF ABS(effort:Z) < effortDeadband { SET effort:Z TO 0. }
+
+    SET SHIP:CONTROL:FORE TO modulateInput(effort:X, rcsDeadzoneThreshold, rcsPwmPeriod).
+    SET SHIP:CONTROL:TOP TO modulateInput(effort:Y, rcsDeadzoneThreshold, rcsPwmPeriod).
+    SET SHIP:CONTROL:STARBOARD TO modulateInput(effort:Z, rcsDeadzoneThreshold, rcsPwmPeriod).
+}
+
+// getRCSSignature
+// Inputs:
+//   maxAccel (Vector) - the ship's maximum RCS acceleration along Fore, Top, Starboard, m/s^2, as the calling script works it out
+//        (thrust divided by mass).
+// Outputs:
+//   Lexicon describing the ship's RCS setup, for deciding whether an earlier RCS tuning still applies:
+//     "partCount" (Scalar) - number of parts on the SHIP, which changes on docking, undocking and staging.
+//     "controlPart" (String) - UID of SHIP:CONTROLPART, since controlling from another part changes the axes.
+//     "rcsCount" (Scalar) - number of RCS parts.
+//     "rcsChecksum" (Scalar) - a number that changes when the set of RCS parts changes, or when any of them has a different
+//          enabled flag, enabled direction or thrust limit. It is not affected by mass.
+//     "maxAccel" (List of Scalar) - the maxAccel parameter as a list. Changes with mass and with thrust.
+//     "mass" (Scalar) - SHIP:MASS, tonnes. Not used to compare signatures, only kept for information.
+// Side Effects:
+//   None.
+FUNCTION getRCSSignature {
+    PARAMETER maxAccel.
+
+    LOCAL rcsList IS LIST().
+    LIST RCS IN rcsList.
+
+    LOCAL checksum IS 0.
+    FOR eachRCS IN rcsList {
+        // each RCS part adds a number that depends on which part it is and how it is set up; adding them makes the order irrelevant
+        LOCAL flags IS 1.
+        IF eachRCS:ENABLED SET flags TO flags + 1.
+        IF eachRCS:FOREENABLED SET flags TO flags + 2.
+        IF eachRCS:TOPENABLED SET flags TO flags + 4.
+        IF eachRCS:STARBOARDENABLED SET flags TO flags + 8.
+        SET flags TO flags + 16 * ROUND(eachRCS:THRUSTLIMIT).
+        LOCAL partNumber IS MOD(eachRCS:UID:TONUMBER(0), 1000003).
+        SET checksum TO MOD(checksum + (partNumber + 1) * flags, 1000000007).
+    }
+
+    RETURN LEXICON(
+        "partCount", SHIP:PARTS:LENGTH,
+        "controlPart", SHIP:CONTROLPART:UID,
+        "rcsCount", rcsList:LENGTH,
+        "rcsChecksum", checksum,
+        "maxAccel", LIST(maxAccel:X, maxAccel:Y, maxAccel:Z),
+        "mass", SHIP:MASS
+    ).
+}
+
+// getRCSSignatureProblem
+// Inputs:
+//   saved (Lexicon) - a signature from getRCSSignature(), taken when the RCS was tuned (for example read back from disk).
+//   current (Lexicon) - the signature from getRCSSignature() now.
+//   minRatio (Scalar, > 0) - lowest allowed ratio of the current to the saved maximum acceleration, on every axis.
+//   maxRatio (Scalar, > minRatio) - highest allowed ratio of the current to the saved maximum acceleration, on every axis.
+// Outputs:
+//   String - "" if the saved tuning can still be used, otherwise a short reason it cannot: a different part count, control part
+//   or RCS setup, or a maximum acceleration outside the allowed ratios. Spending propellant lowers the mass and so raises the
+//   acceleration a little, which stays inside a window such as 0.7 to 1.4; a big change in mass or thrust does not.
+// Side Effects:
+//   None.
+FUNCTION getRCSSignatureProblem {
+    PARAMETER saved.
+    PARAMETER current.
+    PARAMETER minRatio.
+    PARAMETER maxRatio.
+
+    IF saved["partCount"] <> current["partCount"] {
+        RETURN "the ship has " + current["partCount"] + " parts now and had " + saved["partCount"] + " when it was tuned".
+    }
+    IF saved["controlPart"] <> current["controlPart"] {
+        RETURN "the ship is controlled from a different part".
+    }
+    IF saved["rcsCount"] <> current["rcsCount"] OR saved["rcsChecksum"] <> current["rcsChecksum"] {
+        RETURN "the RCS thrusters, or their enabled directions or thrust limits, have changed".
+    }
+
+    LOCAL axisNames IS LIST("Fore", "Top", "Starboard").
+    LOCAL i IS 0.
+    UNTIL i >= axisNames:LENGTH {
+        LOCAL savedAccel IS saved["maxAccel"][i].
+        LOCAL currentAccel IS current["maxAccel"][i].
+        IF savedAccel <= 0 {
+            RETURN "there was no " + axisNames[i] + " RCS thrust when it was tuned".
+        }
+        LOCAL ratio IS currentAccel / savedAccel.
+        IF ratio < minRatio OR ratio > maxRatio {
+            RETURN "the " + axisNames[i] + " RCS acceleration is " + ROUND(ratio * 100) + "% of what it was when tuned (allowed " + ROUND(minRatio * 100) + "% to " + ROUND(maxRatio * 100) + "%)".
+        }
+        SET i TO i + 1.
+    }
+    RETURN "".
 }
