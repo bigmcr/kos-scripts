@@ -324,7 +324,7 @@ FUNCTION PIDAxesGetGains {
 // PIDAxesSaveTuning
 // Inputs:
 //   axes (LIST of axes) - from PIDAxesConstruct(), already tuned.
-//   filePath (String) - file to write, which must be on the local volume (for example "1:/velocityTuning.json"). Any file already
+//   filePath (String) - file to write, which must be on the local volume (for example "1:/RCSVelocityTuning.json"). Any file already
 //        there is replaced.
 //   context (Lexicon, default empty) - anything the caller wants stored with the tuning, to check when it is read back (for
 //        example a description of the ship). It must be made only of numbers, strings, Booleans, Lists and Lexicons.

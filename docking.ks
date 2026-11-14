@@ -176,6 +176,86 @@ FUNCTION getDefaultPosition {
     RETURN LIST(foreSign * MIN(10, MAX(foreSign * getRelativePosition():X, 2)), 0, 0).
 }
 
+// getBoxProjection
+// Inputs:
+//   boxBounds (Bounds) - a vessel's bounding box.
+//   originVector (Vector) - the point that the corners are measured from, in the same frame as POSITION.
+//   Reads the file-scope Fore, Top and Starboard direction vectors.
+// Outputs:
+//   List of two Lists of Scalar - the lowest and the highest value of (a corner of the box - originVector) along the Fore, Top
+//   and Starboard axes, metres.
+// Side Effects:
+//   None.
+FUNCTION getBoxProjection {
+    PARAMETER boxBounds.
+    PARAMETER originVector.
+
+    LOCAL lows IS LIST(1E9, 1E9, 1E9).
+    LOCAL highs IS LIST(-1E9, -1E9, -1E9).
+    LOCAL axes IS LIST(foreDirectionVector, topDirectionVector, starboardDirectionVector).
+    LOCAL lowCorner IS boxBounds:RELMIN.
+    LOCAL highCorner IS boxBounds:RELMAX.
+    FOR cornerX IN LIST(lowCorner:X, highCorner:X) {
+        FOR cornerY IN LIST(lowCorner:Y, highCorner:Y) {
+            FOR cornerZ IN LIST(lowCorner:Z, highCorner:Z) {
+                LOCAL corner IS boxBounds:ABSORIGIN + boxBounds:FACING * V(cornerX, cornerY, cornerZ).
+                LOCAL cornerOffset IS corner - originVector.
+                LOCAL axisIndex IS 0.
+                UNTIL axisIndex >= 3 {
+                    LOCAL component IS VDOT(cornerOffset, axes[axisIndex]).
+                    IF component < lows[axisIndex] { SET lows[axisIndex] TO component. }
+                    IF component > highs[axisIndex] { SET highs[axisIndex] TO component. }
+                    SET axisIndex TO axisIndex + 1.
+                }
+            }
+        }
+    }
+    RETURN LIST(lows, highs).
+}
+
+// getTargetBoxLimits
+// Inputs:
+//   targetBox (Bounds) - the bounding box of the target vessel.
+//   ownBox (Bounds) - the bounding box of this ship.
+// Outputs:
+//   List of two Lists of Scalar - the lowest and the highest value that the ship's relative position (as getRelativePosition()
+//   returns it) can have without any part of this ship being inside the target's box, metres Fore, Top, Starboard.
+// Side Effects:
+//   None.
+FUNCTION getTargetBoxLimits {
+    PARAMETER targetBox.
+    PARAMETER ownBox.
+
+    LOCAL targetEdges IS getBoxProjection(targetBox, TARGET:POSITION).
+    LOCAL ownEdges IS getBoxProjection(ownBox, SHIP:CONTROLPART:POSITION).
+    // The position is the target minus the ship, so the target's box is turned around, and the ship's own box widens it on both sides.
+    LOCAL lows IS LIST().
+    LOCAL highs IS LIST().
+    LOCAL axisIndex IS 0.
+    UNTIL axisIndex >= 3 {
+        lows:ADD(-targetEdges[1][axisIndex] + ownEdges[0][axisIndex]).
+        highs:ADD(-targetEdges[0][axisIndex] + ownEdges[1][axisIndex]).
+        SET axisIndex TO axisIndex + 1.
+    }
+    RETURN LIST(lows, highs).
+}
+
+// getTargetBoxFront
+// Inputs:
+//   limits (List) - from getTargetBoxLimits().
+//   Reads the file-scope facingAway.
+// Outputs:
+//   Scalar - how far the target vessel's bounding box reaches out in front of the port, along the approach direction, metres; never
+//   less than 0.
+// Side Effects:
+//   None.
+FUNCTION getTargetBoxFront {
+    PARAMETER limits.
+
+    IF facingAway { RETURN MAX(0, limits[1][0]). }
+    RETURN MAX(0, -limits[0][0]).
+}
+
 LOCAL logPath IS "0:/cascaded3dLog.csv".
 LOCAL scriptStartTime IS TIME:SECONDS.
 LOCAL currentStageLabel IS "".
@@ -387,7 +467,15 @@ FUNCTION logStatus {
 // Reasons to stop early: the docking is finished (more parts than at the start), the target is lost, or it rotates faster than
 // maxTargetRotation relative to an attitude that faces its body.
 LOCAL maxTargetRotation IS 0.5 * 2 * CONSTANT:PI / 60. // half a revolution per minute, in radians per second
-LOCAL rotationDebounceTime IS 2. // seconds the target must keep rotating too fast before the script stops
+// A target that is still on rails (packed, see isTargetUnpacked()) is not simulated, so its rotation says nothing and is not checked.
+// Once it unpacks it may still be turning as its own kOS script commands, so the rotation has to last this long, seconds, before the
+// script stops.
+LOCAL rotationDebounceTime IS 60.
+// While the target is still packed, no axis goes faster than the speed from which it could still brake to a stop by the time the target
+// is packedUnpackDistance metres away (where the target should unpack), but never less than packedCoastMinSpeed, so the ship keeps
+// creeping in if the target does not unpack.
+LOCAL packedUnpackDistance IS 200. // metres
+LOCAL packedCoastMinSpeed IS 0.2. // m/s
 LOCAL startPartCount IS SHIP:PARTS:LENGTH.
 LOCAL abortReason IS "". // set by checkAbort() when the script must stop; "" while it may carry on
 LOCAL rotationExceededSince IS -1.
@@ -415,6 +503,21 @@ FUNCTION getTargetRotationExcess {
     RETURN (targetVessel:ANGULARVEL - orbitalRate):MAG.
 }
 
+// isTargetUnpacked
+// Inputs:
+//   None.
+// Outputs:
+//   Boolean - TRUE if the target's vessel is unpacked, that is, simulated in full and so able to run its own steering. A vessel that
+//   is further away than the physics range is packed: it is frozen on rails. FALSE if HASTARGET is FALSE.
+// Side Effects:
+//   None.
+FUNCTION isTargetUnpacked {
+    IF NOT HASTARGET { RETURN FALSE. }
+    LOCAL targetVessel IS TARGET.
+    IF TARGET:ISTYPE("Part") OR TARGET:ISTYPE("DockingPort") SET targetVessel TO TARGET:SHIP.
+    RETURN targetVessel:UNPACKED.
+}
+
 // checkAbort
 // Inputs:
 //   rotationDebounce (Scalar, seconds) - how long the target must keep rotating too fast before that counts; 0 counts it at once.
@@ -422,7 +525,8 @@ FUNCTION getTargetRotationExcess {
 //   Boolean - TRUE if the script must stop, in which case abortReason says why. It stays TRUE on later calls.
 // Side Effects:
 //   Sets abortReason and rotationExceededSince. The checks, in order: the ship has more parts than at the start (docking is
-//   complete); there is no target any more; the target has rotated faster than maxTargetRotation for rotationDebounce seconds.
+//   complete); there is no target any more; the target is unpacked and has rotated faster than maxTargetRotation for
+//   rotationDebounce seconds (a packed target's rotation is not checked).
 FUNCTION checkAbort {
     PARAMETER rotationDebounce.
 
@@ -436,6 +540,11 @@ FUNCTION checkAbort {
     IF NOT HASTARGET {
         SET abortReason TO "Docking aborted: target unselected".
         RETURN TRUE.
+    }
+
+    IF NOT isTargetUnpacked() {
+        SET rotationExceededSince TO -1.
+        RETURN FALSE.
     }
 
     LOCAL excess IS getTargetRotationExcess().
@@ -464,8 +573,8 @@ LOCAL autotuneTick IS {
 // Where the tunings are saved (the ship's own disk, so they go with the ship), and how far the maximum RCS acceleration on each axis
 // may differ from when it was tuned before the saved tuning is not used. Spending propellant is fine; docking, staging, changed
 // thrusters or a big mass change is not.
-LOCAL velocityTuningPath IS "1:/velocityTuning.json".
-LOCAL positionTuningPath IS "1:/positionTuning.json".
+LOCAL velocityTuningPath IS "1:/RCSVelocityTuning.json".
+LOCAL positionTuningPath IS "1:/RCSPositionTuning.json".
 LOCAL maxAccelRatioLow IS 0.5.
 LOCAL maxAccelRatioHigh IS 2.
 
@@ -595,6 +704,9 @@ FUNCTION checkRCSForTuning {
     RETURN TRUE.
 }
 
+// the arrows drawn by drawArrow(), kept so that they stay up
+LOCAL arrowList IS LIST().
+
 // drawArrow
 // Inputs:
 //   arrowLabel (String) - the text shown beside the arrow.
@@ -614,6 +726,52 @@ FUNCTION drawArrow {
     LOCAL arrow IS VECDRAW(V(0,0,0), V(0,0,0), arrowColor, arrowLabel, 1.0, TRUE, 0.2).
     SET arrow:STARTUPDATER TO startGetter.
     SET arrow:VECUPDATER TO vectorGetter.
+    // kOS takes down a vecdraw that nothing refers to any more, so the file-scope list keeps it up after this function returns
+    arrowList:ADD(arrow).
+}
+
+// TRUE once selectDockingPort() has looked at the target's ports, so it does not look again
+LOCAL portSearchFinished IS FALSE.
+
+// selectDockingPort
+// Inputs:
+//   None.
+// Outputs:
+//   None.
+// Side Effects:
+//   If TARGET is a vessel, sets TARGET to its free docking port that is closest to this ship's control part and, unless that is a
+//   grabbing arm, is the same size as the control part's port. Where the port is on the vessel does not matter: auto mode's standoff
+//   phase takes the ship round to it. If no port fits, logs a warning and leaves the target as it is (a grabbing arm can grab debris).
+//   Does nothing while the vessel is still packed (its ports cannot be targeted yet); sets portSearchFinished once it has looked.
+FUNCTION selectDockingPort {
+    IF NOT HASTARGET { RETURN. }
+    IF NOT TARGET:ISTYPE("Vessel") { RETURN. }
+    // a packed vessel's parts are not loaded, so its docking ports cannot be read or targeted yet
+    IF NOT isTargetUnpacked() { RETURN. }
+    SET portSearchFinished TO TRUE.
+
+    LOCAL controlPart IS SHIP:CONTROLPART.
+    LOCAL isGrapple IS controlPart:HASMODULE("ModuleGrappleNode").
+    LOCAL bestPort IS 0.
+    LOCAL bestDistance IS -1.
+    FOR candidate IN TARGET:DOCKINGPORTS {
+        IF candidate:STATE = "Ready" AND (isGrapple OR NOT controlPart:ISTYPE("DockingPort") OR candidate:NODETYPE = controlPart:NODETYPE) {
+            LOCAL candidateDistance IS (candidate:POSITION - controlPart:POSITION):MAG.
+            IF bestDistance < 0 OR candidateDistance < bestDistance {
+                SET bestPort TO candidate.
+                SET bestDistance TO candidateDistance.
+            }
+        }
+    }
+    IF bestDistance < 0 {
+        // not an error: debris with no docking port can still be grabbed by a grabbing arm
+        logStatus("Warning: the target has no free docking port that fits the control part, so it stays the target").
+        RETURN.
+    }
+
+    LOCAL vesselName IS TARGET:NAME.
+    SET TARGET TO bestPort.
+    logStatus("Target " + vesselName + " is a vessel, so its closest fitting docking port (" + ROUND(bestDistance, 1) + " m away) is now the target").
 }
 
 // getStartProblem
@@ -644,8 +802,7 @@ FUNCTION getStartProblem {
         IF TARGET:SHIP = SHIP { RETURN "target port is on this ship". }
         IF TARGET:STATE <> "Ready" { RETURN "target port is not ready (" + TARGET:STATE + ")". }
         IF NOT isGrapple AND controlPart:NODETYPE <> TARGET:NODETYPE { RETURN "port sizes differ (" + controlPart:NODETYPE + " and " + TARGET:NODETYPE + ")". }
-        // the port's facing points out of its face, so the ship has to be on that side of it
-        IF VDOT(controlPart:POSITION - TARGET:POSITION, TARGET:FACING:FOREVECTOR) <= 0 { RETURN "ship is behind the target port's face". }
+        // (a ship behind the port's face is not a problem: auto mode moves it clear of the target first)
     }
     RETURN "".
 }
@@ -657,11 +814,12 @@ CLEARSCREEN.
 // the script does not start if the target is further away than this, metres
 LOCAL maxDockingStartDistance IS 1000.
 SET scriptStartTime TO TIME:SECONDS.
-startLogFile().
 
 logStatus("=== CASCADED 3-AXIS PID AUTOTUNE + AUTO DOCKING ===").
 
-LOCAL startProblem IS getStartProblem(maxDockingStartDistance).
+LOCAL startProblem IS "".
+IF HASTARGET AND TARGET:POSITION:MAG <= maxDockingStartDistance { selectDockingPort(). }
+SET startProblem TO getStartProblem(maxDockingStartDistance).
 IF startProblem <> "" {
     LOCAL startMessage IS "Docking aborted: " + startProblem.
     logStatus(startMessage).
@@ -694,7 +852,7 @@ IF startProblem <> "" {
     LOCAL positionBrakeFraction IS 0.5.
     // the position loop top speed, as a multiple of the maximum acceleration; a lower value saves RCS propellant on long moves but
     // takes longer
-    LOCAL positionMaxSpeedFactor IS 2.
+    LOCAL positionMaxSpeedFactor IS 15.
     // the position loop speed is also limited so one move with all three axes at that speed uses at most this fraction of the RCS
     // propellant that is left (see getRCSSpeedLimit()); the limit is worked out again every fuelLimitRefreshTime seconds
     LOCAL fuelLimitRefreshTime IS 5.
@@ -705,6 +863,10 @@ IF startProblem <> "" {
     // Auto mode starts when the tuning is done. Fore only arrives still moving if the ship is within autoArrivalDistance of the Top
     // and Starboard setpoints; otherwise it arrives stopped and waits.
     LOCAL autoArrivalDistance IS 0.25. // metres
+    // Auto mode first moves the ship clear of the target's bounding box if it is not in front of it: until it is standoffDistance
+    // metres out from the box (in front of the port, and to one side of it), and then lines up from there.
+    LOCAL standoffDistance IS 10. // metres
+    LOCAL standoffFinishTolerance IS 2. // metres short of the Fore standoff position at which the ship starts lining up
     LOCAL rotationSettleThreshold IS 0.01.
     LOCAL rotationSettleTimeout IS 30.
 
@@ -735,6 +897,9 @@ IF startProblem <> "" {
     }
 
     IF mode <> "done" {
+        // Only now, so that a start that is refused leaves the log files of the previous run alone.
+        SET scriptStartTime TO TIME:SECONDS.
+        startLogFile().
         RCS ON.
         SET globalSteer TO LOOKDIRUP(foreDirectionVector, topDirectionVector).
         setLockedSteering(TRUE).
@@ -761,13 +926,48 @@ IF startProblem <> "" {
 	LOCAL autoClosing IS FALSE. // TRUE while auto mode is closing in on the port, which loosens the lateral tolerance
 	LOCAL autoMode IS "off".// "on" while auto mode runs; "off" before it starts and after it is cancelled, when the ship holds its position
 	LOCAL autoDefault IS LIST(0, 0, 0). // the default position that auto mode goes to, set when it starts
+	LOCAL autoStandoff IS FALSE. // TRUE while auto mode is moving the ship clear of the target's bounding box
+	LOCAL standoffSides IS LIST(1, 1, 1). // the side of the box (+1 or -1 in the position) that Top and Starboard move out on
+	LOCAL standoffHoldFore IS 0. // the Fore position held until the ship is clear of the box sideways
+	LOCAL targetBounds IS 0. // the bounding box of the target vessel
+	LOCAL ownBounds IS 0. // the bounding box of this ship
+	LOCAL targetWasUnpacked IS TRUE. // FALSE once the target has been seen packed, until it is seen unpacked again
 
 	// Ends auto mode and holds the ship where it is, in position control. Any key does this, and so does changing the facing.
 	LOCAL cancelAutoMode IS {
 		SET autoMode TO "off".
+		SET autoStandoff TO FALSE.
 		PIDAxesReset(positionPIDLoop).
 		SET setpointList TO vectorToList(getRelativePosition()).
 		logStatus("Auto Mode Cancelled").
+	}.
+
+	// Works out where auto mode has to go first: the default position, and whether the ship has to move clear of the target (and its
+	// bounding box) before it can line up. Called when auto mode starts, and again if the target changes to one of its ports.
+	LOCAL planAutoApproach IS {
+                SET autoStandoff TO FALSE.
+                SET autoDefault TO getDefaultPosition().
+                // A port target's bounds are those of its whole vessel.
+                LOCAL boxVessel IS TARGET.
+                IF TARGET:ISTYPE("Part") OR TARGET:ISTYPE("DockingPort") { SET boxVessel TO TARGET:SHIP. }
+                SET targetBounds TO boxVessel:BOUNDS.
+                SET ownBounds TO SHIP:BOUNDS.
+                LOCAL startLimits IS getTargetBoxLimits(targetBounds, ownBounds).
+                LOCAL startPos IS vectorToList(getRelativePosition()).
+                LOCAL startForeSign IS 1.
+                IF NOT facingAway { SET startForeSign TO -1. }
+                // not in front of the box (or in front of it by less than 2 m): move clear of it first
+                IF startForeSign * startPos[0] < getTargetBoxFront(startLimits) + 2 {
+                    SET autoStandoff TO TRUE.
+                    SET standoffHoldFore TO startPos[0].
+                    LOCAL sideIndex IS 1.
+                    UNTIL sideIndex >= 3 {
+                        IF startPos[sideIndex] >= (startLimits[0][sideIndex] + startLimits[1][sideIndex]) / 2 { SET standoffSides[sideIndex] TO 1. }
+                        ELSE { SET standoffSides[sideIndex] TO -1. }
+                        SET sideIndex TO sideIndex + 1.
+                    }
+                    logStatus("Not in front of the target: moving clear of it first").
+                }
 	}.
 
     UNTIL mode = "done" {
@@ -781,6 +981,18 @@ IF startProblem <> "" {
 
         // the target turns, so the axes that everything below is measured in have to turn with it
         updateTargetAxes().
+
+        // A vessel target is switched to one of its docking ports as soon as it is unpacked (not before: its ports cannot be targeted
+        // while it is packed). The axes and the bounds then have to be worked out again.
+        IF mode = "Docking" AND NOT portSearchFinished AND TARGET:ISTYPE("Vessel") {
+            selectDockingPort().
+            IF NOT TARGET:ISTYPE("Vessel") {
+                updateTargetAxes().
+                PIDAxesReset(velocityPIDLoop).
+                PIDAxesReset(positionPIDLoop).
+                IF autoMode = "on" { planAutoApproach(). }
+            }
+        }
 
 		SET maxAccel TO getMaxAccel().
 		SET currentVel TO getRelativeVelocity().
@@ -930,7 +1142,7 @@ IF startProblem <> "" {
                 logStatus("Auto Mode Enabled").
                 SET mode TO "Docking".
                 PIDAxesReset(positionPIDLoop).
-                SET autoDefault TO getDefaultPosition().
+                planAutoApproach().
                 SET setpointList TO LIST(0, autoDefault[1], autoDefault[2]).
                 SET autoMode TO "on".
                 // keys that were pressed during the tuning should not cancel it
@@ -958,6 +1170,26 @@ IF startProblem <> "" {
 				SET positionSpeedLimits TO LIST(MIN(positionSpeedLimits[0], fuelSpeedLimit), MIN(positionSpeedLimits[1], fuelSpeedLimit), MIN(positionSpeedLimits[2], fuelSpeedLimit)).
 			}
 
+			// A target that is still on rails does not move or steer, and it unpacks (and starts to respond to its own kOS script) when
+			// the ship gets close enough. Until then each axis is limited to the speed it could still stop from before that distance.
+			// A target that turns faster than the limit (rotationDebounceTime lets it finish before the script gives up) drags the position
+			// and the standoff goals round with it, so the ship does not chase them: no commands, and no decisions from the position.
+			LOCAL targetSpinning IS isTargetUnpacked() AND getTargetRotationExcess() > maxTargetRotation.
+			IF NOT isTargetUnpacked() {
+				SET targetWasUnpacked TO FALSE.
+				LOCAL distanceToUnpack IS MAX(0, TARGET:POSITION:MAG - packedUnpackDistance).
+				LOCAL coastBrakeAccels IS vectorToList(maxAccel * positionBrakeFraction).
+				LOCAL coastAxis IS 0.
+				UNTIL coastAxis >= 3 {
+					LOCAL coastSpeed IS MAX(packedCoastMinSpeed, SQRT(2 * coastBrakeAccels[coastAxis] * distanceToUnpack)).
+					SET positionSpeedLimits[coastAxis] TO MIN(positionSpeedLimits[coastAxis], coastSpeed).
+					SET coastAxis TO coastAxis + 1.
+				}
+			} ELSE IF NOT targetWasUnpacked {
+				SET targetWasUnpacked TO TRUE.
+				logStatus("Target unpacked at " + ROUND(TARGET:POSITION:MAG) + " m: its rotation is checked from now on").
+			}
+
 			// The keys: X or ESC exits, and any other key cancels auto mode, which leaves the ship holding the position that it is at.
 			IF tempChar <> "" {
 				IF tempChar:TOLOWER() = "x" OR tempChar = escapeChar {
@@ -974,7 +1206,38 @@ IF startProblem <> "" {
 			LOCAL foreSign IS 1.
 			IF NOT facingAway SET foreSign TO -1.
 			LOCAL positionMask IS LIST(TRUE, TRUE, TRUE).
-			IF autoMode = "on" {
+			IF autoMode = "on" AND autoStandoff {
+				// Position control on all three axes. Top and Starboard move out to standoffDistance from the box, on the side that the
+				// ship is on (or, if it is already further out than 2 m, to the lesser of that and where it is). Fore holds still until
+				// the ship is clear of the box sideways, and then goes to standoffDistance in front of the box.
+				LOCAL limits IS getTargetBoxLimits(targetBounds, ownBounds).
+				LOCAL stageFore IS getTargetBoxFront(limits) + standoffDistance.
+				LOCAL posList IS vectorToList(currentPos).
+				LOCAL goals IS LIST(standoffHoldFore, 0, 0).
+				LOCAL lateralClear IS FALSE.
+				LOCAL sideIndex IS 1.
+				UNTIL sideIndex >= 3 {
+					// how far out from the box edge on the chosen side
+					LOCAL beyond IS limits[0][sideIndex] - posList[sideIndex].
+					IF standoffSides[sideIndex] > 0 { SET beyond TO posList[sideIndex] - limits[1][sideIndex]. }
+					LOCAL clearance IS standoffDistance.
+					IF beyond >= 2 { SET clearance TO MIN(standoffDistance, beyond). }
+					IF beyond >= 1 { SET lateralClear TO TRUE. }
+					IF standoffSides[sideIndex] > 0 { SET goals[sideIndex] TO limits[1][sideIndex] + clearance. }
+					ELSE { SET goals[sideIndex] TO limits[0][sideIndex] - clearance. }
+					SET sideIndex TO sideIndex + 1.
+				}
+				IF lateralClear { SET goals[0] TO foreSign * stageFore. }
+				SET setpointList TO goals.
+				IF lateralClear SET currentStageLabel TO "Auto: moving out in front of the target (any key cancels)".
+				ELSE SET currentStageLabel TO "Auto: moving clear of the target sideways (any key cancels)".
+				IF NOT targetSpinning AND foreSign * currentPos:X >= stageFore - standoffFinishTolerance {
+					SET autoStandoff TO FALSE.
+					SET autoDefault TO LIST(foreSign * MIN(MAX(10, stageFore), MAX(foreSign * currentPos:X, 2)), 0, 0).
+					PIDAxesReset(positionPIDLoop).
+					logStatus("In front of the target: lining up").
+				}
+			} ELSE IF autoMode = "on" {
 				SET positionMask TO LIST(FALSE, TRUE, TRUE).
 				// how far Fore still has to go to the default position, positive while the ship is further out than that
 				LOCAL foreToGo IS foreSign * (currentPos:X - autoDefault[0]).
@@ -999,11 +1262,17 @@ IF startProblem <> "" {
 			}
 
 			LOCAL setpointUnits IS LIST("m", "m", "m").
-			IF autoMode = "on" SET setpointUnits TO LIST("m/s", "m", "m").
+			IF autoMode = "on" AND NOT autoStandoff SET setpointUnits TO LIST("m/s", "m", "m").
+			IF targetSpinning SET currentStageLabel TO "Target is rotating: waiting for it to stop (no thrust)".
 			printStatus(setpointList, setpointUnits).
 
 			// while the ship is turning to a new facing, its RCS axes are not the ones that the loops work in, so hold still
-			IF VANG(SHIP:FACING:FOREVECTOR, foreDirectionVector) < 10 AND VANG(SHIP:FACING:TOPVECTOR, topDirectionVector) < 10 {
+			IF targetSpinning {
+				// coast: the ship keeps the velocity it has, and the loops start again from nothing when the target has stopped
+				PIDAxesReset(velocityPIDLoop).
+				PIDAxesReset(positionPIDLoop).
+				applyRCSAccel(V(0,0,0), maxAccel).
+			} ELSE IF VANG(SHIP:FACING:FOREVECTOR, foreDirectionVector) < 10 AND VANG(SHIP:FACING:TOPVECTOR, topDirectionVector) < 10 {
 				cascadeStep(positionPIDLoop, velocityPIDLoop, vectorToList(currentPos), vectorToList(currentVel), setpointList, vectorToList(maxAccel), rcsAccelActuator, positionSpeedLimits, vectorToList(maxAccel * positionBrakeFraction), PIDFilledList(3, positionIntegralWindow), positionMask).
 			} ELSE {
 				PIDAxesReset(velocityPIDLoop).
