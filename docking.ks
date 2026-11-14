@@ -37,7 +37,7 @@ LOCAL facingAway IS TRUE.
 FUNCTION getRelativeVelocity {
     IF NOT HASTARGET { RETURN V(0,0,0). }
 	LOCAL targetVelocity IS V(0,0,0).
-    IF TARGET:TYPENAME = "DockingPort" SET targetVelocity TO TARGET:SHIP:VELOCITY:ORBIT.
+    IF TARGET:ISTYPE("Part") OR TARGET:ISTYPE("DockingPort") SET targetVelocity TO TARGET:SHIP:VELOCITY:ORBIT.
 	ELSE SET targetVelocity TO TARGET:VELOCITY:ORBIT.
     LOCAL relVel IS targetVelocity - SHIP:VELOCITY:ORBIT.
     RETURN V(relVel * foreDirectionVector,
@@ -737,25 +737,37 @@ LOCAL portSearchFinished IS FALSE.
 // Inputs:
 //   None.
 // Outputs:
-//   None.
+//   String - "" unless the control part is a docking port and the target has neither a free docking port of its size nor a grabbing
+//   arm, in which case why the docking cannot go ahead.
 // Side Effects:
 //   If TARGET is a vessel, sets TARGET to its free docking port that is closest to this ship's control part and, unless that is a
 //   grabbing arm, is the same size as the control part's port. Where the port is on the vessel does not matter: auto mode's standoff
-//   phase takes the ship round to it. If no port fits, logs a warning and leaves the target as it is (a grabbing arm can grab debris).
+//   phase takes the ship round to it. If no port fits, the target stays as it is: with a grabbing arm as the control part that is only a
+//   warning (it can grab debris), and a grabbing arm on the target counts as a compatible port.
 //   Does nothing while the vessel is still packed (its ports cannot be targeted yet); sets portSearchFinished once it has looked.
 FUNCTION selectDockingPort {
-    IF NOT HASTARGET { RETURN. }
-    IF NOT TARGET:ISTYPE("Vessel") { RETURN. }
+    IF NOT HASTARGET { RETURN "". }
+    IF NOT TARGET:ISTYPE("Vessel") { RETURN "". }
     // a packed vessel's parts are not loaded, so its docking ports cannot be read or targeted yet
-    IF NOT isTargetUnpacked() { RETURN. }
+    IF NOT isTargetUnpacked() { RETURN "". }
     SET portSearchFinished TO TRUE.
 
     LOCAL controlPart IS SHIP:CONTROLPART.
     LOCAL isGrapple IS controlPart:HASMODULE("ModuleGrappleNode").
     LOCAL bestPort IS 0.
     LOCAL bestDistance IS -1.
-    FOR candidate IN TARGET:DOCKINGPORTS {
-        IF candidate:STATE = "Ready" AND (isGrapple OR NOT controlPart:ISTYPE("DockingPort") OR candidate:NODETYPE = controlPart:NODETYPE) {
+    // all the parts are looked at, not TARGET:DOCKINGPORTS: a grabbing arm is not a docking port, so that list does not have it
+    FOR candidate IN TARGET:PARTS {
+        LOCAL candidateFits IS FALSE.
+        IF candidate:ISTYPE("DockingPort") {
+            IF candidate:STATE = "Ready" AND (isGrapple OR NOT controlPart:ISTYPE("DockingPort") OR candidate:NODETYPE = controlPart:NODETYPE) {
+                SET candidateFits TO TRUE.
+            }
+        } ELSE IF candidate:HASMODULE("ModuleGrappleNode") {
+            // only some installs let KSP select a grabbing arm as a target (a mod's module can do it); the arm is no use here if not
+            IF candidate:TARGETABLE { SET candidateFits TO TRUE. }
+        }
+        IF candidateFits {
             LOCAL candidateDistance IS (candidate:POSITION - controlPart:POSITION):MAG.
             IF bestDistance < 0 OR candidateDistance < bestDistance {
                 SET bestPort TO candidate.
@@ -764,14 +776,25 @@ FUNCTION selectDockingPort {
         }
     }
     IF bestDistance < 0 {
-        // not an error: debris with no docking port can still be grabbed by a grabbing arm
-        logStatus("Warning: the target has no free docking port that fits the control part, so it stays the target").
-        RETURN.
+        // a grabbing arm can grab debris that has no docking port: only a warning
+        IF isGrapple {
+            logStatus("Warning: the target has no free docking port, so it stays the target").
+            RETURN "".
+        }
+        // a docking port can only dock with a port of its size, or a grabbing arm on the target (which counts as a compatible port)
+        FOR targetPart IN TARGET:PARTS {
+            IF targetPart:HASMODULE("ModuleGrappleNode") {
+                logStatus("The target has a grabbing arm that cannot be targeted, and no free docking port of this size: the arm counts as a compatible port, and the vessel stays the target").
+                RETURN "".
+            }
+        }
+        RETURN "target has no free docking port of this size and no grabbing arm".
     }
 
     LOCAL vesselName IS TARGET:NAME.
     SET TARGET TO bestPort.
-    logStatus("Target " + vesselName + " is a vessel, so its closest fitting docking port (" + ROUND(bestDistance, 1) + " m away) is now the target").
+    logStatus("Target " + vesselName + " is a vessel, so its closest fitting docking port or grabbing arm (" + ROUND(bestDistance, 1) + " m away) is now the target").
+    RETURN "".
 }
 
 // getStartProblem
@@ -788,7 +811,12 @@ FUNCTION getStartProblem {
     PARAMETER maxDistance.
 
     IF NOT HASTARGET { RETURN "no target". }
-    IF NOT (TARGET:ISTYPE("Vessel") OR TARGET:ISTYPE("DockingPort")) { RETURN "target is a " + TARGET:TYPENAME + ", not a vessel or docking port". }
+    // a vessel, a docking port, or a grabbing arm (a part that KSP lets be targeted)
+    LOCAL targetUsable IS TARGET:ISTYPE("Vessel") OR TARGET:ISTYPE("DockingPort").
+    IF NOT targetUsable AND TARGET:ISTYPE("Part") {
+        IF TARGET:HASMODULE("ModuleGrappleNode") { SET targetUsable TO TRUE. }
+    }
+    IF NOT targetUsable { RETURN "target is a " + TARGET:TYPENAME + ", not a vessel, docking port or grabbing arm". }
     IF TARGET:POSITION:MAG > maxDistance { RETURN "target too far away". }
 
     LOCAL controlPart IS SHIP:CONTROLPART.
@@ -804,6 +832,9 @@ FUNCTION getStartProblem {
         IF NOT isGrapple AND controlPart:NODETYPE <> TARGET:NODETYPE { RETURN "port sizes differ (" + controlPart:NODETYPE + " and " + TARGET:NODETYPE + ")". }
         // (a ship behind the port's face is not a problem: auto mode moves it clear of the target first)
     }
+    IF TARGET:ISTYPE("Part") AND NOT TARGET:ISTYPE("DockingPort") {
+        IF TARGET:SHIP = SHIP { RETURN "target part is on this ship". }
+    }
     RETURN "".
 }
 
@@ -818,8 +849,10 @@ SET scriptStartTime TO TIME:SECONDS.
 logStatus("=== CASCADED 3-AXIS PID AUTOTUNE + AUTO DOCKING ===").
 
 LOCAL startProblem IS "".
-IF HASTARGET AND TARGET:POSITION:MAG <= maxDockingStartDistance { selectDockingPort(). }
-SET startProblem TO getStartProblem(maxDockingStartDistance).
+IF HASTARGET {
+    IF TARGET:POSITION:MAG <= maxDockingStartDistance { SET startProblem TO selectDockingPort(). }
+}
+IF startProblem = "" { SET startProblem TO getStartProblem(maxDockingStartDistance). }
 IF startProblem <> "" {
     LOCAL startMessage IS "Docking aborted: " + startProblem.
     logStatus(startMessage).
@@ -985,7 +1018,13 @@ IF startProblem <> "" {
         // A vessel target is switched to one of its docking ports as soon as it is unpacked (not before: its ports cannot be targeted
         // while it is packed). The axes and the bounds then have to be worked out again.
         IF mode = "Docking" AND NOT portSearchFinished AND TARGET:ISTYPE("Vessel") {
-            selectDockingPort().
+            LOCAL portProblem IS selectDockingPort().
+            IF portProblem <> "" {
+                SET abortReason TO "Docking aborted: " + portProblem.
+                logStatus(abortReason).
+                SET mode TO "done".
+                BREAK.
+            }
             IF NOT TARGET:ISTYPE("Vessel") {
                 updateTargetAxes().
                 PIDAxesReset(velocityPIDLoop).
@@ -1239,6 +1278,11 @@ IF startProblem <> "" {
 				}
 			} ELSE IF autoMode = "on" {
 				SET positionMask TO LIST(FALSE, TRUE, TRUE).
+				// Behind the port's face is the wrong side: closing in from there carries the ship away from the port, nose pointing away
+				// from it. The plan was made once, and the target may have been turning then, so make it again (which starts the standoff).
+				IF NOT targetSpinning AND foreSign * currentPos:X < -1 {
+					planAutoApproach().
+				}
 				// how far Fore still has to go to the default position, positive while the ship is further out than that
 				LOCAL foreToGo IS foreSign * (currentPos:X - autoDefault[0]).
 				// the lateral tolerance is wider once closing in, so Fore does not stutter at the edge
