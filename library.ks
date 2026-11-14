@@ -2407,8 +2407,14 @@ FUNCTION isLFFullThrust {
 }
 
 // given a time in seconds, returns a string of the time broken down to days, hours, minutes, seconds.
-// example: given 90090.124 (seconds) and in the realistic universe,
-//		the function will return "1 d, 1 h, 1 m, 30.12 s"
+// Units that are zero are left out, and a negative time starts with a minus sign.
+// digits is the number of decimal places of the seconds, which are cut off and not rounded. If it is below 0, the smallest units
+// are left out as well: -1 leaves out the seconds, -2 the minutes and -3 the hours. If nothing is left to show, a zero is
+// shown in the smallest unit that is displayed, such as "0s", "0m" or "-0s".
+// Days are KUNIVERSE:HOURSPERDAY hours long, so with 24 hour days (the realistic universe)
+// example: given 90090.124 (seconds) and 2 digits, the function will return "1d 1h 1m 30.12s"
+// example: given 90090.124 (seconds) and 0 digits, the function will return "1d 1h 1m 30s"
+// example: given 0.3 (seconds) and 0 digits, the function will return "0s", and -0.3 gives "-0s"
 FUNCTION timeToString
 {
 	PARAMETER T IS 0.
@@ -2445,7 +2451,16 @@ FUNCTION timeToString
 	IF digits > -2 AND minutes <> 0 {SET message TO message + firstSpace +       minutes + "m". SET firstSpace TO " ".}
 	IF digits > -1 AND seconds <> 0 {SET message TO message + firstSpace + secondsString + "s". SET firstSpace TO " ".}
 
-	IF T = 0 SET message TO "0s".
+	// Nothing was added if every part is zero, either because the time is zero or because it is too small to show at the
+	// requested number of digits (the parts are cut off, not rounded). Show a zero in the smallest unit that is displayed, instead
+	// of an empty string. The minus sign stays, so a small negative time shows as "-0s".
+	IF firstSpace = "" {
+		LOCAL zeroUnit IS "d".
+		IF digits > -1 SET zeroUnit TO "s".
+		ELSE IF digits > -2 SET zeroUnit TO "m".
+		ELSE IF digits > -3 SET zeroUnit TO "h".
+		SET message TO message + "0" + zeroUnit.
+	}
 
 	RETURN message.
 }
