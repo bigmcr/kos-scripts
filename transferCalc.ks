@@ -10,6 +10,9 @@
 //     transfer: from the ship, with no sphere of influence to leave (case 3 below).
 //   - A destination that orbits that body's parent (Duna from Kerbin orbit; Minmus from Mun orbit)
 //     is a transfer from the body the ship is in (cases 1 and 2 below).
+//   - A destination VESSEL at a moon of the ship's body, or of its body's parent (a vessel at Minmus, from
+//     Kerbin or Mun orbit), plans the transfer to that moon, aimed at a periapsis equal to the vessel's
+//     orbit size (semi-major axis) unless captureAltitude says otherwise. The vessel stays the target.
 //   - Anything else (Kerbin from Mun orbit, Duna from Mun orbit) is reported as an error.
 //
 //   Case 1 (ship on the pad, or landed): a circular parking orbit is designed for the winning
@@ -61,8 +64,11 @@
 //   parkingAltitude  - m, case 1 only: altitude of the parking orbit to design. -1 (the default) chooses
 //                      50 km, or 30 km above the atmosphere if there is one.
 //   captureAltitude  - m above the destination body's surface to capture into a circular orbit.
-//                      -1 (the default) chooses 15 km, or 5 km above the atmosphere if there is one.
-//                      A vessel destination has no capture: only its arrival excess speed is priced.
+//                      -1 (the default) chooses 15 km, or 5 km above the atmosphere if there is one; or, for
+//                      a destination vessel at a moon (see below), the vessel's orbit size (semi-major axis).
+//                      The trajectory is aimed at this periapsis, not at the body's centre (arrivalAimOffset:
+//                      the impact parameter, on the side of a prograde capture). A vessel in the ship's own SOI has
+//                      no capture: only its arrival excess speed is priced.
 //   solverType       - the Lambert solver: "Gooding" (the default) or "Gauss"
 //   searchDays       - game days, the length of the departure range, in place of departureWindows windows.
 //                      -1 (the default) uses departureWindows. Searches only the departures soon, instead of
@@ -251,12 +257,17 @@ SET errorCode TO endpoints["error"].
 LOCAL fromOrbitable IS endpoints["from"].
 LOCAL toOrbitable IS endpoints["to"].
 LOCAL sameSOI IS endpoints["sameSOI"].
+// A destination vessel at a moon of the ship's body (or of its body's parent): the transfer goes to the moon
+// (toOrbitable), and the vessel (or the target itself) is what the ship ends up near.
+LOCAL destinationVessel IS endpoints["destinationVessel"].
+LOCAL targetOrbitable IS toOrbitable.
+IF errorCode = "None" AND destinationVessel:ISTYPE("Vessel") SET targetOrbitable TO destinationVessel.
 // A valid destination becomes the ship's target (the one named, or the one already targeted).
 IF errorCode = "None" {
 	IF HASTARGET {
-		IF TARGET:NAME <> toOrbitable:NAME SET TARGET TO toOrbitable.
+		IF TARGET:NAME <> targetOrbitable:NAME SET TARGET TO targetOrbitable.
 	} ELSE {
-		SET TARGET TO toOrbitable.
+		SET TARGET TO targetOrbitable.
 	}
 }
 IF errorCode = "None" AND solverType <> "Gauss" AND solverType <> "Gooding" {
@@ -366,9 +377,16 @@ IF errorCode = "None" {
 	LOCAL captureRadius IS 0.
 	IF toOrbitable:ISTYPE("Body") {
 		IF captureAltitude < 0 {
-			// The default: 15 km up with no atmosphere, 5 km above the top of one.
-			SET captureAltitude TO 15000.
-			IF toOrbitable:ATM:EXISTS SET captureAltitude TO toOrbitable:ATM:HEIGHT + 5000.
+			IF destinationVessel:ISTYPE("Vessel") {
+				// Captured into the destination vessel's own orbit size: its semi-major axis (the distance from the
+				// moon's centre, for a vessel that is not on a closed orbit).
+				SET captureAltitude TO orbitSizeRadius(destinationVessel, toOrbitable) - toOrbitable:RADIUS.
+				PRINT destinationVessel:NAME + " orbits " + toOrbitable:NAME + ": capturing at its orbit size, " + ROUND(captureAltitude / 1000, 1) + " km up.".
+			} ELSE {
+				// The default: 15 km up with no atmosphere, 5 km above the top of one.
+				SET captureAltitude TO 15000.
+				IF toOrbitable:ATM:EXISTS SET captureAltitude TO toOrbitable:ATM:HEIGHT + 5000.
+			}
 		}
 		SET captureRadius TO toOrbitable:RADIUS + captureAltitude.
 	}
@@ -606,6 +624,9 @@ IF errorCode = "None" {
 			PRINT "Correction " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
 		} ELSE {
 			PRINT "Ejection " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
+		}
+		IF reportStats:HASKEY("Aim Offset") {
+			PRINT "Aimed " + distanceToString(reportStats["Aim Offset"]:MAG) + " off " + toOrbitable:NAME + "'s centre, for a " + distanceToString(captureRadius - toOrbitable:RADIUS) + " periapsis altitude.".
 		}
 		PRINT "Complete".
 		WAIT 0.5.

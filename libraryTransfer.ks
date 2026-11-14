@@ -1836,13 +1836,43 @@ FUNCTION arrivalDeltaV {
 	RETURN SQRT(excessSquared + 2 * targetOrbitable:MU / captureRadius) - SQRT(targetOrbitable:MU / captureRadius).
 }
 
+// How far from the destination's centre the Lambert arc has to be aimed for the ship to pass the destination
+// at captureRadius (m from its centre), as a vector from the destination's position (zero: aim at the centre).
+// The destination's gravity bends the path inward, so the aim offset is the impact parameter, larger than the
+// periapsis radius: b = r * SQRT(1 + 2 * mu / (r * vInfinity^2)). It is perpendicular to the arrival velocity and
+// on the side that makes the capture orbit run the way the destination itself orbits (a prograde capture).
+//   arrivalVelocity - transfer velocity relative to the destination, as for arrivalDeltaV
+//   captureRadius   - see arrivalDeltaV; 0 or less (or a vessel, or an arrival the body captures by itself) aims at the centre
+//   orbitNormal     - the destination's own orbit normal: VCRS of its position and velocity about the body it orbits
+FUNCTION arrivalAimOffset {
+	PARAMETER arrivalVelocity.
+	PARAMETER targetOrbitable.
+	PARAMETER captureRadius.
+	PARAMETER orbitNormal.
+
+	IF captureRadius <= 0 OR NOT targetOrbitable:ISTYPE("Body") RETURN V(0, 0, 0).
+	LOCAL excessSquared IS arrivalVelocity:MAG ^ 2 - 2 * targetOrbitable:MU / targetOrbitable:SOIRADIUS.
+	IF excessSquared <= 0 RETURN V(0, 0, 0).
+
+	LOCAL impactParameter IS captureRadius * SQRT(1 + 2 * targetOrbitable:MU / (captureRadius * excessSquared)).
+	LOCAL approachDirection IS arrivalVelocity:NORMALIZED.
+	LOCAL side IS VCRS(approachDirection, orbitNormal).
+	// An approach along the orbit normal has no in-plane side: take any perpendicular.
+	IF side:MAG < 0.01 {
+		SET side TO VCRS(approachDirection, V(0, 1, 0)).
+		IF side:MAG < 0.01 SET side TO VCRS(approachDirection, V(1, 0, 0)).
+	}
+	RETURN side:NORMALIZED * impactParameter.
+}
+
 // Total delta-V (ejection + arrival, m/s) of the transfer that crosses the departure
 // body's SOI edge at tSOI and flies for timeOfFlight, taking the better of Lambert's
 // short-way and long-way solutions.
 //   fromBody  - must be a body (an SOI is needed); toBody - a body or a vessel
 //   solverType - "Gauss" or "Gooding", as for porkchopDeltaV
 //   orbitSpec - from orbitSpecFromVessel (case 2) or designSpec (case 1)
-//   captureRadius - see arrivalDeltaV
+//   captureRadius - see arrivalDeltaV. The full stage (precision["exactExit"]) also aims the arc at it, in a last
+//                step (see the aim stage below): statsOut["Aim Offset"] is the offset from the destination's centre
 //   precision - from ejectionPrecision: how hard each ejection search works
 //   tSOI, timeOfFlight, seed, statsOut - as the departure time, time of flight, seed and
 //                statsOut of porkchopDeltaV; statsOut also gets "Ejection" (the LEXICON
@@ -1914,14 +1944,16 @@ FUNCTION transferDeltaV {
 	LOCAL failureRank IS 0.
 	LOCAL rejectedArcs IS 0.
 
-	// One Lambert solve, from startPosition to the destination at arrival.
+	// One Lambert solve, from startPosition to aimPosition at arrival: the destination's position, or (the aim
+	// stage at the end, see arrivalAimOffset) that position moved to where the capture orbit needs the arc to pass.
 	FUNCTION solveLambert {
 		PARAMETER startPosition.
 		PARAMETER shortWay.
 		PARAMETER startSeed.
+		PARAMETER aimPosition.
 
-		IF solverType = "Gooding" RETURN lambertGooding(startPosition, arrivalPosition, timeOfFlight, sunBody:MU, shortWay, startSeed).
-		RETURN lambertGauss(startPosition, arrivalPosition, timeOfFlight, sunBody:MU, shortWay, startSeed).
+		IF solverType = "Gooding" RETURN lambertGooding(startPosition, aimPosition, timeOfFlight, sunBody:MU, shortWay, startSeed).
+		RETURN lambertGauss(startPosition, aimPosition, timeOfFlight, sunBody:MU, shortWay, startSeed).
 	}
 
 	IF timeOfFlight > 0 {
@@ -1930,14 +1962,14 @@ FUNCTION transferDeltaV {
 		FOR shortWay IN LIST(TRUE, FALSE) {
 			LOCAL startSeed IS longStartSeed.
 			IF shortWay SET startSeed TO shortStartSeed.
-			LOCAL trajectory IS solveLambert(departurePosition, shortWay, startSeed).
+			LOCAL trajectory IS solveLambert(departurePosition, shortWay, startSeed, arrivalPosition).
 
 			// Move the start of the arc from the body's centre to where the ship leaves its SOI (estimated
 			// along the exit heading), and again from that arc's own exit heading.
 			FROM {LOCAL pass IS 1.} UNTIL pass > precision["exitPasses"] STEP {SET pass TO pass + 1.} DO {
 				IF trajectory["Motion Type"] = "Failed" BREAK.
 				LOCAL headingOffset IS (trajectory["v_1"] - fromBodyVelocity):NORMALIZED * soiRadius.
-				LOCAL movedTrajectory IS solveLambert(departurePosition + headingOffset, shortWay, trajectory["Final Value"]).
+				LOCAL movedTrajectory IS solveLambert(departurePosition + headingOffset, shortWay, trajectory["Final Value"], arrivalPosition).
 				IF movedTrajectory["Motion Type"] = "Failed" BREAK.
 				SET trajectory TO movedTrajectory.
 			}
@@ -2009,7 +2041,7 @@ FUNCTION transferDeltaV {
 				IF exactOffset:MAG = 0 BREAK.
 				IF (exactOffset - (winningTrajectory["r_1"] - departurePosition)):MAG < 0.005 * soiRadius BREAK.
 
-				LOCAL movedTrajectory IS solveLambert(departurePosition + exactOffset, winningTrajectory["Short Way"], winningTrajectory["Final Value"]).
+				LOCAL movedTrajectory IS solveLambert(departurePosition + exactOffset, winningTrajectory["Short Way"], winningTrajectory["Final Value"], arrivalPosition).
 				IF movedTrajectory["Motion Type"] = "Failed" BREAK.
 				LOCAL movedExit IS movedTrajectory["v_1"] - fromBodyVelocity.
 				IF movedExit:MAG ^ 2 - 2 * orbitSpec["mu"] / soiRadius <= 0 BREAK.
@@ -2026,6 +2058,40 @@ FUNCTION transferDeltaV {
 				SET bestTotalDV TO movedEjection["deltaV"] + movedArrivalDV.
 			}
 		}
+
+		// The aim stage (full stage, a destination body with a capture radius): so far the arc ends at the
+		// destination's centre. Move its end to the aim point that passes the destination at captureRadius
+		// (arrivalAimOffset), from the start the exit stage settled on, and re-price the ejection and the arrival
+		// for the new velocities. The offset depends a little on the arrival speed, which the move changes, so it is
+		// done twice at most. This leaves the rest of the search alone: it only moves the winner. Skipped by the
+		// quick stage, where the offset changes no ranking.
+		IF precision["exactExit"] AND winningTrajectory:ISTYPE("Lexicon") AND captureRadius > 0 AND toBody:ISTYPE("Body") {
+			LOCAL orbitNormal IS VCRS(arrivalPosition, toBodyVelocity).
+			FROM {LOCAL pass IS 1.} UNTIL pass > 2 STEP {SET pass TO pass + 1.} DO {
+				LOCAL aimOffset IS arrivalAimOffset(winningTrajectory["v_2"] - toBodyVelocity, toBody, captureRadius, orbitNormal).
+				IF aimOffset:MAG = 0 BREAK.
+				IF winningTrajectory:HASKEY("Aim Offset") {
+					IF (aimOffset - winningTrajectory["Aim Offset"]):MAG < 0.002 * aimOffset:MAG BREAK.
+				}
+
+				LOCAL aimedTrajectory IS solveLambert(winningTrajectory["r_1"], winningTrajectory["Short Way"], winningTrajectory["Final Value"], arrivalPosition + aimOffset).
+				IF aimedTrajectory["Motion Type"] = "Failed" BREAK.
+				LOCAL aimedExit IS aimedTrajectory["v_1"] - fromBodyVelocity.
+				IF aimedExit:MAG ^ 2 - 2 * orbitSpec["mu"] / soiRadius <= 0 BREAK.
+				LOCAL aimedSweep IS VANG(aimedTrajectory["r_1"], arrivalPosition + aimOffset).
+				IF NOT aimedTrajectory["Short Way"] SET aimedSweep TO 360 - aimedSweep.
+				IF transferArcProblem(aimedTrajectory["r_1"], aimedTrajectory["v_1"], aimedSweep, sunBody:MU, bodyClearanceRadius(sunBody), parentLimit) <> "" BREAK.
+
+				LOCAL aimedEjection IS ejectionDeltaVForExit(orbitSpec, aimedExit, fromBody, tSOI, exactTiming, precision, earliestBurnUT).
+				IF aimedEjection["deltaV"] >= invalidDeltaV BREAK.
+				LOCAL aimedArrivalDV IS arrivalDeltaV(aimedTrajectory["v_2"] - toBodyVelocity, toBody, captureRadius).
+				SET aimedTrajectory["Aim Offset"] TO aimOffset.
+				SET winningTrajectory TO aimedTrajectory.
+				SET winningEjection TO aimedEjection.
+				SET winningArrivalDV TO aimedArrivalDV.
+				SET bestTotalDV TO aimedEjection["deltaV"] + aimedArrivalDV.
+			}
+		}
 	}
 
 	// Mutate the caller's statsOut in place (see the note in porkchopDeltaV on why).
@@ -2033,6 +2099,7 @@ FUNCTION transferDeltaV {
 		FOR statKey IN winningTrajectory:KEYS {
 			SET statsOut[statKey] TO winningTrajectory[statKey].
 		}
+		IF statsOut:HASKEY("Aim Offset") AND NOT winningTrajectory:HASKEY("Aim Offset") statsOut:REMOVE("Aim Offset").
 		SET statsOut["Ejection"] TO winningEjection.
 		SET statsOut["Arrival Delta V"] TO winningArrivalDV.
 		SET statsOut["Exit Offset"] TO winningTrajectory["r_1"] - departurePosition.
@@ -2563,16 +2630,21 @@ FUNCTION computeRecommendedParkingPlane {
 //   - the body the ship is in, when the destination orbits that body's parent (Duna from Kerbin
 //     orbit, Minmus from Mun orbit, a vessel in solar orbit from Kerbin orbit). The ship leaves
 //     that body's SOI.
+//   - for a destination VESSEL that orbits a moon of the ship's body, or a moon of the ship's body's parent
+//     (a vessel at Minmus, from Kerbin or Mun orbit), the transfer goes to that moon ("to" is the moon, and
+//     "destinationVessel" is the vessel): the moon's own SOI is what is reached, and the vessel only says
+//     where to capture (the caller's choice: transferCalc uses the vessel's orbit size).
 // Anything else (the destination's parent is the body the ship is in, or it is in a different
 // system altogether, like Kerbin from Mun orbit or Duna from Mun orbit) is an error.
 // A given source must orbit the same body as the destination.
-// Returns a LEXICON: "error" ("None", or a message), "from", "to" (orbitables), and "sameSOI"
-// (TRUE if the source is a vessel, i.e. the transfer stays inside one SOI).
+// Returns a LEXICON: "error" ("None", or a message), "from", "to" (orbitables), "sameSOI"
+// (TRUE if the source is a vessel, i.e. the transfer stays inside one SOI), and "destinationVessel"
+// (the vessel the destination was named by when "to" is its moon, else 0).
 FUNCTION resolveTransferEndpoints {
 	PARAMETER destinationName.
 	PARAMETER sourceName IS "".
 
-	LOCAL endpoints IS LEXICON("error", "None", "from", 0, "to", 0, "sameSOI", FALSE).
+	LOCAL endpoints IS LEXICON("error", "None", "from", 0, "to", 0, "sameSOI", FALSE, "destinationVessel", 0).
 
 	LOCAL toOrbitable IS resolveOrbitable(destinationName).
 	IF toOrbitable:ISTYPE("Scalar") {
@@ -2601,9 +2673,28 @@ FUNCTION resolveTransferEndpoints {
 			SET endpoints["error"] TO "The ship is already in " + here:NAME + "'s sphere of influence!".
 			RETURN endpoints.
 		}
+		// For a vessel, the parent of the body it orbits ("" if that body has none): checked in steps, as an
+		// AND does not stop at its first false part.
+		LOCAL vesselBodyParent IS "".
+		IF toOrbitable:ISTYPE("Vessel") {
+			IF toOrbitable:BODY:HASBODY SET vesselBodyParent TO toOrbitable:BODY:BODY:NAME.
+		}
 		IF toParent = here:NAME {
 			SET fromOrbitable TO SHIP.
 		} ELSE IF toParent <> "" AND toParent = hereParent {
+			SET fromOrbitable TO here.
+		} ELSE IF vesselBodyParent <> "" AND vesselBodyParent = here:NAME {
+			// A vessel orbiting a moon of the ship's body (a vessel at Minmus, from Kerbin orbit): the transfer goes to
+			// the moon, and the vessel's orbit sets the capture there.
+			SET endpoints["destinationVessel"] TO toOrbitable.
+			SET toOrbitable TO toOrbitable:BODY.
+			SET toParent TO here:NAME.
+			SET fromOrbitable TO SHIP.
+		} ELSE IF vesselBodyParent <> "" AND vesselBodyParent = hereParent {
+			// The same from a moon of the ship's body's parent (a vessel at Minmus, from Mun orbit).
+			SET endpoints["destinationVessel"] TO toOrbitable.
+			SET toOrbitable TO toOrbitable:BODY.
+			SET toParent TO hereParent.
 			SET fromOrbitable TO here.
 		} ELSE {
 			SET endpoints["error"] TO destinationName + " (orbiting " + toParent + ") is in a different system from the ship (in " + here:NAME + "'s sphere of influence)!".
@@ -2974,7 +3065,7 @@ FUNCTION transferArcProblem {
 //   fromSpec, toSpec  - orbit specs of the ship and the target (orbitSpecAround)
 //   toOrbitable       - the target (a vessel: arrival matches its velocity; a body: see arrivalDeltaV)
 //   solverType        - "Gauss" or "Gooding"
-//   captureRadius     - see arrivalDeltaV
+//   captureRadius     - see arrivalDeltaV. The winner is also aimed at it (arrivalAimOffset): statsOut["Aim Offset"]
 //   earliestDeparture - UT; an earlier departure is invalid (a burn in the past cannot be flown)
 //   maxRadius         - m, the central body's SOI radius (0 for none): an arc whose apoapsis is higher is rejected
 //   departureTime, timeOfFlight, seed, statsOut - as for transferDeltaV. statsOut gets the winning
@@ -3071,6 +3162,41 @@ FUNCTION sameSOITransferDeltaV {
 					IF trajectory:HASKEY("Failure Reason") SET failureReason TO trajectory["Failure Reason"].
 				}
 			}
+
+			// The aim stage: the arcs above end at the destination's centre. Move the winner's end to the aim point
+			// that passes a destination body at captureRadius (arrivalAimOffset), and re-price it. The offset depends
+			// a little on the arrival speed, which the move changes, so it is done twice at most.
+			IF winningTrajectory:ISTYPE("Lexicon") AND captureRadius > 0 AND toOrbitable:ISTYPE("Body") {
+				LOCAL orbitNormal IS VCRS(arrivalState["position"], arrivalState["velocity"]).
+				FROM {LOCAL pass IS 1.} UNTIL pass > 2 STEP {SET pass TO pass + 1.} DO {
+					LOCAL aimOffset IS arrivalAimOffset(winningTrajectory["v_2"] - arrivalState["velocity"], toOrbitable, captureRadius, orbitNormal).
+					IF aimOffset:MAG = 0 BREAK.
+					IF winningTrajectory:HASKEY("Aim Offset") {
+						IF (aimOffset - winningTrajectory["Aim Offset"]):MAG < 0.002 * aimOffset:MAG BREAK.
+					}
+
+					LOCAL aimPosition IS arrivalState["position"] + aimOffset.
+					LOCAL aimedTrajectory IS 0.
+					IF solverType = "Gooding" {
+						SET aimedTrajectory TO lambertGooding(departureState["position"], aimPosition, timeOfFlight, mu, winningTrajectory["Short Way"], winningTrajectory["Final Value"]).
+					} ELSE {
+						SET aimedTrajectory TO lambertGauss(departureState["position"], aimPosition, timeOfFlight, mu, winningTrajectory["Short Way"], winningTrajectory["Final Value"]).
+					}
+					IF aimedTrajectory["Motion Type"] = "Failed" BREAK.
+					LOCAL aimedSweep IS VANG(departureState["position"], aimPosition).
+					IF NOT aimedTrajectory["Short Way"] SET aimedSweep TO 360 - aimedSweep.
+					IF transferArcProblem(departureState["position"], aimedTrajectory["v_1"], aimedSweep, mu, fromSpec["minPeriapsis"], maxRadius) <> "" BREAK.
+
+					LOCAL aimedBurn IS aimedTrajectory["v_1"] - departureState["velocity"].
+					SET winningArrivalDV TO arrivalDeltaV(aimedTrajectory["v_2"] - arrivalState["velocity"], toOrbitable, captureRadius).
+					SET bestTotalDV TO aimedBurn:MAG + winningArrivalDV.
+					SET aimedTrajectory["Aim Offset"] TO aimOffset.
+					SET winningTrajectory TO aimedTrajectory.
+					SET winningDeparture TO LEXICON("deltaV", aimedBurn:MAG, "dvVector", aimedBurn,
+													"burnPosition", departureState["position"], "parkVelocity", departureState["velocity"],
+													"burnUT", departureTime).
+				}
+			}
 		} ELSE IF arrivesAtEdge {
 			SET failureReason TO "Meets the target at the SOI edge".
 		} ELSE {
@@ -3086,6 +3212,7 @@ FUNCTION sameSOITransferDeltaV {
 		FOR statKey IN winningTrajectory:KEYS {
 			SET statsOut[statKey] TO winningTrajectory[statKey].
 		}
+		IF statsOut:HASKEY("Aim Offset") AND NOT winningTrajectory:HASKEY("Aim Offset") statsOut:REMOVE("Aim Offset").
 		SET statsOut["Ejection"] TO winningDeparture.
 		SET statsOut["Arrival Delta V"] TO winningArrivalDV.
 	} ELSE {

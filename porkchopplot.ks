@@ -23,7 +23,8 @@
 //   tofSamples       - flight times sampled (1 to 4 times the Hohmann time). -1 (the default) chooses:
 //                      41 between bodies, 31 in the same SOI
 //   captureAltitude  - m above the destination's surface to capture into a circular orbit, for a
-//                      destination body in the same SOI. -1 (the default) chooses 15 km, or 5 km above
+//                      destination body in the same SOI. -1 (the default) chooses the destination vessel's
+//                      orbit size if the destination is a vessel at a moon, otherwise 15 km, or 5 km above
 //                      the atmosphere if there is one. Between bodies the arrival is always the bare relative speed.
 //   searchDays       - game days, the length of the departure range, in place of departureWindows windows.
 //                      -1 (the default) uses departureWindows. Needed when a vessel is on an escape orbit
@@ -68,6 +69,8 @@ LOCAL errorCode IS endpoints["error"].
 LOCAL fromOrbitable IS endpoints["from"].
 LOCAL toOrbitable IS endpoints["to"].
 LOCAL sameSOI IS endpoints["sameSOI"].
+// For a vessel at a moon of the ship's body (or its parent), the plot is for that moon, and "destinationVessel" is the vessel.
+LOCAL destinationVessel IS endpoints["destinationVessel"].
 // The plot can only be saved on the archive, so there is no point calculating it without a connection.
 IF errorCode = "None" AND NOT connectionToKSC() {
 	SET errorCode TO "No archive connection: the plot could not be saved!".
@@ -103,9 +106,14 @@ IF errorCode = "None" {
 	LOCAL captureRadius IS 0.
 	IF toOrbitable:ISTYPE("Body") {
 		IF captureAltitude < 0 {
-			// The default: 15 km up with no atmosphere, 5 km above the top of one.
-			SET captureAltitude TO 15000.
-			IF toOrbitable:ATM:EXISTS SET captureAltitude TO toOrbitable:ATM:HEIGHT + 5000.
+			IF destinationVessel:ISTYPE("Vessel") {
+				// A vessel at the destination moon: its own orbit size (semi-major axis, or distance if not closed).
+				SET captureAltitude TO orbitSizeRadius(destinationVessel, toOrbitable) - toOrbitable:RADIUS.
+			} ELSE {
+				// The default: 15 km up with no atmosphere, 5 km above the top of one.
+				SET captureAltitude TO 15000.
+				IF toOrbitable:ATM:EXISTS SET captureAltitude TO toOrbitable:ATM:HEIGHT + 5000.
+			}
 		}
 		SET captureRadius TO toOrbitable:RADIUS + captureAltitude.
 	}
