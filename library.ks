@@ -1089,48 +1089,18 @@ FUNCTION clearManeuverNodes {
 	}
 }
 
-// Generic 2D hill climbing function
-// Tries to minimize the value of the passed delegate, which takes two scalar
-// inputs and returns a single scalar.
-// Unlike a pair of independent 1D hill climbs, this searches the full 8-point
-// neighborhood (N, S, E, W, and the four diagonals) around the current guess
-// each iteration, so it can follow gradients that aren't aligned to either axis.
-// Passed the following
-//			delegate, expecting two scalar inputs and returning a single scalar
-//			initialGuess1 - initial guess of the final value along axis 1
-//			initialGuess2 - initial guess of the final value along axis 2
-//			initialStepSize1 - how much to start moving the initial guess by, axis 1
-//			initialStepSize2 - how much to start moving the initial guess by, axis 2
-//			logFileName - log file name. If blank, does not log. Defaults to blank.
-//			iterationMax - maximum iteration number. Defaults to 100.
-//			smallestStepRatio - Ratio of smallest step size to initial step size
-//				(negative power of 2), applied independently to each axis. Defaults
-//				to 15, so the smallest step size would be initialStepSize / (2^15).
-//			cyclicalPeriod1 - period of cyclical repetition of axis 1's input.
-//				-1 is a special case that indicates axis 1 is not cyclical. Defaults to -1.
-//			cyclicalPeriodCutoff1 - value below which cyclicalPeriod1 should be added
-//				to the current guess for axis 1.
-//			cyclicalPeriod2 - as cyclicalPeriod1, but for axis 2. Defaults to -1.
-//			cyclicalPeriodCutoff2 - as cyclicalPeriodCutoff1, but for axis 2.
-//			deleteOldlogFileName - whether to delete the old version of the log file
-//				or append to the end of the file.
-// Returns the following:
-//			Lexicon with the following members:
-//				"iteration" - scalar - number of the final iteration
-//				"initialValue" - scalar - value of the delegate given the initial guess
-//				"initialGuess1" - scalar - value of the initial guess, axis 1
-//				"initialGuess2" - scalar - value of the initial guess, axis 2
-//				"finalValue" - scalar - value of the delegate given the final guess. This is minimized.
-//				"finalGuess1" - scalar - value of the final guess, axis 1
-//				"finalGuess2" - scalar - value of the final guess, axis 2
-//				"deltaValue" - scalar - how much the delegate changed
-// A few notes about the delegate:
-//    It is assumed that the delegate receives two scalar inputs and returns
-//    a single scalar. This function is a minimization function; if you want
-//    it to maximize instead, make the delegate return a negative.
-//    Because this checks 8 neighbors per iteration (versus 2 or 3 for the 1D
-//    version), it is roughly 4x more expensive per iteration - keep that in
-//    mind if the delegate itself is costly (e.g. involves POSITIONAT/VELOCITYAT).
+// 2D hill climb: minimizes delegate(guess1, guess2) by moving to the best of the 8 neighbours of the
+// current guess, halving the step when none improves. A point already priced at the current step size is
+// not priced again.
+//   delegate - two scalar inputs, one scalar output (return a negative to maximize)
+//   initialGuess1/2, initialStepSize1/2 - the starting point and step on each axis
+//   logFileName - log file ("" for none)
+//   iterationMax - defaults to 100
+//   smallestStepRatio - the smallest step is initialStepSize / 2^smallestStepRatio (default 15)
+//   cyclicalPeriod1/2, cyclicalPeriodCutoff1/2 - wrap an axis into [cutoff, cutoff + period); -1 for not cyclical
+//   deleteOldlogFileName - delete the old log file, or append to it
+// Returns a LEXICON: "iteration", "initialValue", "initialGuess1", "initialGuess2", "finalValue",
+// "finalGuess1", "finalGuess2", "deltaValue".
 FUNCTION hillClimb2D {
 	PARAMETER delegate.
 	PARAMETER initialGuess1.
@@ -1171,6 +1141,12 @@ FUNCTION hillClimb2D {
 	// 3x3 grid of (offset1, offset2) labels, skipping the center (0,0).
 	// Ordered N, NE, E, SE, S, SW, W, NW purely for readable logs.
 	LOCAL neighborLabels IS LIST("N", "NE", "E", "SE", "S", "SW", "W", "NW").
+	// The same neighbours in steps (-1, 0 or 1) on each axis, and the values already priced at this step size,
+	// keyed by position in steps from where the step size last changed (index1, index2).
+	LOCAL neighborSteps IS LIST(LIST(0, 1), LIST(1, 1), LIST(1, 0), LIST(1, -1), LIST(0, -1), LIST(-1, -1), LIST(-1, 0), LIST(-1, 1)).
+	LOCAL priced IS LEXICON("0,0", currentDelegate).
+	LOCAL index1 IS 0.
+	LOCAL index2 IS 0.
 
 	UNTIL ((stepSize1 <= smallestStep1) AND (stepSize2 <= smallestStep2)) OR (iteration > iterationMax) {
 		LOCAL neighborOffsets IS LIST(
@@ -1188,6 +1164,7 @@ FUNCTION hillClimb2D {
 		LOCAL bestGuess1 IS currentGuess1.
 		LOCAL bestGuess2 IS currentGuess2.
 		LOCAL bestLabel IS "None".
+		LOCAL bestNeighbor IS 0.
 		LOCAL neighborValue IS 0.
 		LOCAL testGuess1 IS 0.
 		LOCAL testGuess2 IS 0.
@@ -1195,7 +1172,15 @@ FUNCTION hillClimb2D {
 		FOR neighborIndex IN RANGE(0, neighborOffsets:LENGTH) {
 			SET testGuess1 TO currentGuess1 + neighborOffsets[neighborIndex][0].
 			SET testGuess2 TO currentGuess2 + neighborOffsets[neighborIndex][1].
-			SET neighborValue TO delegate(testGuess1, testGuess2).
+			LOCAL pricedKey IS (index1 + neighborSteps[neighborIndex][0]) + "," + (index2 + neighborSteps[neighborIndex][1]).
+			IF priced:HASKEY(pricedKey) {
+				SET neighborValue TO priced[pricedKey].
+			} ELSE {
+				SET neighborValue TO delegate(testGuess1, testGuess2).
+				SET priced[pricedKey] TO neighborValue.
+				// This is present because kOS has odd results when complex calculations are spread across different physics ticks.
+				WAIT 0.
+			}
 
 			IF logDataPerm LOG iteration + "," + testGuess1 + "," + testGuess2 + "," + stepSize1 + "," + stepSize2 + "," + currentDelegate + "," + neighborLabels[neighborIndex] + "," + neighborValue + "," + (neighborValue < bestValue) TO logFileName.
 
@@ -1204,9 +1189,8 @@ FUNCTION hillClimb2D {
 				SET bestGuess1 TO testGuess1.
 				SET bestGuess2 TO testGuess2.
 				SET bestLabel TO neighborLabels[neighborIndex].
+				SET bestNeighbor TO neighborIndex.
 			}
-			// This is present because kOS has odd results when complex calcualtions are spread across different physics ticks.
-			WAIT 0.
 		}
 
 		IF bestLabel = "None" {
@@ -1214,10 +1198,17 @@ FUNCTION hillClimb2D {
 			// axis step size(s) haven't hit their floor yet, and try again.
 			IF stepSize1 > smallestStep1 SET stepSize1 TO stepSize1 / 2.
 			IF stepSize2 > smallestStep2 SET stepSize2 TO stepSize2 / 2.
+			// Nothing priced so far is a neighbour at the new step size.
+			priced:CLEAR().
+			SET index1 TO 0.
+			SET index2 TO 0.
+			SET priced["0,0"] TO currentDelegate.
 		} ELSE {
 			SET currentGuess1 TO bestGuess1.
 			SET currentGuess2 TO bestGuess2.
 			SET currentDelegate TO bestValue.
+			SET index1 TO index1 + neighborSteps[bestNeighbor][0].
+			SET index2 TO index2 + neighborSteps[bestNeighbor][1].
 		}
 
 		// symmetric cyclical wraparound, applied independently per axis
@@ -1230,6 +1221,13 @@ FUNCTION hillClimb2D {
 			SET currentGuess2 TO MOD(currentGuess2 - cyclicalPeriodCutoff2, cyclicalPeriod2).
 			IF currentGuess2 < 0 SET currentGuess2 TO currentGuess2 + cyclicalPeriod2.
 			SET currentGuess2 TO currentGuess2 + cyclicalPeriodCutoff2.
+		}
+		// A wrapped guess is no longer where its index says, so start the priced points again.
+		IF cyclicalPeriod1 <> -1 OR cyclicalPeriod2 <> -1 {
+			priced:CLEAR().
+			SET index1 TO 0.
+			SET index2 TO 0.
+			SET priced["0,0"] TO currentDelegate.
 		}
 
 		SET iteration TO iteration + 1.
@@ -1500,26 +1498,16 @@ FUNCTION goldenSectionMinimum {
 	RETURN (low + high) / 2.
 }
 
-// Newton refinement of a minimum in two variables - the end game of the hill climb below.
-// Near a minimum a smooth cost is nearly a bowl, so instead of walking down it (the hill climb
-// halves its step and re-prices 8 neighbours each time) this fits the bowl and jumps to its bottom.
-//   Each step prices a 3x3 patch around the current point (the centre is already known, so 8 new
-//   points), fits the slope and curvature from it, and moves to the minimum of the fitted bowl:
-//       slope     = (f(+h) - f(-h)) / 2h on each axis
-//       curvature = (f(+h) - 2f(0) + f(-h)) / h^2 on each axis, and a cross term from the four corners
-//       move      = -(curvature matrix)^-1 * slope
-//   The move is capped at two patch widths per axis, and is only taken if it beats every point already
-//   priced: otherwise the best point of the patch is taken if that improves on the current one (a patch
-//   whose curvature does not describe a bowl gets only that). Each later step uses half the patch width.
-//   Two steps cost about 18 evaluations. (In a test on a Lambert porkchop surface, a hill climb stopped
-//   at 1/8 of the grid spacing followed by two of these steps took 60 evaluations against 72 for the
-//   full hill climb, and found the minimum to within 0.5 m/s in every case against 40% of them.)
+// Newton refinement of a minimum in two variables, to finish a hill climb. Each step prices a 3x3 patch
+// around the current point (8 new points), fits slope and curvature, and moves to the bottom of the fitted
+// bowl (capped at two patch widths) if that beats every point priced; otherwise to the best patch point.
+// Each later step halves the patch.
 //   costDelegate - f(guess1, guess2) -> value, to be minimized
 //   startGuess1/2, startValue - the point to refine and its value
-//   startStep1/2 - the patch half-width on each axis for the first step (the hill climb's final step)
+//   startStep1/2 - the patch half-width on each axis for the first step
 //   newtonSteps  - how many steps to take
-// Returns a LEXICON: "finalValue", "finalGuess1", "finalGuess2", "evaluations", and "steps" (how many
-// of the newtonSteps steps actually moved the point to a better one).
+// Returns a LEXICON: "finalValue", "finalGuess1", "finalGuess2", "evaluations" and "steps" (steps that
+// moved to a better point).
 FUNCTION newtonRefine2D {
 	PARAMETER costDelegate.
 	PARAMETER startGuess1.
@@ -3480,20 +3468,18 @@ FUNCTION flightPathAngle {
 }
 
 // Given an angle in degrees, returns the normalized angle in degrees
-// Returns an angle between 0 degrees and 360 degrees
+// Returns an angle from 0 degrees up to, but not including, 360 degrees
 FUNCTION normalizeAngle360 {
 	PARAMETER angle.
-	LOCAL tempAngle IS ARCTAN2(SIN(angle), COS(angle)).
-	IF tempAngle < 0 SET tempAngle TO tempAngle + 360.
-	RETURN tempAngle.
+	RETURN MOD(MOD(angle, 360) + 360, 360).
 }
 
 // Given an angle in degrees, returns the normalized angle in degrees
-// Returns an angle between -180 degrees and 180 degrees
+// Returns an angle greater than -180 degrees, up to and including 180 degrees
 FUNCTION normalizeAngle180 {
 	PARAMETER angle.
-	LOCAL tempAngle IS ARCTAN2(SIN(angle), COS(angle)).
-	IF tempAngle < -180 SET tempAngle TO tempAngle + 360.
+	LOCAL tempAngle IS MOD(MOD(angle, 360) + 360, 360).
+	IF tempAngle > 180 RETURN tempAngle - 360.
 	RETURN tempAngle.
 }
 
@@ -3782,21 +3768,40 @@ FUNCTION firstCommonBody {
 	RETURN objectTwo.
 }
 
-// Returns BODY(objectName) or VESSEL(objectName) (a vessel wins if both exist),
-// or the scalar 0 if neither exists - check with :ISTYPE("Scalar").
-// If the parameter is already a BODY or a VESSEL, it is returned as it is.
-// A docking port (or any other part) passed as the parameter is rejected the same way, with the scalar 0, because it is not
-// an orbitable and has no name that resolves to one. To use the vessel that a port is on, pass its :SHIP:NAME instead.
+// Returns BODY(objectName) or VESSEL(objectName) (a vessel wins), or the scalar 0 if neither exists.
+// A BODY or VESSEL passed in is returned as it is; a part is rejected with 0 (pass its :SHIP).
+// Vessel names are not unique, so a name that is the current target's returns the target itself.
 FUNCTION resolveOrbitable {
 	PARAMETER objectName.
 
 	IF objectName:ISTYPE("Body") OR objectName:ISTYPE("Vessel") RETURN objectName.
 	IF objectName:ISTYPE("DockingPort") OR objectName:ISTYPE("Part") RETURN 0.
 
+	IF HASTARGET {
+		IF TARGET:NAME = objectName AND (TARGET:ISTYPE("Body") OR TARGET:ISTYPE("Vessel")) RETURN TARGET.
+	}
+
 	LOCAL result IS 0.
 	IF BODYEXISTS(objectName) SET result TO BODY(objectName).
 	IF VESSELEXISTS(objectName) SET result TO VESSEL(objectName).
 	RETURN result.
+}
+
+// The current target as an orbitable, the object itself (not its name, which another vessel can share): a Body or
+// a Vessel, or for a docking port (or any part) the vessel it is on. The scalar 0 if there is no target.
+FUNCTION currentTargetOrbitable {
+	IF NOT HASTARGET RETURN 0.
+	IF TARGET:ISTYPE("Part") OR TARGET:ISTYPE("DockingPort") RETURN TARGET:SHIP.
+	RETURN TARGET.
+}
+
+// Gets the operator's attention: a short beep (0.2 s at 880 Hz, voice 0), then a 5 s wait.
+FUNCTION alertOperator {
+	LOCAL alertVoice IS GETVOICE(0).
+	SET alertVoice:WAVE TO "square".
+	SET alertVoice:VOLUME TO 0.5.
+	alertVoice:PLAY(NOTE(880, 0.2)).
+	WAIT 5.
 }
 
 // Formats a real-world (wall-clock) duration in seconds, e.g. "9.4s", "4m 09s" or "1h 04m 09s".
@@ -3910,29 +3915,13 @@ FUNCTION bracketAroundGuess {
 		SET attempt TO attempt + 1.
 	}
 
-	// Couldn't find a bracket within the domain - return a degenerate
-	// "bracket" so findZeroBrent falls back gracefully (its own
-	// not-actually-bracketed check) instead of this function crashing or
-	// looping forever.
+	// No bracket in the domain: return a degenerate one, which findZeroBrent handles.
 	RETURN LEXICON("low", clampedGuess, "high", clampedGuess).
 }
 
-// Brent's method: a bracket-based, derivative-free root finder that combines
-// bisection with the much faster secant method and inverse
-// quadratic interpolation, falling back to bisection whenever those would
-// step outside the current bracket or fail to shrink it fast enough. Takes
-// the same first four arguments as findZeroSecant - delegate, X1, X2,
-// tolerance - so it can be used as a drop-in alternative wherever a
-// bracket is known. Unlike findZeroSecant, X1 and X2 MUST actually bracket a
-// root (delegate(X1) and delegate(X2) must have opposite signs); given a
-// valid bracket, Brent's method is GUARANTEED to converge - no restart
-// cascade and no risk of diverging from a bad initial guess, unlike a plain
-// secant or Newton iteration.
-//
-// This is an iterative loop rather than recursive like findZeroSecant, since
-// Brent's method carries several pieces of running state between iterations
-// (the previous two bracket points, plus which interpolation mode was used
-// last) that would be awkward to thread through repeated recursive calls.
+// Brent's method: a bracketed, derivative-free root finder (bisection with secant and inverse quadratic
+// steps). X1 and X2 should bracket a root; if they do not, bracketAroundGuess looks for a bracket, up to
+// recursionLevel times.
 FUNCTION findZeroBrent {
 	PARAMETER delegate.
 	PARAMETER X1.
@@ -3988,10 +3977,7 @@ FUNCTION findZeroBrent {
 			SET s TO b - fb * (b - a) / (fb - fa).
 		}
 
-		// Reject the interpolated step (falling back to bisection instead)
-		// whenever it would land outside the bracket, or isn't shrinking the
-		// bracket fast enough - this is what makes Brent's method robust
-		// rather than just "secant method with extra steps".
+		// Reject an interpolated step that lands outside the bracket or shrinks it too slowly.
 		LOCAL lowBound IS MIN((3 * a + b) / 4, b).
 		LOCAL highBound IS MAX((3 * a + b) / 4, b).
 		LOCAL fallBackToBisection IS FALSE.

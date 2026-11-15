@@ -1,230 +1,43 @@
 @LAZYGLOBAL OFF.
 
 // ============================================================================
-// libraryTransfer.ks - total delta-V of an interplanetary transfer, in KSP's patched
-// conic universe, plus the Lambert solvers and porkchop-plot tools it is built on. loop.ks loads it right after library.ks, which this
-// file depends on (absolutePosition, absoluteVelocity, findZeroBrent, goldenSectionMinimum, ...).
-// Moved here from library.ks: the Lambert solvers, solveBurnAtPoint, the porkchop grid and CSV tools.
+// libraryTransfer.ks - delta-V of a transfer in KSP's patched conics, with the Lambert solvers and
+// porkchop tools it is built on. Loaded after library.ks, which it depends on.
 //
-// The model, and what it approximates:
-//   - Lambert (heliocentric) gives the velocity the ship needs when it LEAVES
-//     the departure body's sphere of influence. That moment is tSOI ("T_SOI").
-//     Relative to the departure body, that velocity (vExit) is the velocity at
-//     the SOI edge - NOT the hyperbolic excess at infinity. The excess is
-//     vInfinity = SQRT(|vExit|^2 - 2*mu/soiRadius), and the asymptote direction
-//     differs a little from vExit's (the hyperbola is still turning at the edge).
-//   - The burn happens EARLIER than tSOI, by the hyperbolic transit time from the
-//     burn point to the SOI edge.
-//   - Heliocentric position is taken at the body's centre (SOI-edge offset ignored).
-//   - Arrival is treated the same way: the velocity at the destination SOI edge.
+// The model:
+//   - Lambert (around the common parent) gives the velocity the ship needs as it LEAVES the departure
+//     body's SOI, at tSOI. Relative to the body that is vExit, the velocity at the SOI edge, not the
+//     excess at infinity: vInfinity = SQRT(|vExit|^2 - 2*mu/soiRadius).
+//   - The burn is earlier than tSOI, by the hyperbola's transit time to the SOI edge.
+//   - Arrival is the velocity at the destination's SOI edge.
 //
-// Two cases for the departure orbit, both described by an "orbit spec":
-//   "orbit"  - the ship is already in a parking orbit (orbitSpecFromVessel). The
-//              ejection cost uses the real orbit - plane, shape and position.
-//   "design" - the ship hasn't launched (designSpec). A circular parking orbit is
-//              designed per transfer: plane chosen to contain the departure
-//              asymptote, floored at the launch site latitude.
+// The departure orbit is an "orbit spec":
+//   "orbit"  - the ship's real orbit (orbitSpecFromVessel).
+//   "design" - not launched (designSpec): a circular orbit designed per transfer.
 //
-// Two ways to price the ejection:
-//   phase-free (the default) - the cheapest burn point anywhere in one orbit. Smooth,
-//              so it suits grid searches and hill climbs.
-//   exact timing             - the burn point is dictated by tSOI (burn time = tSOI minus
-//              transit). The cost then repeats with the parking-orbit period, so
-//              use phaseLockedDeparture rather than a coarse search for this.
+// The ejection is priced two ways:
+//   phase-free   - the cheapest burn point anywhere in one orbit. Smooth, so it suits searches.
+//   exact timing - the burn point is dictated by tSOI; the cost repeats with the orbit period
+//                  (see phaseLockedDeparture).
 //
-// All angles in kOS trig are degrees; times are seconds (UT where noted).
+// Angles are degrees; times are seconds (UT where noted).
 // ============================================================================
 
 GLOBAL invalidDeltaV IS 1e15.
-
-FUNCTION C_Z {
-  PARAMETER z.
-  IF z = 0 RETURN 0.5.
-  IF z < 0 RETURN (COSH(SQRT(-z))-1)/(-z).
-  IF z > 1e10 RETURN 1.99936080743821e-10.
-  RETURN (1-COS(CONSTANT:RadToDeg * SQRT(z)))/z.
-}
-
-FUNCTION S_Z {
-  PARAMETER z.
-  IF z = 0 RETURN 1.0/6.0.
-  IF z < 0 RETURN (SINH(SQRT(-z)) - SQRT(-z)) / (-z)^1.5.
-  RETURN (SQRT(z) - SIN(CONSTANT:RadToDeg * SQRT(z))) / z^1.5.
-}
-
-FUNCTION C_Z_prime {
-  PARAMETER z.
-  PARAMETER C_of_Z IS C_Z(z).
-  PARAMETER S_of_Z IS S_Z(z).
-  IF ABS(z) < 0.05 RETURN -1/24 + 2 * z / 720 - 3 * z^2 / 40320 + 4 * z^3 / 3628800 - 5 * z^4 / 479001600 + 6 * z^5 / 87178291200.
-  RETURN (1 - z * S_of_Z - 2 * C_of_Z) / ( 2 * z ).
-}
-
-FUNCTION S_Z_prime {
-  PARAMETER z.
-  PARAMETER C_of_Z IS C_Z(z).
-  PARAMETER S_of_Z IS S_Z(z).
-  IF ABS(z) < 0.05 RETURN -1 / 120 + 2 * z / 5040 - 3 * z^2 / 362880 + 4 * z^3 / 39916800 - 5 * z^4 / 6227020800 + 6 * z^5 / 1.30767E+12.
-  RETURN (C_of_Z-3*S_of_Z)/(2*z).
-}
-
-FUNCTION lambertGauss {
-  PARAMETER r_1.
-  PARAMETER r_2.
-  PARAMETER timeOfFlight.
-  PARAMETER mu.
-  PARAMETER shortWay IS TRUE.
-  PARAMETER startZ IS 0.5.
-  PARAMETER timeTolerance IS 0.001.         // Default tolerance in seconds
-  PARAMETER maxIterations IS 40.
-  // startZ is the ANCHOR for the whole retry ladder below and stays fixed
-  // across every retry. attemptNumber drives a zig-zag offset from that
-  // fixed anchor: 0, +1, -1, +2, -2, +3, ... - trying the seed itself
-  // first, then alternating outward in both directions, so a root on
-  // either side of the seed is reachable.
-  PARAMETER attemptNumber IS 0.
-  // Why the previous attempt failed; reported if the last one fails too.
-  PARAMETER lastFailure IS "No convergence".
-
-  IF attemptNumber >= 10 RETURN LEXICON("v_1", V(0, 0, 0),
-                                "v_2", V(0, 0, 0),
-                                "Failure Reason", lastFailure,
-                                "Motion Type", "Failed",
-                                "Iterations", 0,
-                                "Final Value", 0,
-                                "r_1", r_1,
-                                "r_2", r_2,
-                                "mu", mu,
-                                "Short Way", shortWay).
-
-
-  LOCAL iterations IS 0.
-  LOCAL r_1_mag IS r_1:MAG.
-  LOCAL r_2_mag IS r_2:MAG.
-  LOCAL phaseAngle IS VANG(r_1, r_2).
-  IF NOT shortWay SET phaseAngle TO 360 - phaseAngle.
-  LOCAL A IS SQRT( r_1_mag * r_2_mag * ( 1 + COS(phaseAngle))).
-  IF NOT shortWay SET A TO -A.
-
-  LOCAL z IS 0.
-  LOCAL S IS 0.
-  LOCAL C IS 0.
-  LOCAL y IS 0.
-  LOCAL x IS 0.
-  LOCAL timeSeconds IS 0.
-  LOCAL C_prime IS 0.
-  LOCAL S_prime IS 0.
-  LOCAL dt_dz IS 0.
-  LOCAL timeError IS timeTolerance + 1.
-  LOCAL firstTime IS TRUE.
-  LOCAL failed IS FALSE.
-  LOCAL failReason IS "No convergence".
-
-  // The actual z this attempt starts Newton's method from - see the comment
-  // on attemptNumber above for the zig-zag pattern this produces.
-  LOCAL zToTry IS startZ.
-  IF attemptNumber > 0 {
-    LOCAL magnitude IS CEILING(attemptNumber / 2).
-    LOCAL direction IS 1.
-    IF MOD(attemptNumber, 2) = 0 SET direction TO -1.
-    SET zToTry TO startZ + direction * magnitude.
-  }
-
-  UNTIL (ABS(timeError) < timeTolerance) OR (iterations >= maxIterations) OR failed {
-    IF firstTime {
-      SET z TO zToTry.
-      SET firstTime TO FALSE.
-    } ELSE {
-      IF dt_dz = 0 SET z TO z + 1.
-      ELSE SET z TO z - ( timeSeconds - timeOfFlight) / dt_dz.
-      // z >= (2 pi)^2 is where the universal-variable equation moves on to its multi-revolution
-      // branches (z between (2 pi)^2 and (4 pi)^2 is the one-revolution family: an arc that takes
-      // a whole orbit plus part of another). This solver is for zero-revolution arcs, so that is a failure.
-      IF z >= (2*CONSTANT:PI)^2 {
-        SET failed TO TRUE.
-        SET failReason TO "Beyond one-revolution range".
-      }
-    }
-    SET S TO S_Z(z).
-    SET C TO C_Z(z).
-    IF SQRT(C) <> 0 SET y TO r_1_mag + r_2_mag - A*(1 - z * S ) / SQRT( C ).
-    ELSE SET y TO -1.
-    IF (y > 0) AND (C < 1e10) AND (S < 1e10) {
-      SET x TO SQRT( y / C ).
-      SET timeSeconds TO (( x^3 ) * S + A * SQRT( y )) / SQRT( mu ).
-      SET C_prime TO C_Z_prime(z, C, S).
-      SET S_prime TO S_Z_prime(z, C, S).
-      SET dt_dz TO (x^3 * (S_prime - 3 * S * C_prime / ( 2 * C) ) + A / 8 * ( 3 * S * SQRT( y ) / C + A / x)) / SQRT(mu).
-      SET timeError TO timeOfFlight - timeSeconds.
-      SET iterations TO iterations + 1.
-    } ELSE {
-      SET failed TO TRUE.
-      SET failReason TO "Numerical breakdown".
-    }
-  }
-
-	IF failed OR ABS(timeError) >= timeTolerance RETURN lambertGauss(r_1,
-																	r_2,
-																	timeOfFlight,
-																	mu,
-																	shortWay,
-																	startZ,
-																	timeTolerance,
-																	maxIterations,
-																	attemptNumber + 1,
-																	failReason).
-
-  LOCAL f IS 1 - y / r_1_mag.
-  LOCAL g IS A * SQRT( y / mu).
-  LOCAL g_dot IS 1 - y / r_2_mag.
-  LOCAL v_1 IS (r_2 - f * r_1) / g.
-  LOCAL v_2 IS (g_dot * r_2 - r_1) / g.
-  LOCAL ecc IS (((v_1:SQRMAGNITUDE - mu / r_1_mag) * r_1 - VDOT( r_1 , v_1 ) * v_1 ) / mu):MAG.
-  // Classify from the true eccentricity. This used to be two independent IFs
-  // followed by an IF/ELSE, so the ELSE (which fires for every ecc <= 1,
-  // including ecc = 1) immediately overwrote "Parabola" with "Ellipse" - it
-  // could never survive. Braced here as a proper chain, and the parabola check
-  // now uses a small tolerance since floating-point ecc essentially never lands
-  // on exactly 1.0.
-  LOCAL motionType IS "Ellipse".
-  IF ABS(ecc - 1) < 1e-6 {
-    SET motionType TO "Parabola".
-  } ELSE IF ecc > 1 {
-    SET motionType TO "Hyperbola".
-  }
-  RETURN LEXICON("v_1", v_1,
-                 "v_2", v_2,
-                 "Motion Type", motionType,
-                 "Iterations", iterations,
-                 "Final Value", z,
-                 "r_1", r_1,
-                 "r_2", r_2,
-                 "mu", mu,
-                 "Short Way", shortWay).
-}
 
 FUNCTION porkchopDeltaV {
 	PARAMETER fromBody.
 	PARAMETER toBody.
 	PARAMETER sunBody.
-	PARAMETER solverType.
 	PARAMETER departureTime.
 	PARAMETER timeOfFlight.
 	PARAMETER seed IS LEXICON().
 	PARAMETER planeNormal IS V(0,0,0).
 	PARAMETER parkSMA IS 0.
 	PARAMETER parkEccentricity IS 0.
-	// Optional mutable out-parameter, same pass-by-reference pattern as "seed":
-	// if the caller passes its own LEXICON here, every key from the winning
-	// leg's own trajectory lexicon ("v_1", "v_2", "Motion Type", "Iterations",
-	// "Final Value", "r_1", "r_2", "mu", "Short Way") is COPIED into it - key
-	// by key, mutating the caller's existing LEXICON in place, since reassigning
-	// a parameter itself (SET statsOut TO someLexicon) would only repoint this
-	// function's own local copy of the reference and never be visible to the
-	// caller. If neither leg converges, only "Motion Type" is set (to "Failed"),
-	// so a caller can always safely read statsOut["Motion Type"]. Sits last so
-	// every existing positional call keeps working unchanged; callers that don't
-	// care simply omit it and it defaults to a throwaway LEXICON.
+	// Optional out-parameter: the winning arc's lexicon is copied into it key by key (reassigning the
+	// parameter would not reach the caller). If neither arc converges, only "Motion Type" ("Failed") and
+	// "Failure Reason" are set.
 	PARAMETER statsOut IS LEXICON("v_1", V(0,0,0),
 									"v_2", V(0,0,0),
 									"Motion Type", "Failed",
@@ -240,8 +53,7 @@ FUNCTION porkchopDeltaV {
 	LOCAL longStartSeed IS 0.5.
 	IF seed:HASKEY("longSeed") SET longStartSeed TO seed["longSeed"].
 
-	// The transfer leaves the departure body at departureTime and meets the destination timeOfFlight
-	// later, so the second end point of the Lambert problem is the destination's position then.
+	// The arc ends at the destination's position at arrival.
 	LOCAL arrivalTime IS departureTime + timeOfFlight.
 	LOCAL r_1 IS absolutePosition(fromBody, departureTime) - absolutePosition(sunBody, departureTime).
 	LOCAL r_2 IS absolutePosition(toBody, arrivalTime) - absolutePosition(sunBody, arrivalTime).
@@ -255,15 +67,8 @@ FUNCTION porkchopDeltaV {
 
 	// guard against a nonsensical (non-positive) time of flight from an out-of-range guess
 	IF timeOfFlight > 0 {
-		LOCAL shortTrajectory IS 0.
-		LOCAL longTrajectory IS 0.
-		IF solverType = "Gooding" {
-			SET shortTrajectory TO lambertGooding(r_1, r_2, timeOfFlight, sunBody:MU, TRUE, shortStartSeed).
-			SET longTrajectory TO lambertGooding(r_1, r_2, timeOfFlight, sunBody:MU, FALSE, longStartSeed).
-		} ELSE {
-			SET shortTrajectory TO lambertGauss(r_1, r_2, timeOfFlight, sunBody:MU, TRUE, shortStartSeed).
-			SET longTrajectory TO lambertGauss(r_1, r_2, timeOfFlight, sunBody:MU, FALSE, longStartSeed).
-		}
+		LOCAL shortTrajectory IS lambertGooding(r_1, r_2, timeOfFlight, sunBody:MU, TRUE, shortStartSeed).
+		LOCAL longTrajectory IS lambertGooding(r_1, r_2, timeOfFlight, sunBody:MU, FALSE, longStartSeed).
 		
 		SET failureReason TO "No convergence".
 		IF shortTrajectory:HASKEY("Failure Reason") SET failureReason TO shortTrajectory["Failure Reason"].
@@ -301,8 +106,7 @@ FUNCTION porkchopDeltaV {
 		}
 	}
 
-	// Mutate the caller's actual statsOut object (never reassign it - see the
-	// comment on the parameter above for why that wouldn't propagate back).
+	// Copy into the caller's statsOut (never reassign it).
 	IF winningTrajectory:ISTYPE("Lexicon") {
 		FOR statKey IN winningTrajectory:KEYS {
 			SET statsOut[statKey] TO winningTrajectory[statKey].
@@ -316,8 +120,8 @@ FUNCTION porkchopDeltaV {
 }
 
 // The same as porkchopDeltaV, but with the arguments reordered so that BIND can
-// fill in everything that is fixed for a whole search (bodies, parking orbit,
-// solver), leaving (departureTime, timeOfFlight, seed, statsOut) for the caller.
+// fill in everything that is fixed for a whole search (bodies, parking orbit),
+// leaving (departureTime, timeOfFlight, seed, statsOut) for the caller.
 // Pass parkSMA = 0 for "no parking orbit" (bare point-mass dV).
 FUNCTION porkchopDeltaVPlaneAware {
 	PARAMETER fromBody.
@@ -326,24 +130,22 @@ FUNCTION porkchopDeltaVPlaneAware {
 	PARAMETER planeNormal.
 	PARAMETER parkSMA.
 	PARAMETER parkEccentricity.
-	PARAMETER solver.
 	PARAMETER departureTime.
 	PARAMETER timeOfFlight.
 	PARAMETER seed IS LEXICON().
 	PARAMETER statsOut IS LEXICON().
 
-	RETURN porkchopDeltaV(fromBody, toBody, sunBody, solver, departureTime, timeOfFlight, seed, planeNormal, parkSMA, parkEccentricity, statsOut).
+	RETURN porkchopDeltaV(fromBody, toBody, sunBody, departureTime, timeOfFlight, seed, planeNormal, parkSMA, parkEccentricity, statsOut).
 }
 
 // Returns a delegate f(departureTime, timeOfFlight, seed, statsOut) (the last
 // two optional) that returns total dV, with everything else bound.
-// solverType is "Gauss" or "Gooding". Omit the parking-orbit arguments for the
+// Omit the parking-orbit arguments for the
 // bare point-mass cost.
 FUNCTION bindPorkchopDeltaV {
 	PARAMETER fromOrbitable.
 	PARAMETER toOrbitable.
 	PARAMETER sunBody.
-	PARAMETER solverType.
 	PARAMETER planeNormal IS V(0, 0, 0).
 	PARAMETER parkSMA IS 0.
 	PARAMETER parkEccentricity IS 0.
@@ -355,33 +157,25 @@ FUNCTION bindPorkchopDeltaV {
 	SET bound TO bound:BIND(planeNormal).
 	SET bound TO bound:BIND(parkSMA).
 	SET bound TO bound:BIND(parkEccentricity).
-	SET bound TO bound:BIND(solverType).
 	RETURN bound.
 }
 
-// Runs the coarse porkchop grid search over a window from buildTransferWindow.
-//
-// Passed:
-//   dvDelegate - f(departureTime, timeOfFlight, seed, statsOut) -> total dV; see bindPorkchopDeltaV
-//   window     - LEXICON from buildTransferWindow
-// Computation runs departure-outer, TOF-inner so the solver's warm-start seed
-// (fresh per departure) stays valid across a departure's whole TOF sweep. The
-// returned grid is TOF-major, with TOF in DESCENDING order (the window's flight times
-// reversed), as the CSV expects.
+// Runs the grid search over a window from buildTransferWindow.
+//   dvDelegate - f(departureTime, timeOfFlight, seed, statsOut) -> total dV
+//   window     - from buildTransferWindow
+// Cells are computed departure by departure, so the solver's seed (fresh per departure) carries across
+// that departure's flight times. The grid returned has one row per flight time, longest first.
 // Returns a LEXICON:
-//   "dv"                - LIST of rows, one per entry of "timeOfFlights"; each row a LIST of dV across "departureTimes". Failed cells hold invalidDeltaV.
-//   "timeOfFlights"     - LIST - flight time (s) of each row, descending
-//   "departureTimes"    - LIST - departure UT (s) of each column
-//   "departureBands"    - LIST - which window (0 for the first, 1 for the next, ...) each column's departure falls in
-//   "minDeltaV"         - LEXICON("value", "departureTime", "timeOfFlight") - best cell
-//   "motionTypeCounts"  - LEXICON - cells per motion type, including "Failed"
-//   "winningWay", "transferAngle", "rejectedArcs" - LISTs of rows laid out like "dv": the way round the winning arc
-//                       goes ("Short"/"Long"/"N/A"), its sweep angle (deg, or "N/A"), and how many arcs the cell rejected
-//                       for hitting the central body or leaving its SOI (0 where the cost function does not check)
-//   "failureReasonCounts" - LEXICON - failed cells per reason (statsOut["Failure Reason"], e.g. "No convergence",
-//                           "Intercepts the central body", "Leaves the central body"
-//   "totalCells", "startClock", "endClock", "duration" (game seconds), "realDuration" (wall-clock
-//   seconds, from KUNIVERSE:REALWORLDTIME - unaffected by time warp)
+//   "dv"               - LIST of rows (one per "timeOfFlights"), each a LIST of dV per "departureTimes"; failed cells hold invalidDeltaV
+//   "timeOfFlights"    - flight time (s) of each row, descending
+//   "departureTimes"   - departure UT of each column
+//   "departureBands"   - which window (0, 1, ...) each column falls in
+//   "minDeltaV"        - LEXICON("value", "departureTime", "timeOfFlight"), the best cell
+//   "motionTypeCounts" - cells per motion type, including "Failed"
+//   "winningWay", "transferAngle", "rejectedArcs" - rows like "dv": the winning arc's way round
+//                        ("Short"/"Long"/"N/A"), its sweep angle (deg), and how many arcs the cell rejected
+//   "failureReasonCounts" - failed cells per statsOut["Failure Reason"]
+//   "totalCells", "startClock", "endClock", "duration" (game s), "realDuration" (real s)
 FUNCTION porkchopGrid {
 	PARAMETER dvDelegate.
 	PARAMETER window.
@@ -395,16 +189,14 @@ FUNCTION porkchopGrid {
 	LOCAL departureBands IS LIST().
 	LOCAL motionTypeCounts IS LEXICON("Ellipse", 0, "Parabola", 0, "Hyperbola", 0, "Failed", 0).
 	LOCAL failureReasonCounts IS LEXICON().
-	// Per cell, laid out like dvRows: the way round the winning arc goes ("Short", "Long" or "N/A"),
-	// its sweep angle in degrees, and how many arcs were rejected for hitting the planet or leaving its SOI.
+	// Per cell, laid out like dvRows.
 	LOCAL wayRows IS LIST().
 	LOCAL angleRows IS LIST().
 	LOCAL rejectedRows IS LIST().
 	LOCAL totalCells IS 0.
 	LOCAL minDeltaV IS LEXICON("value", invalidDeltaV, "departureTime", window["startTime"], "timeOfFlight", 0).
 
-	// One empty row per TOF value, up front, so cells can be filled in departure-major order.
-	// The window lists flight times ascending; rows run longest first.
+	// One empty row per flight time, longest first.
 	FROM {LOCAL flightIndex IS window["timeOfFlights"]:LENGTH - 1.} UNTIL flightIndex < 0 STEP {SET flightIndex TO flightIndex - 1.} DO {
 		dvRows:ADD(LIST()).
 		wayRows:ADD(LIST()).
@@ -417,8 +209,7 @@ FUNCTION porkchopGrid {
 		LOCAL periodsSinceStart IS (departureTime - window["departureStart"]) / window["windowLength"].
 		PRINT "Calculating departure " + ROUND(periodsSinceStart, 3) + " windows in.".
 		departureTimes:ADD(departureTime).
-		// A hair of tolerance so a departure that lands exactly on a window boundary is not
-		// pushed into the previous window by roundoff.
+		// A hair of tolerance for a departure exactly on a window boundary.
 		departureBands:ADD(FLOOR(periodsSinceStart + 1e-9)).
 
 		// Filled in by the delegate; fresh per departure, shared across this departure's TOF sweep.
@@ -487,7 +278,7 @@ FUNCTION porkchopGrid {
 					"realDuration", KUNIVERSE:REALWORLDTIME - realStartTime).
 }
 
-// One line summarizing a grid's motion-type counts (hideEmptyTypes TRUE leaves out types with a zero count), e.g. "Ellipse: 120 (60%)   Failed: 80 (40%)   "
+// One line of a grid's motion-type counts (hideEmptyTypes leaves out zero counts).
 FUNCTION motionTypeSummary {
 	PARAMETER grid.
 	PARAMETER hideEmptyTypes IS FALSE.
@@ -502,8 +293,7 @@ FUNCTION motionTypeSummary {
 	RETURN summary.
 }
 
-// One line per failure reason of a grid, e.g. "No convergence: 120 (60%)", most common first;
-// an empty list if nothing failed. Each is a count of cells and its share of all the cells.
+// One line per failure reason of a grid (count and share of all cells), most common first.
 FUNCTION failureReasonLines {
 	PARAMETER grid.
 
@@ -523,8 +313,7 @@ FUNCTION failureReasonLines {
 	RETURN lines.
 }
 
-// The lowest-dV cell in each synodic-period band of a grid (a band is one synodic period of
-// departure dates, as recorded in the grid's "departureBands"). Returns LEXICON band ->
+// The lowest-dV cell in each departure window of a grid ("departureBands"). Returns LEXICON band ->
 // LEXICON("dv", "departureTime", "flightTime").
 FUNCTION porkchopBestPerBand {
 	PARAMETER grid.
@@ -571,17 +360,13 @@ FUNCTION writePorkchopBlock {
 	}
 }
 
-// Writes a grid to a CSV: the classic porkchop layout (TOF down the rows,
-// departure across the columns, "N/A" for failed cells), followed by the
-// search parameters, best cell, motion-type and failure-reason breakdowns, and
-// three more grids (winning way round, sweep angle, rejected arcs). Replaces any
-// existing file of that name. Nothing is written if the archive is not reachable (connectionToKSC);
-// the data is not saved anywhere else. Returns TRUE if the file was written.
+// Writes a grid to a CSV: the cost grid (flight time down, departure across, "N/A" for failed cells), the
+// search parameters, the best cell, the motion-type and failure-reason counts, and three more grids.
+// Replaces an existing file. Returns FALSE, writing nothing, if the archive is not reachable.
 FUNCTION writePorkchopCsv {
 	PARAMETER grid.
 	PARAMETER window.
 	PARAMETER fileName.
-	PARAMETER solverType.
 	PARAMETER fromOrbitable.
 	PARAMETER toOrbitable.
 
@@ -609,7 +394,7 @@ FUNCTION writePorkchopCsv {
 	}
 
 	LOG "" TO fileName.
-	LOG "Solver:," + solverType TO fileName.
+	LOG "Solver:,Gooding" TO fileName.
 	LOG "Calculation Start Time:," + grid["startClock"] TO fileName.
 	LOG "End Time:," + grid["endClock"] TO fileName.
 	LOG "Duration:," + grid["duration"] + "," + timeToString(grid["duration"]) TO fileName.
@@ -654,8 +439,7 @@ FUNCTION writePorkchopCsv {
 		LOG reason + "," + reasonCount + "," + ROUND(reasonCount / MAX(grid["totalCells"], 1) * 100, 2) + "%" TO fileName.
 	}
 
-	// Three more grids, laid out like the cost grid, to explain jumps in it: which way round the winning
-	// arc goes, how far it sweeps, and how many arcs the cell threw out for hitting the planet or leaving its SOI.
+	// Three more grids, laid out like the cost grid.
 	writePorkchopBlock(fileName, "Winning way round (Short or Long; N/A = no valid arc)", grid, window, grid["winningWay"]).
 	writePorkchopBlock(fileName, "Winning arc sweep angle (deg; N/A = no valid arc)", grid, window, grid["transferAngle"]).
 	writePorkchopBlock(fileName, "Arcs rejected for hitting the central body or leaving its SOI (count)", grid, window, grid["rejectedArcs"]).
@@ -664,27 +448,16 @@ FUNCTION writePorkchopCsv {
 
 // ----------------------------------------------------------------------------
 // solveBurnAtPoint
-// The exact departure burn from a single point: returns the velocity (relative
-// to the body) a vessel must have at burnPosition to leave on the hyperbola
-// whose asymptote velocity is exactly vInfinity (direction AND magnitude).
-// No assumption that the burn is tangential, at periapsis, or in the parking
-// plane - the hyperbola's plane is fixed by burnPosition and vInfinity's
-// direction, and the speed by energy: |v|^2 = |vInfinity|^2 + 2*mu/r.
-//
-// With sweep angle D = the in-plane angle the vessel travels from burnPosition to
-// the asymptote direction, the tangential and radial speeds are
+// The velocity (relative to the body) a vessel must have at burnPosition to leave on the hyperbola whose
+// asymptote velocity is vInfinity (direction and magnitude). The burn need not be tangential, at periapsis
+// or in the parking plane: the plane is fixed by burnPosition and vInfinity, the speed by energy.
+// With D the in-plane angle from burnPosition to the asymptote direction:
 //     vt^2 - |vInf| * SIN(D) * vt - (mu/r) * (1 - COS(D)) = 0   (positive root)
 //     vr   = |vInf| * COS(D) + mu * SIN(D) / (r * vt)
-// D can be measured either way round the plane: the short way (the angle
-// between burnPosition and vInfinity) or the long way (360 minus that). Each
-// gives a valid hyperbola, going round in opposite directions - this returns
-// both, as a LIST of two velocity vectors, so the caller can take the cheaper.
-// (Checked numerically against orbital elements: asymptote direction and speed
-// reproduced to ~1e-13 for random positions, directions and speeds.)
-//
-//   tangentHint - only used if vInfinity is (anti)parallel to burnPosition, where
-//                 the plane is otherwise undefined: the plane then contains this vector.
-//   senses      - which sweep directions to return, in order: 1 = short way, 2 = long way.
+// D can go the short way round or the long way (360 minus it); each is a valid hyperbola.
+//   tangentHint - the plane contains this if vInfinity is (anti)parallel to burnPosition
+//   senses      - which sweep directions to return, in order: 1 = short way, 2 = long way
+// Returns a LIST of velocity vectors, one per sense.
 FUNCTION solveBurnAtPoint {
 	PARAMETER burnPosition.
 	PARAMETER vInfinity.
@@ -715,8 +488,7 @@ FUNCTION solveBurnAtPoint {
 		LOCAL sinSweep IS SIN(sweepAngle).
 		LOCAL cosSweep IS COS(sweepAngle).
 		LOCAL tangentialSpeed IS (vInfMag * sinSweep + SQRT((vInfMag * sinSweep) ^ 2 + 4 * mu * (1 - cosSweep) / burnRadius)) / 2.
-		// tangentialSpeed = 0 only for a purely radial burn (sweep angle 0), where the
-		// radial-speed formula is 0/0 - take it straight from energy instead.
+		// A purely radial burn (sweep 0): the radial speed comes from energy.
 		LOCAL radialSpeed IS SQRT(vInfMag ^ 2 + 2 * mu / burnRadius).
 		IF tangentialSpeed > 1e-6 SET radialSpeed TO vInfMag * cosSweep + mu * sinSweep / (burnRadius * tangentialSpeed).
 		options:ADD(radialUnit * radialSpeed + sweepDirection * tangentialSpeed).
@@ -732,10 +504,8 @@ FUNCTION planeMismatchAngle {
 	RETURN 90 - VANG(vInfinityVector, planeNormal).
 }
 
-// Realistic departure delta-v: a single burn that both reaches escape energy
-// AND absorbs the unavoidable plane-change component, via the standard
-// combined-maneuver law of cosines (correct for any speed ratio). Assumes
-// burn at parking-orbit periapsis.
+// Departure delta-V of one burn at the parking orbit's periapsis that reaches escape energy and
+// absorbs the plane change (law of cosines).
 FUNCTION combinedDepartureDeltaV {
 	PARAMETER vInfinityMag.
 	PARAMETER mismatchAngleDeg.
@@ -749,19 +519,11 @@ FUNCTION combinedDepartureDeltaV {
 	RETURN SQRT(vPark ^ 2 + vHyperbola ^ 2 - 2 * vPark * vHyperbola * COS(mismatchAngleDeg)).
 }
 
-// Following: Gooding, A procedure for the solution of Lambert's orbital
-// boundary-value problem, Celestial Mechanics and Astronomy 48 (1990),
-// 145-165; Der, The Superior Lambert Algorithm. Uses Sun/Gooding's bounded
-// path parameter x (x in (-1,1) for ellipses, x>1 for hyperbolas, x=1 exactly
-// at the parabolic limit) rather than the unbounded universal-variable z used
-// elsewhere in this project (see lambertGauss in
-// this file) - x's bounded domain is what makes it possible to bracket a
-// root and solve it with findZeroBrent (in library.ks), instead of a derivative-based
-// iteration with no convergence guarantee.
-//
-// departureVector/arrivalVector are positions relative to the same central
-// body; timeOfFlight is in seconds; shortWay controls which way (short
-// way/long way) the transfer angle is measured.
+// Lambert's problem by Gooding's method (Celestial Mechanics 48 (1990) 145-165). The path parameter x is
+// bounded (-1 to 1 for an ellipse, above 1 for a hyperbola), so the root is bracketed and solved with
+// findZeroBrent.
+// departureVector/arrivalVector are positions relative to the central body; shortWay picks the arc that
+// sweeps under 180 degrees.
 FUNCTION lambertGooding {
 	PARAMETER departureVector.
 	PARAMETER arrivalVector.
@@ -773,11 +535,7 @@ FUNCTION lambertGooding {
 	PARAMETER boundaryTolerance IS 5 * tolerance.
 
 	LOCAL sqrtMu IS SQRT(mu).
-	// The transfer angle is geometric, as in lambertGauss: the angle between the two vectors for
-	// the short way (the arc that sweeps under 180 degrees), and 360 minus it for the long way.
-	// (This used to take the sense from the Y component of VCRS(arrival, departure), which only
-	// means something for transfers near the XZ plane - the ecliptic - and mislabelled the two
-	// arcs for an orbit such as a polar one. Together the two arcs are the same set as before.)
+	// The transfer angle: the angle between the two vectors the short way, 360 minus it the long way.
 	LOCAL transferAngle IS VANG(departureVector, arrivalVector).
 	IF NOT shortWay SET transferAngle TO 360 - transferAngle.
 
@@ -823,9 +581,7 @@ FUNCTION lambertGooding {
 		SET x TO 1.
 		SET z TO 1. // sqrt(pathParameterSquared + oneMinusPathParameterSquared) = sqrt(1)
 	} ELSE {
-		// Gooding/Der's own analytic initial guess - used here as the seed
-		// for a bracket search rather than for a derivative-based iteration.
-		// If xGuess was passed in externally, use that instead of these estimates.
+		// Gooding's analytic first guess seeds the bracket search, unless xGuess was given.
 		IF xGuess = "default" {
 			IF normalizedTime < minEnergyTime {
 				SET xGuess TO minEnergyTime * (minEnergyTime / normalizedTime - 1).
@@ -852,10 +608,7 @@ FUNCTION lambertGooding {
 		LOCAL initialStep IS MAX(ABS(xGuess) * 0.5, boundaryTolerance * 10).
 		LOCAL bracket IS bracketAroundGuess(residualDelegate, xGuess, domainLow, domainHigh, initialStep).
 
-		// A degenerate bracket (bracketAroundGuess never found a sign change) means
-		// there's nothing valid to hand findZeroBrent - flag it now rather than
-		// letting findZeroBrent's own graceful fallback silently report a
-		// plausible-looking but unconverged x as if it were a real solution.
+		// No sign change found: there is nothing valid to give findZeroBrent.
 		IF bracket["low"] = bracket["high"] {
 			SET converged TO FALSE.
 			SET failReason TO "No bracket for root".
@@ -864,12 +617,7 @@ FUNCTION lambertGooding {
 		SET x TO findZeroBrent(residualDelegate, bracket["low"], bracket["high"], tolerance).
 		SET z TO SQRT(pathParameterSquared * x * x + oneMinusPathParameterSquared).
 
-		// findZeroBrent's own stopping criterion is on bracket WIDTH, not residual
-		// size, so also directly check that x actually solves the time equation
-		// to within a reasonable tolerance before trusting it - this is what lets
-		// "Motion Type" here mean the same thing it does in
-		// lambertGauss ("Failed" really means failed), which
-		// matters for comparing the two solvers' reliability fairly.
+		// findZeroBrent stops on bracket width, so check that x really solves the time equation.
 		IF ABS(residualDelegate(x)) > boundaryTolerance {
 			SET converged TO FALSE.
 			IF failReason = "" SET failReason TO "Root not converged".
@@ -905,12 +653,8 @@ FUNCTION lambertGooding {
 					"Short Way", shortWay).
 }
 
-// Normalized-time residual T(x) - normalizedTime, whose root (for a fixed
-// transfer geometry) is the x that solves the Lambert problem. All arguments
-// except x are meant to be BIND-ed ahead of time (see lambertGooding), leaving a
-// single-argument delegate suitable for findZeroBrent - x has to be last so
-// BIND can fix every other argument first and leave x as the one thing that
-// varies from call to call during root-finding.
+// Normalized-time residual T(x) - normalizedTime; its root is the x that solves the Lambert problem.
+// x is last so that everything else can be BIND-ed (see lambertGooding).
 FUNCTION lambertTimeResidual {
 	PARAMETER pathParameter.
 	PARAMETER pathParameterSquared.
@@ -936,10 +680,8 @@ FUNCTION lambertTimeResidual {
 			SET d TO LN(f + g).
 			SET timeValue TO (pathParameter * z + d / y - x) / u.
 		} ELSE {
-			// A hyperbola with a huge x (the bracket search probes out to 1e8): f and g are
-			// differences of nearly equal huge numbers, so f + g can come out zero or negative
-			// from roundoff, and LN of that is NaN, which stops the script. The time of flight
-			// tends to 0 as x grows without limit, so use that.
+			// A hyperbola with a huge x: f + g can round to zero or below, and LN of that stops the script.
+			// The time of flight tends to 0 there.
 			SET timeValue TO 0.
 		}
 	}
@@ -953,12 +695,9 @@ FUNCTION lambertTimeResidual {
 // Orbit propagation
 // ----------------------------------------------------------------------------
 
-// The state (relative to the central body) of the real orbit behind an orbit spec at a UT, from
-// the game's own prediction (POSITIONAT and VELOCITYAT). Only for a spec of a real orbitable,
-// which has "orbitable" and "central" (see attachLiveOrbit). POSITIONAT holds the central body at
-// its position now, so that is what is subtracted: its position at ut would add the central
-// body's own motion. The prediction follows the orbitable's patches, so ut must be before the
-// spec's "patchUT" (see attachLiveOrbit).
+// The state (relative to the central body) of a spec's real orbit at a UT, from the game's prediction.
+// Needs "orbitable" and "central" (attachLiveOrbit). POSITIONAT holds the central body at its position
+// now, so that is what is subtracted. ut must be before the spec's "patchUT".
 // Returns LEXICON("position", "velocity").
 FUNCTION orbitStateAt {
 	PARAMETER orbitSpec.
@@ -995,28 +734,21 @@ FUNCTION hyperbolaTransitTime {
 	RETURN (endMean - startMean) / meanMotion.
 }
 
-// The exact burn from one point that leaves the body's SOI with a given velocity.
+// The burn from one point that leaves the body's SOI with a given velocity.
 //   burnPosition - relative to the body
-//   vExit        - the velocity (relative to the body) wanted AT the SOI edge, e.g.
-//                  the Lambert departure velocity minus the body's own velocity
+//   vExit        - velocity (relative to the body) wanted AT the SOI edge
 //   mu, soiRadius - of the body
-//   tangentHint  - passed to solveBurnAtPoint (used if the geometry is degenerate); the
-//                  parking-orbit velocity is a good choice
-//   minPeriapsis - m from the body's centre; burns whose hyperbola dips below it
-//                  (e.g. into the planet or its atmosphere) are dropped
-//   soiIterations - how many times the asymptote direction is corrected for the
-//                  hyperbola still turning between the SOI edge and infinity
-//                  (3-4 is enough: ~0.005 deg on the Mun, less on Kerbin)
+//   tangentHint  - passed to solveBurnAtPoint; the parking-orbit velocity is a good choice
+//   minPeriapsis - m from the body's centre; a hyperbola that dips below it is dropped
+//   soiIterations - passes correcting the asymptote direction for the hyperbola still turning
+//                  between the SOI edge and infinity (3-4 is enough)
 //   senses       - which sweep directions to solve (1 = short way, 2 = long way)
-// Returns a LIST of candidate burns - one per sweep direction (short way / long way),
-// minus any rejected - each a LEXICON with:
+// Returns a LIST of candidates, one per usable sense, each a LEXICON:
 //   "burnVelocity" - velocity (relative to the body) right after the burn
 //   "sense", "eccentricity", "periapsis", "vInfinity"
 //   "trueAnomalyBurn", "trueAnomalySOI" - on the hyperbola, degrees
-//   "transitTime"  - s from the burn to the SOI edge (so tSOI = burn time + transitTime)
+//   "transitTime"  - s from the burn to the SOI edge
 // Empty if vExit is below escape speed at the SOI edge.
-// (Checked against a numerical integration to the SOI edge: speed to ~1e-4,
-// heading to ~0.005 deg, transit time to ~1e-7.)
 FUNCTION solveEjectionAtPoint {
 	PARAMETER burnPosition.
 	PARAMETER vExit.
@@ -1058,9 +790,7 @@ FUNCTION solveEjectionAtPoint {
 			}
 			LOCAL sideUnit IS tangentialVector / tangentialSpeed.
 
-			// Elements of the hyperbola this burn puts the ship on, in the plane of
-			// (radialUnit, sideUnit): eccentricity vector components, true anomaly
-			// of the burn, and of the SOI-edge crossing.
+			// Elements of the hyperbola, in the plane of (radialUnit, sideUnit).
 			LOCAL semiLatus IS (burnRadius * tangentialSpeed) ^ 2 / mu.
 			LOCAL eccentricityRadial IS burnRadius * tangentialSpeed ^ 2 / mu - 1.
 			LOCAL eccentricitySide IS -burnRadius * tangentialSpeed * radialSpeed / mu.
@@ -1069,9 +799,7 @@ FUNCTION solveEjectionAtPoint {
 			SET soiAnomaly TO ARCCOS(MAX(-1, MIN(1, (semiLatus / soiRadius - 1) / eccentricity))).
 			SET periapsisRadius TO semiLatus / (1 + eccentricity).
 
-			// The velocity heading keeps turning, by headingGap, between the SOI edge
-			// and the asymptote. The asymptote therefore lies headingGap beyond the
-			// wanted exit heading, in the direction of travel - rotate the target by it.
+			// The heading turns by headingGap between the SOI edge and the asymptote: rotate the target by it.
 			LOCAL asymptoteAnomaly IS ARCCOS(MAX(-1, MIN(1, -1 / eccentricity))).
 			LOCAL headingGap IS ARCTAN2(eccentricity + COS(asymptoteAnomaly), -SIN(asymptoteAnomaly))
 				- ARCTAN2(eccentricity + COS(soiAnomaly), -SIN(soiAnomaly)).
@@ -1108,15 +836,9 @@ FUNCTION bodyClearanceRadius {
 	RETURN clearance.
 }
 
-// Builds an "orbit"-mode spec from a state vector (relative to the central body, at
-// time epoch UT). An escape orbit (eccentricity of 1 or more) is allowed and has "period" 0 (and a
-// negative "sma"). A ship on one is handled by ejectionForExitTime and ejectionDeltaVForExit as a correction
-// burn; the searches that need a repeating orbit (bestEjectionFromOrbit, phaseLockedDeparture) must not be
-// given it.
-// A parabola has no semi-major axis (1/sma is 0), so one is treated as the mildest hyperbola that can be
-// told apart from it - 1/sma of -1e-9 times 2/r, an excess speed of about 3e-5 of the escape speed - and the
-// spec says so with "parabolic". Nothing then divides by zero, and the error that adds is far below the
-// precision of a state vector.
+// An "orbit"-mode spec from a state vector (relative to the central body, at UT epoch). An escape orbit has
+// "period" 0 and a negative "sma"; the searches that need a repeating orbit must not be given one. A parabola
+// is treated as the mildest hyperbola ("parabolic" is TRUE), so nothing divides by zero.
 FUNCTION makeOrbitSpec {
 	PARAMETER parkPosition.
 	PARAMETER parkVelocity.
@@ -1132,8 +854,7 @@ FUNCTION makeOrbitSpec {
 	// h^2 = mu * sma * (1 - e^2); the periapsis radius is what ejectionLowerBound needs.
 	LOCAL momentumSize IS VCRS(parkPosition, parkVelocity):MAG.
 	LOCAL eccentricity IS SQRT(MAX(0, 1 - momentumSize ^ 2 / (mu * sma))).
-	// An escape orbit (negative sma) has no period; 0 marks that, and nothing that needs one (the
-	// burn-phase searches, which are for a parking orbit) may be given such a spec.
+	// An escape orbit has no period: 0 marks that.
 	LOCAL orbitPeriod IS 0.
 	IF sma > 0 SET orbitPeriod TO 2 * CONSTANT:PI * SQRT(sma ^ 3 / mu).
 	RETURN LEXICON("mode", "orbit",
@@ -1149,10 +870,8 @@ FUNCTION makeOrbitSpec {
 					"minPeriapsis", minPeriapsis).
 }
 
-// Marks an "orbit"-mode spec as the orbit of a real orbitable, so orbitStateAt can predict its
-// state. Adds "orbitable", "central" (the body it orbits) and "patchUT": the UT its orbit changes
-// patch (an SOI change), or 0 if it has no next patch. A prediction after that UT is not on this
-// orbit. Returns the spec.
+// Marks a spec as the orbit of a real orbitable, for orbitStateAt: adds "orbitable", "central" and
+// "patchUT" (the UT its orbit changes patch, 0 for none). Returns the spec.
 FUNCTION attachLiveOrbit {
 	PARAMETER orbitSpec.
 	PARAMETER orbitable.
@@ -1164,16 +883,21 @@ FUNCTION attachLiveOrbit {
 	RETURN orbitSpec.
 }
 
-// Case 2: the spec for a vessel that is already in its parking orbit, as of right now.
-// This captures the whole orbit - both angles of its plane, its shape, and where the
-// ship is in it.
+// Case 2: the spec of a vessel in its parking orbit, as of now.
 FUNCTION orbitSpecFromVessel {
 	PARAMETER vesselObject IS SHIP.
 
 	LOCAL parentBody IS vesselObject:BODY.
-	RETURN attachLiveOrbit(makeOrbitSpec(vesselObject:POSITION - parentBody:POSITION, vesselObject:VELOCITY:ORBIT,
+	LOCAL liveSpec IS attachLiveOrbit(makeOrbitSpec(vesselObject:POSITION - parentBody:POSITION, vesselObject:VELOCITY:ORBIT,
 											TIME:SECONDS, parentBody:MU, bodyClearanceRadius(parentBody)),
 							vesselObject, parentBody).
+	// Size and period come from the game's own orbit: from one state vector the period is off by parts per
+	// million, which is tens of seconds of burn phase over the thousands of orbits before a departure.
+	IF liveSpec["period"] > 0 AND vesselObject:ORBIT:ECCENTRICITY < 1 {
+		SET liveSpec["sma"] TO vesselObject:ORBIT:SEMIMAJORAXIS.
+		SET liveSpec["period"] TO vesselObject:ORBIT:PERIOD.
+	}
+	RETURN liveSpec.
 }
 
 // Case 1: the spec for a ship that has not launched yet. A circular parking orbit
@@ -1212,16 +936,12 @@ FUNCTION circularOrbitState {
 					"velocity", (secondUnit * COS(phase) - firstUnit * SIN(phase)) * circularSpeed).
 }
 
-// Case 1: designs the parking orbit for a given departure. The plane is the one that
-// contains the departure direction (minimum inclination), raised to the launch site's
-// latitude if that is the binding floor (see computeRecommendedParkingPlane) - so
-// if the latitude does not bind there is no plane-change cost at all.
+// Case 1: designs the parking orbit for a departure: the plane that contains the departure direction,
+// raised to the launch site's latitude if that binds (computeRecommendedParkingPlane).
 //   designSpecification - from designSpec
 //   vExit               - velocity wanted at the SOI edge (relative to the body)
-// Returns an "orbit"-mode spec (epoch 0) with extra keys "inclination", "lan",
-// "alternateLan" (a second node that does equally well when latitude binds),
-// "latitudeConstraintBinding", "pureMinimumInclination" (before the latitude floor),
-// "verificationResidual" (should be ~0) and "planeNormal".
+// Returns an "orbit"-mode spec (epoch 0) with "inclination", "lan", "alternateLan",
+// "latitudeConstraintBinding", "pureMinimumInclination", "verificationResidual" and "planeNormal".
 FUNCTION designParkingOrbit {
 	PARAMETER designSpecification.
 	PARAMETER vExit.
@@ -1246,27 +966,12 @@ FUNCTION designParkingOrbit {
 // Ejection cost from an orbit
 // ----------------------------------------------------------------------------
 
-// How hard the ejection search works. The cost of a transfer search is dominated by this: every
-// cell of a grid, and every step of a hill climb, runs an ejection search for each Lambert
-// solution.
-//   "full"  - 48 burn-point samples, 4 SOI-correction passes in the cost model, 8 polish steps.
-//             Use for anything that is reported.
-//   "quick" - 24 samples, 2 passes, 6 polish steps. Use for the coarse grid and hill climb, then
-//             re-price the winner with "full".
-// Either way the best point found is then priced with the exact solver (solveEjectionAtPoint with
-// the same number of passes), both at the polished point and at the best sample.
-// Measured offline against a dense search (720 burn points, exact solver) on random orbits and
-// exit directions at the Mun - the hard case, because its small SOI makes the heading correction
-// large and the circular orbit only 30 km above the clearance radius makes the feasible region a
-// narrow sliver: quick lands within 0.3% of the true minimum in 96% of cases and within 1% in 97%;
-// full is within 0.3% in 98% and within 1% in 99%. For comparison, sampling the orbit in time and
-// solving every sample exactly (what this replaced) managed 88% / 95% (8 samples) and 97.5% / 98%
-// (16 samples, twice the solves). Kerbin-like orbits are easier. The misses that remain are cases
-// where the cost is nearly flat across two separate regions.
-// It also sets how carefully transferDeltaV places the start of the Lambert arc at the departure
-// body's SOI-exit point (see there): "exitPasses" Lambert re-solves from the exit point estimated
-// along the exit heading, and "exactExit" (full only) a final refinement from the exit point the
-// ejection hyperbola actually reaches.
+// How hard the ejection search works; it dominates the cost of a transfer search.
+//   "full"  - 48 burn-point samples, 4 SOI-correction passes, 8 polish steps. For anything reported.
+//   "quick" - 24 samples, 2 passes, 6 polish steps. For the coarse grid and the hill climb.
+// The best point is then priced with the exact solver (solveEjectionAtPoint).
+// "exitPasses" and "exactExit" set how carefully transferDeltaV places the start of the Lambert arc at
+// the SOI-exit point (see there).
 // Returns a LEXICON: "samples", "soiIterations", "polishIterations", "exitPasses", "exactExit".
 FUNCTION ejectionPrecision {
 	PARAMETER precisionName.
@@ -1275,12 +980,9 @@ FUNCTION ejectionPrecision {
 	RETURN LEXICON("samples", 48, "soiIterations", 4, "polishIterations", 8, "exitPasses", 2, "exactExit", TRUE).
 }
 
-// A cheap, rigorous lower bound on the ejection delta-V for an orbit spec ("orbit" or "design")
-// and a hyperbolic excess speed vInfinity. Whatever the burn, |vBurn - vPark| >= | |vBurn| - |vPark| |,
-// with |vBurn| = SQRT(vInfinity^2 + 2*mu/r) by energy. That gap grows with the burn radius r, so it is
-// smallest at periapsis. (Checked on 588 random searches: never violated.)
-// For a "design" spec (a circular orbit in a plane that contains the departure direction) the bound
-// is not just a bound - it is the exact cost, since a tangential burn at periapsis is then possible.
+// A rigorous lower bound on the ejection delta-V for an orbit spec and an excess speed vInfinity:
+// |vBurn - vPark| >= |vBurn| - |vPark|, smallest at periapsis. For a "design" spec whose plane contains
+// the departure direction it is the exact cost (a tangential burn at periapsis).
 FUNCTION ejectionLowerBound {
 	PARAMETER orbitSpec.
 	PARAMETER vInfinity.
@@ -1298,46 +1000,22 @@ FUNCTION ejectionLowerBound {
 	RETURN SQRT(vInfinity ^ 2 + 2 * mu / burnRadius) - parkSpeed.
 }
 
-// The cheapest ejection burn anywhere around an "orbit"-mode spec ("phase-free"), found by a
-// search over TRUE ANOMALY using a scalar model of the cost.
-//
-// Why this is cheap. For a burn at a point of the parking orbit, the exact burn (solveBurnAtPoint)
-// lies in the plane of that point and the exit direction, and its radial and tangential speeds
-// depend only on the sweep angle between them (cos D = r-hat . exit-hat, for the short way round,
-// or 360 - D the long way). The parking velocity has a radial part (mu/h)*e*sin(nu) and a
-// tangential part (mu/h)*(1 + e*cos(nu)). The only geometry left is the angle between the two
-// tangent directions (the hyperbola plane's and the parking orbit's), and that is also a scalar:
-// cos(tilt) = (exit . motion-hat at nu) / sin D. So with the exit direction resolved once into the
-// orbit's own axes (A along periapsis, B along the motion at periapsis), the cost at any true
-// anomaly is scalar arithmetic:
-//     cos D = A*cos(nu) + B*sin(nu)
+// The cheapest ejection burn anywhere around an "orbit"-mode spec ("phase-free"): a search over true
+// anomaly with a scalar model of the cost, then the exact solver at the best point.
+// With the exit direction resolved into the orbit's axes (A along periapsis, B along the motion at
+// periapsis), the cost at true anomaly nu needs no vectors:
+//     cos D = A*cos(nu) + B*sin(nu)                   (D: the sweep angle of solveBurnAtPoint)
+//     cos(tilt) = (B*cos(nu) - A*sin(nu)) / sin D     (between the two tangent directions)
 //     cost^2 = (vr - vParkRadial)^2 + vt^2 + vParkTangential^2 - 2*vt*vParkTangential*cos(tilt)
-// with vt and vr from the quadratic in solveBurnAtPoint. No Kepler solve and no vectors per sample.
-//
-// The SOI-edge heading correction (the hyperbola is still turning at the SOI edge, so the asymptote
-// lies a little beyond the exit direction) is only a change of the sweep angle, so it is scalar too:
-// each pass computes the hyperbola's eccentricity and true anomalies and adds the heading gap to the
-// sweep, exactly as solveEjectionAtPoint does. It matters little at Kerbin (0.03 degrees) and a lot
-// at a small moon (about 2 degrees at the Mun), where leaving it out misplaces the best burn and the
-// edge of the feasible region. (Checked against the vector solve at 3,695 random Mun burn points:
-// equal to 1e-9 at all but 3, which sit at a sweep of about 179 degrees where the burn plane is
-// degenerate.)
-//
-// A cost that cannot clear the planet is not a flat "invalid": it is invalidDeltaV plus how far the
-// hyperbola's periapsis is below the clearance, so a scan with no feasible sample still points
-// toward the feasible sliver and the polish can walk into it.
-//
-// For a circular orbit in a plane containing the exit direction this reduces to the hyperbolic
-// turning-angle picture (the best burn is the asymptote angle behind the exit direction), which is
-// exact there but poor once the plane is tilted - the best burn then stops being tangential - so it
-// is not used on its own.
-//
-//   vExit        - velocity wanted at the SOI edge, relative to the body
-//   soiRadius    - of the body
-//   precision    - from ejectionPrecision: samples around the orbit, correction passes, polish steps
-// Returns a LEXICON with "deltaV" (invalidDeltaV if there is no valid burn), "trueAnomaly" (degrees)
-// and "offset" (s after the spec's epoch) of the burn point, "burnPosition", "parkVelocity",
-// "dvVector", "burnVelocity" and the "ejection" candidate from solveEjectionAtPoint that won.
+// The SOI-edge heading correction only changes the sweep angle, so it is scalar too.
+// A burn that cannot clear the planet costs invalidDeltaV plus how far its periapsis is below the
+// clearance, so the search is still led toward the feasible region.
+//   vExit     - velocity wanted at the SOI edge, relative to the body
+//   soiRadius - of the body
+//   precision - from ejectionPrecision
+// Returns a LEXICON: "deltaV" (invalidDeltaV if no valid burn), "trueAnomaly" (deg) and "offset" (s after
+// the spec's epoch) of the burn point, "burnPosition", "parkVelocity", "dvVector", "burnVelocity" and the
+// winning "ejection" candidate from solveEjectionAtPoint.
 FUNCTION bestEjectionFromOrbit {
 	PARAMETER orbitSpec.
 	PARAMETER vExit.
@@ -1351,11 +1029,8 @@ FUNCTION bestEjectionFromOrbit {
 	LOCAL vInfinity IS SQRT(vInfinitySquared).
 	LOCAL correctionPasses IS precision["soiIterations"].
 
-	// The orbit's own axes: periapsis direction, the direction of motion at periapsis, and the
-	// scalars that give position and velocity at any true anomaly. Only the part of the
-	// eccentricity vector in the orbit plane is kept: rounding noise has an out-of-plane part, and
-	// for a (near) circular orbit that noise is all there is. Below 1e-5 the orbit is treated as
-	// circular and any in-plane direction (here, toward the ship) is the zero of true anomaly.
+	// The orbit's own axes. Only the in-plane part of the eccentricity vector is kept; below 1e-5 the orbit
+	// is treated as circular, with true anomaly measured from the ship.
 	LOCAL startPosition IS orbitSpec["position"].
 	LOCAL momentumVector IS VCRS(startPosition, orbitSpec["velocity"]).
 	LOCAL momentumSize IS momentumVector:MAG.
@@ -1506,22 +1181,15 @@ FUNCTION bestEjectionFromOrbit {
 	RETURN best.
 }
 
-// The cheapest correction burn for a ship already on an escape orbit, with the SOI exit time left free:
-// whichever burn time on the ship's own orbit reaches vExit at the SOI edge for the least delta-V, at
-// whatever time that burn then exits. This is the escape orbit's counterpart of bestEjectionFromOrbit.
-// (Fixing the exit time as well, as ejectionForExitTime does, asks too much of a ship that has already
-// left: for a given exit velocity its exit time can only move by minutes, so a grid of exit times hours
-// apart found almost no burn that fitted, and what it did find was the wrong way round the planet.)
-// The burn times looked at run from earliestBurnUT to exitMargin before the ship's own SOI exit, where
-// the predictions (POSITIONAT) are still on this patch and the burn can be over before the ship leaves.
-// A coarse scan of precision["samples"] burn times, then a golden-section polish round the best one.
+// The cheapest correction burn for a ship on an escape orbit, with the SOI exit time left free: the burn
+// time on its own orbit that reaches vExit at the SOI edge for the least delta-V (the escape orbit's
+// counterpart of bestEjectionFromOrbit). Burn times run from earliestBurnUT to exitMargin before the
+// ship's own SOI exit: a coarse scan, then a golden-section polish.
 //   orbitSpec      - "orbit" mode, an escape orbit (period 0), with "patchUT"
 //   vExit          - velocity wanted at the SOI edge, relative to the body
 //   earliestBurnUT - burns earlier than this are not allowed
-// Returns a LEXICON like ejectionForExitTime's, with "exitUT" (burnUT + transitTime) as well; "deltaV" is
-// invalidDeltaV if no burn works. The exit time it gives is where the burn really leaves the SOI, so a
-// caller that priced the transfer at some other tSOI moves tSOI to "exitUT" and prices again (see
-// escapeLockedDeparture).
+// Returns a LEXICON like ejectionForExitTime's, plus "exitUT" (burnUT + transitTime): where the burn
+// really leaves the SOI (see escapeLockedDeparture).
 FUNCTION ejectionFreeExit {
 	PARAMETER orbitSpec.
 	PARAMETER vExit.
@@ -1533,8 +1201,7 @@ FUNCTION ejectionFreeExit {
 	IF NOT orbitSpec:HASKEY("patchUT") RETURN result.
 	IF orbitSpec["patchUT"] <= 0 RETURN result.
 
-	// How long before the ship's own exit the last burn can be: the burn has a length of its own, which
-	// is not known here.
+	// How long before the ship's own exit the last burn can be (the burn has a length of its own).
 	LOCAL exitMargin IS 300.
 	LOCAL probeStart IS MAX(earliestBurnUT, orbitSpec["epoch"]).
 	LOCAL lastBurnUT IS orbitSpec["patchUT"] - exitMargin.
@@ -1594,31 +1261,19 @@ FUNCTION ejectionFreeExit {
 	RETURN result.
 }
 
-// The ejection burn when the SOI exit time tSOI is fixed ("exact timing"): the burn
-// happens transitTime before tSOI, and transitTime depends on where in the orbit the
-// burn is, so the burn time is the root of
+// The ejection burn when the SOI exit time tSOI is fixed ("exact timing"). The burn is transitTime before
+// tSOI and transitTime depends on the burn point, so the burn time is the root of
 //     burnUT + transitTime(burnUT) - tSOI = 0
-// found separately for each sweep direction (a plain fixed-point iteration on this
-// is NOT safe - the transit time changes by up to ~1 s per second of burn time, so
-// it can diverge). The transit-time range over one orbit sets the search window; the
-// window is sampled for sign changes, each bracket is polished with findZeroBrent, and
-// the cheapest valid root over both directions wins.
-// An escape orbit (period 0) does not repeat, so the burn times looked at run from earliestBurnUT to
-// the ship's SOI exit (orbitSpec["patchUT"]) or tSOI, whichever is sooner. This is the correction
-// burn of a ship already on its way out: it moves the exit onto the wanted exit velocity and time.
-// (Only worth asking for when the exit time really is fixed. For a ship already on its way out that
-// is a very narrow target, so the search uses ejectionFreeExit instead and moves tSOI to its exit time.)
-//   orbitSpec - "orbit" mode (a real orbit; the burn point is then dictated)
+// for each sweep direction. The transit-time range over one orbit sets the search window; it is sampled
+// for sign changes, each bracket is solved with findZeroBrent, and the cheapest valid root wins.
+// For an escape orbit (period 0) the burn times run from earliestBurnUT to the ship's SOI exit or tSOI.
+//   orbitSpec - "orbit" mode
 //   vExit     - velocity wanted at the SOI edge, relative to the body
 //   tSOI      - UT the ship should cross the SOI edge
-//   earliestBurnUT - UT before which the burn is impossible (e.g. now + a margin); a burn
-//                    earlier than this is ignored
+//   earliestBurnUT - an earlier burn is ignored
 //   scanSamples - samples for the transit-time range, and again for the root bracketing
-// Returns a LEXICON with "deltaV", "burnUT", "dvVector", "burnVelocity", "burnPosition",
-// "parkVelocity", "transitTime" and the "ejection" candidate; "deltaV" is invalidDeltaV
-// if there is no valid burn.
-// (Checked on an eccentric, inclined orbit: the cost swings from ~1200 to ~4800 m/s as
-// tSOI moves through one parking period, and its minimum matches the phase-free minimum.)
+// Returns a LEXICON: "deltaV" (invalidDeltaV if no valid burn), "burnUT", "dvVector", "burnVelocity",
+// "burnPosition", "parkVelocity", "transitTime" and the "ejection" candidate.
 FUNCTION ejectionForExitTime {
 	PARAMETER orbitSpec.
 	PARAMETER vExit.
@@ -1630,9 +1285,8 @@ FUNCTION ejectionForExitTime {
 
 	LOCAL result IS LEXICON("deltaV", invalidDeltaV, "ejection", 0).
 
-	// The burn times to look at: round one parking orbit from the spec's epoch or, for an escape orbit
-	// (period 0), which does not repeat, from the earliest burn there can be to the last moment a burn can
-	// help (the ship's own SOI exit, or the wanted exit time if that is sooner).
+	// The burn times to look at: one orbit from the spec's epoch or, for an escape orbit, from the earliest
+	// burn to the last moment a burn can help.
 	LOCAL escapeOrbit IS orbitSpec["period"] = 0.
 	LOCAL probeStart IS orbitSpec["epoch"].
 	LOCAL probeSpan IS orbitSpec["period"].
@@ -1724,12 +1378,9 @@ FUNCTION ejectionForExitTime {
 	RETURN result.
 }
 
-// Where the ship is when it crosses the departure body's SOI edge, relative to the body's centre, for an
-// ejection found by bestEjectionFromOrbit or ejectionForExitTime. The hyperbola lies in the plane of the
-// burn position and the post-burn velocity; the ship moves on from the burn by the difference of the
-// true anomalies at the SOI edge and at the burn, so the edge position is the burn direction turned by
-// that angle towards the direction of travel, at the SOI radius. Returns V(0, 0, 0) if there is no
-// hyperbola to read it from (the closed form for a designed orbit has none).
+// Where the ship crosses the departure body's SOI edge, relative to the body's centre, for an ejection
+// from bestEjectionFromOrbit or ejectionForExitTime: the burn direction turned through the true anomaly
+// from the burn to the edge, at the SOI radius. V(0, 0, 0) if there is no hyperbola to read it from.
 FUNCTION soiExitOffset {
 	PARAMETER ejection.
 	PARAMETER soiRadius.
@@ -1747,19 +1398,12 @@ FUNCTION soiExitOffset {
 	RETURN (radialUnit * COS(sweep) + tangentialVector:NORMALIZED * SIN(sweep)) * soiRadius.
 }
 
-// The ejection cost for a given exit velocity, for either kind of orbit spec.
-//   exactTiming - for an "orbit" spec only: fix the burn point by tSOI instead of
-//                 taking the best point in the orbit. A "design" spec has no real
-//                 orbit to be timed against, so it is always phase-free.
-//   precision   - from ejectionPrecision; how hard the phase-free search works
-// For a "design" spec whose plane is not forced by the launch-site latitude, the designed
-// plane contains the departure direction, so the cheapest burn is a tangential one at periapsis
-// and the cost is the closed form of ejectionLowerBound - no search is run. Only when the
-// latitude floor binds (so the plane cannot contain the departure direction) is there a search.
-// Returns the LEXICON of bestEjectionFromOrbit / ejectionForExitTime (or, for the closed form,
-// just "deltaV" and "closedForm"); for a "design" spec it also carries "inclination", "lan",
-// "alternateLan", "latitudeConstraintBinding", "pureMinimumInclination",
-// "verificationResidual" and "planeNormal" - the parking orbit to launch into.
+// The ejection cost for an exit velocity, for either kind of orbit spec.
+//   exactTiming - "orbit" spec only: fix the burn point by tSOI instead of taking the best in the orbit
+//   precision   - from ejectionPrecision
+// A "design" spec whose plane is not forced by the latitude uses the closed form of ejectionLowerBound.
+// Returns the LEXICON of bestEjectionFromOrbit / ejectionForExitTime / ejectionFreeExit (the closed form:
+// just "deltaV" and "closedForm"); a "design" spec also carries the designed plane (see designParkingOrbit).
 FUNCTION ejectionDeltaVForExit {
 	PARAMETER orbitSpec.
 	PARAMETER vExit.
@@ -1774,9 +1418,8 @@ FUNCTION ejectionDeltaVForExit {
 	LOCAL workingSpec IS orbitSpec.
 	IF isDesign SET workingSpec TO designParkingOrbit(orbitSpec, vExit).
 
-	// A ship on an escape orbit (period 0) has no repeating burn phase to lock to. Its burn is the cheapest
-	// one anywhere between the spec's own "earliestBurnUT" (if it has one) and its SOI exit (ejectionFreeExit),
-	// or, with exactTiming, the one that exits at tSOI.
+	// An escape orbit has no burn phase: its burn is the cheapest before its SOI exit (ejectionFreeExit) or,
+	// with exactTiming, the one that exits at tSOI.
 	LOCAL escapeOrbit IS NOT isDesign AND workingSpec["period"] = 0.
 	LOCAL burnNotBefore IS earliestBurnUT.
 	IF escapeOrbit AND workingSpec:HASKEY("earliestBurnUT") SET burnNotBefore TO MAX(earliestBurnUT, workingSpec["earliestBurnUT"]).
@@ -1836,14 +1479,11 @@ FUNCTION arrivalDeltaV {
 	RETURN SQRT(excessSquared + 2 * targetOrbitable:MU / captureRadius) - SQRT(targetOrbitable:MU / captureRadius).
 }
 
-// How far from the destination's centre the Lambert arc has to be aimed for the ship to pass the destination
-// at captureRadius (m from its centre), as a vector from the destination's position (zero: aim at the centre).
-// The destination's gravity bends the path inward, so the aim offset is the impact parameter, larger than the
-// periapsis radius: b = r * SQRT(1 + 2 * mu / (r * vInfinity^2)). It is perpendicular to the arrival velocity and
-// on the side that makes the capture orbit run the way the destination itself orbits (a prograde capture).
-//   arrivalVelocity - transfer velocity relative to the destination, as for arrivalDeltaV
-//   captureRadius   - see arrivalDeltaV; 0 or less (or a vessel, or an arrival the body captures by itself) aims at the centre
-//   orbitNormal     - the destination's own orbit normal: VCRS of its position and velocity about the body it orbits
+// The offset from the destination's centre the Lambert arc must be aimed at to pass it at captureRadius:
+// the impact parameter, b = r * SQRT(1 + 2 * mu / (r * vInfinity^2)), perpendicular to the arrival velocity
+// on the side of a prograde capture. Zero (aim at the centre) with no capture radius, or for a vessel.
+//   arrivalVelocity - relative to the destination, as for arrivalDeltaV
+//   orbitNormal     - the destination's own orbit normal
 FUNCTION arrivalAimOffset {
 	PARAMETER arrivalVelocity.
 	PARAMETER targetOrbitable.
@@ -1865,38 +1505,26 @@ FUNCTION arrivalAimOffset {
 	RETURN side:NORMALIZED * impactParameter.
 }
 
-// Total delta-V (ejection + arrival, m/s) of the transfer that crosses the departure
-// body's SOI edge at tSOI and flies for timeOfFlight, taking the better of Lambert's
-// short-way and long-way solutions.
-//   fromBody  - must be a body (an SOI is needed); toBody - a body or a vessel
-//   solverType - "Gauss" or "Gooding", as for porkchopDeltaV
-//   orbitSpec - from orbitSpecFromVessel (case 2) or designSpec (case 1)
-//   captureRadius - see arrivalDeltaV. The full stage (precision["exactExit"]) also aims the arc at it, in a last
-//                step (see the aim stage below): statsOut["Aim Offset"] is the offset from the destination's centre
-//   precision - from ejectionPrecision: how hard each ejection search works
-//   tSOI, timeOfFlight, seed, statsOut - as the departure time, time of flight, seed and
-//                statsOut of porkchopDeltaV; statsOut also gets "Ejection" (the LEXICON
-//                from ejectionDeltaVForExit) and "Arrival Delta V"
+// Total delta-V (ejection + arrival, m/s) of the transfer that crosses the departure body's SOI edge at
+// tSOI and flies for timeOfFlight: the better of Lambert's short-way and long-way arcs.
+//   fromBody  - a body; toBody - a body or a vessel
+//   orbitSpec - from orbitSpecFromVessel or designSpec
+//   captureRadius - see arrivalDeltaV; the full stage also aims the arc at it (statsOut["Aim Offset"])
+//   precision - from ejectionPrecision
+//   tSOI, timeOfFlight, seed, statsOut - as for porkchopDeltaV; statsOut also gets "Ejection",
+//                "Arrival Delta V", "Exit Offset", "Exit Velocity" and "Rejected Arcs"
 //   exactTiming, earliestBurnUT - see ejectionDeltaVForExit
-// The leading arguments (through precision) are in the order bindTransferDeltaV binds
-// them, leaving (tSOI, timeOfFlight, seed, statsOut) for a porkchopGrid delegate.
-// Both Lambert solutions are costed, but cheaply first: the arrival is exact and the ejection
-// has a rigorous lower bound (ejectionLowerBound), so the solution that looks cheaper is searched
-// first and the other one's ejection search is skipped if its lower bound can't beat the first.
-// The Lambert arc starts where the ship really leaves the departure body: at the SOI edge, up to
-// soiRadius from the body's centre (a fifth of the Mun's orbit radius; negligible for a planet in the
-// Sun's frame, but not for a moon). Starting from the centre with the speed Lambert wants at the edge
-// puts the ship on the wrong orbit. So each solution is re-solved from "the body's position plus an
-// offset to the exit point": first (precision["exitPasses"] times) with the offset along the exit
-// heading, then (precision["exactExit"], the full stage) from the exit point the ejection hyperbola
-// actually reaches (soiExitOffset), re-pricing the ejection each time. statsOut["Exit Offset"] is the
-// offset used.
-// Returns invalidDeltaV if neither solution works.
+// The leading arguments are in the order bindTransferDeltaV binds them.
+// The arc that looks cheaper (exact arrival plus ejectionLowerBound) is searched first, and the other's
+// ejection search is skipped if its lower bound cannot beat it.
+// The arc starts where the ship leaves the SOI, not at the body's centre: each arc is re-solved from the
+// body's position plus an offset along the exit heading (precision["exitPasses"] times), then, in the full
+// stage, from the exit point the ejection hyperbola reaches (soiExitOffset).
+// Returns invalidDeltaV if neither arc works.
 FUNCTION transferDeltaV {
 	PARAMETER fromBody.
 	PARAMETER toBody.
 	PARAMETER sunBody.
-	PARAMETER solverType.
 	PARAMETER orbitSpec.
 	PARAMETER captureRadius.
 	PARAMETER precision.
@@ -1907,10 +1535,8 @@ FUNCTION transferDeltaV {
 	PARAMETER exactTiming IS FALSE.
 	PARAMETER earliestBurnUT IS 0.
 
-	// A ship on an escape orbit that is priced with its exit time free (ejectionFreeExit) leaves the SOI at
-	// about its own exit time whatever tSOI says, so a tSOI far from that prices a departure the ship cannot
-	// make, and a search free to move tSOI chases that. With orbitSpec["pinExit"] set, tSOI is the ship's own
-	// exit time (the spec's "patchUT"): the departure axis then does nothing, and the flight time is searched.
+	// orbitSpec["pinExit"]: a ship on an escape orbit leaves at about its own exit time whatever tSOI says,
+	// so tSOI is pinned to it (the spec's "patchUT") and only the flight time is searched.
 	IF orbitSpec:HASKEY("pinExit") AND orbitSpec:HASKEY("patchUT") {
 		IF orbitSpec["pinExit"] AND orbitSpec["patchUT"] > 0 SET tSOI TO orbitSpec["patchUT"].
 	}
@@ -1920,18 +1546,32 @@ FUNCTION transferDeltaV {
 	LOCAL longStartSeed IS 0.5.
 	IF seed:HASKEY("longSeed") SET longStartSeed TO seed["longSeed"].
 
-	// The destination's position and velocity are those at ARRIVAL (tSOI + timeOfFlight), which is
-	// where the Lambert arc has to end.
+	// The arc ends at the destination's position at arrival. The departure body's state is kept in seed, so the
+	// cells of one departure (which share a seed) look it up once.
 	LOCAL arrivalTime IS tSOI + timeOfFlight.
-	LOCAL departurePosition IS absolutePosition(fromBody, tSOI) - absolutePosition(sunBody, tSOI).
+	LOCAL haveDeparture IS FALSE.
+	IF seed:HASKEY("departureUT") SET haveDeparture TO seed["departureUT"] = tSOI.
+	IF NOT haveDeparture {
+		SET seed["departureUT"] TO tSOI.
+		SET seed["departurePosition"] TO absolutePosition(fromBody, tSOI) - absolutePosition(sunBody, tSOI).
+		SET seed["departureVelocity"] TO absoluteVelocity(fromBody, tSOI) - absoluteVelocity(sunBody, tSOI).
+	}
+	LOCAL departurePosition IS seed["departurePosition"].
 	LOCAL arrivalPosition IS absolutePosition(toBody, arrivalTime) - absolutePosition(sunBody, arrivalTime).
-	LOCAL fromBodyVelocity IS absoluteVelocity(fromBody, tSOI) - absoluteVelocity(sunBody, tSOI).
+	LOCAL fromBodyVelocity IS seed["departureVelocity"].
 	LOCAL toBodyVelocity IS absoluteVelocity(toBody, arrivalTime) - absoluteVelocity(sunBody, arrivalTime).
 
 	LOCAL bestTotalDV IS invalidDeltaV.
 	LOCAL winningTrajectory IS 0.
 	LOCAL winningEjection IS 0.
 	LOCAL winningArrivalDV IS 0.
+	// The exit velocity of the cheapest-looking candidate searched, reported when none worked.
+	LOCAL lastExitVelocity IS V(0, 0, 0).
+	LOCAL lowestBound IS 4 * invalidDeltaV.
+	// With exact timing the arc is still chosen, moved and aimed with the phase-free ejection (the exit times
+	// a fixed exit velocity can reach are narrow, so an early guess can fail); the timed burn is priced once,
+	// at the end, for the arc that won.
+	LOCAL stageTiming IS exactTiming AND NOT precision["exactExit"].
 	LOCAL soiRadius IS fromBody:SOIRADIUS.
 
 	// A transfer around a body that has a sphere of influence (not the Sun) must stay inside it.
@@ -1944,16 +1584,36 @@ FUNCTION transferDeltaV {
 	LOCAL failureRank IS 0.
 	LOCAL rejectedArcs IS 0.
 
-	// One Lambert solve, from startPosition to aimPosition at arrival: the destination's position, or (the aim
-	// stage at the end, see arrivalAimOffset) that position moved to where the capture orbit needs the arc to pass.
+	// One Lambert solve from startPosition to aimPosition.
 	FUNCTION solveLambert {
 		PARAMETER startPosition.
 		PARAMETER shortWay.
 		PARAMETER startSeed.
 		PARAMETER aimPosition.
-
-		IF solverType = "Gooding" RETURN lambertGooding(startPosition, aimPosition, timeOfFlight, sunBody:MU, shortWay, startSeed).
-		RETURN lambertGauss(startPosition, aimPosition, timeOfFlight, sunBody:MU, shortWay, startSeed).
+	
+		RETURN lambertGooding(startPosition, aimPosition, timeOfFlight, sunBody:MU, shortWay, startSeed).
+	}
+	
+	// Re-solves the winning arc from startPosition to aimPosition and re-prices it (ejection and arrival).
+	// Returns FALSE, leaving the winner as it was, if the new arc fails at any step.
+	FUNCTION repriceWinner {
+		PARAMETER startPosition.
+		PARAMETER aimPosition.
+	
+		LOCAL movedTrajectory IS solveLambert(startPosition, winningTrajectory["Short Way"], winningTrajectory["Final Value"], aimPosition).
+		IF movedTrajectory["Motion Type"] = "Failed" RETURN FALSE.
+		LOCAL movedExit IS movedTrajectory["v_1"] - fromBodyVelocity.
+		IF movedExit:MAG ^ 2 - 2 * orbitSpec["mu"] / soiRadius <= 0 RETURN FALSE.
+		LOCAL movedSweep IS VANG(movedTrajectory["r_1"], aimPosition).
+		IF NOT movedTrajectory["Short Way"] SET movedSweep TO 360 - movedSweep.
+		IF transferArcProblem(movedTrajectory["r_1"], movedTrajectory["v_1"], movedSweep, sunBody:MU, bodyClearanceRadius(sunBody), parentLimit) <> "" RETURN FALSE.
+		LOCAL movedEjection IS ejectionDeltaVForExit(orbitSpec, movedExit, fromBody, tSOI, stageTiming, precision, earliestBurnUT).
+		IF movedEjection["deltaV"] >= invalidDeltaV RETURN FALSE.
+		SET winningArrivalDV TO arrivalDeltaV(movedTrajectory["v_2"] - toBodyVelocity, toBody, captureRadius).
+		SET winningTrajectory TO movedTrajectory.
+		SET winningEjection TO movedEjection.
+		SET bestTotalDV TO movedEjection["deltaV"] + winningArrivalDV.
+		RETURN TRUE.
 	}
 
 	IF timeOfFlight > 0 {
@@ -2018,7 +1678,11 @@ FUNCTION transferDeltaV {
 		FOR candidate IN candidates {
 			// Skip the expensive ejection search if even the best case can't beat what we have.
 			IF candidate["lowerBound"] < bestTotalDV {
-				LOCAL ejection IS ejectionDeltaVForExit(orbitSpec, candidate["vExit"], fromBody, tSOI, exactTiming, precision, earliestBurnUT).
+				IF candidate["lowerBound"] < lowestBound {
+					SET lowestBound TO candidate["lowerBound"].
+					SET lastExitVelocity TO candidate["vExit"].
+				}
+				LOCAL ejection IS ejectionDeltaVForExit(orbitSpec, candidate["vExit"], fromBody, tSOI, stageTiming, precision, earliestBurnUT).
 				IF ejection["deltaV"] >= invalidDeltaV AND failureRank < 4 {
 					SET failureRank TO 4.
 					SET failureReason TO "No valid ejection burn".
@@ -2032,39 +1696,19 @@ FUNCTION transferDeltaV {
 			}
 		}
 
-		// The exact exit point (full stage): the ejection that won says where the ship really crosses the SOI
-		// edge. If that is not where the arc was started, re-solve Lambert from it, re-price the ejection
-		// for the new exit velocity and the arrival for the new arrival velocity, and look again (twice at most).
+		// The exact exit point (full stage): re-solve from where the winning ejection really crosses the SOI
+		// edge and re-price, twice at most.
 		IF precision["exactExit"] AND winningTrajectory:ISTYPE("Lexicon") {
 			FROM {LOCAL pass IS 1.} UNTIL pass > 2 STEP {SET pass TO pass + 1.} DO {
 				LOCAL exactOffset IS soiExitOffset(winningEjection, soiRadius).
 				IF exactOffset:MAG = 0 BREAK.
 				IF (exactOffset - (winningTrajectory["r_1"] - departurePosition)):MAG < 0.005 * soiRadius BREAK.
-
-				LOCAL movedTrajectory IS solveLambert(departurePosition + exactOffset, winningTrajectory["Short Way"], winningTrajectory["Final Value"], arrivalPosition).
-				IF movedTrajectory["Motion Type"] = "Failed" BREAK.
-				LOCAL movedExit IS movedTrajectory["v_1"] - fromBodyVelocity.
-				IF movedExit:MAG ^ 2 - 2 * orbitSpec["mu"] / soiRadius <= 0 BREAK.
-				LOCAL movedSweep IS VANG(movedTrajectory["r_1"], arrivalPosition).
-				IF NOT movedTrajectory["Short Way"] SET movedSweep TO 360 - movedSweep.
-				IF transferArcProblem(movedTrajectory["r_1"], movedTrajectory["v_1"], movedSweep, sunBody:MU, bodyClearanceRadius(sunBody), parentLimit) <> "" BREAK.
-
-				LOCAL movedEjection IS ejectionDeltaVForExit(orbitSpec, movedExit, fromBody, tSOI, exactTiming, precision, earliestBurnUT).
-				IF movedEjection["deltaV"] >= invalidDeltaV BREAK.
-				LOCAL movedArrivalDV IS arrivalDeltaV(movedTrajectory["v_2"] - toBodyVelocity, toBody, captureRadius).
-				SET winningTrajectory TO movedTrajectory.
-				SET winningEjection TO movedEjection.
-				SET winningArrivalDV TO movedArrivalDV.
-				SET bestTotalDV TO movedEjection["deltaV"] + movedArrivalDV.
+				IF NOT repriceWinner(departurePosition + exactOffset, arrivalPosition) BREAK.
 			}
 		}
-
-		// The aim stage (full stage, a destination body with a capture radius): so far the arc ends at the
-		// destination's centre. Move its end to the aim point that passes the destination at captureRadius
-		// (arrivalAimOffset), from the start the exit stage settled on, and re-price the ejection and the arrival
-		// for the new velocities. The offset depends a little on the arrival speed, which the move changes, so it is
-		// done twice at most. This leaves the rest of the search alone: it only moves the winner. Skipped by the
-		// quick stage, where the offset changes no ranking.
+	
+		// The aim stage (full stage, a body with a capture radius): move the arc's end from the destination's
+		// centre to the aim point (arrivalAimOffset) and re-price, twice at most.
 		IF precision["exactExit"] AND winningTrajectory:ISTYPE("Lexicon") AND captureRadius > 0 AND toBody:ISTYPE("Body") {
 			LOCAL orbitNormal IS VCRS(arrivalPosition, toBodyVelocity).
 			FROM {LOCAL pass IS 1.} UNTIL pass > 2 STEP {SET pass TO pass + 1.} DO {
@@ -2073,28 +1717,27 @@ FUNCTION transferDeltaV {
 				IF winningTrajectory:HASKEY("Aim Offset") {
 					IF (aimOffset - winningTrajectory["Aim Offset"]):MAG < 0.002 * aimOffset:MAG BREAK.
 				}
-
-				LOCAL aimedTrajectory IS solveLambert(winningTrajectory["r_1"], winningTrajectory["Short Way"], winningTrajectory["Final Value"], arrivalPosition + aimOffset).
-				IF aimedTrajectory["Motion Type"] = "Failed" BREAK.
-				LOCAL aimedExit IS aimedTrajectory["v_1"] - fromBodyVelocity.
-				IF aimedExit:MAG ^ 2 - 2 * orbitSpec["mu"] / soiRadius <= 0 BREAK.
-				LOCAL aimedSweep IS VANG(aimedTrajectory["r_1"], arrivalPosition + aimOffset).
-				IF NOT aimedTrajectory["Short Way"] SET aimedSweep TO 360 - aimedSweep.
-				IF transferArcProblem(aimedTrajectory["r_1"], aimedTrajectory["v_1"], aimedSweep, sunBody:MU, bodyClearanceRadius(sunBody), parentLimit) <> "" BREAK.
-
-				LOCAL aimedEjection IS ejectionDeltaVForExit(orbitSpec, aimedExit, fromBody, tSOI, exactTiming, precision, earliestBurnUT).
-				IF aimedEjection["deltaV"] >= invalidDeltaV BREAK.
-				LOCAL aimedArrivalDV IS arrivalDeltaV(aimedTrajectory["v_2"] - toBodyVelocity, toBody, captureRadius).
-				SET aimedTrajectory["Aim Offset"] TO aimOffset.
-				SET winningTrajectory TO aimedTrajectory.
-				SET winningEjection TO aimedEjection.
-				SET winningArrivalDV TO aimedArrivalDV.
-				SET bestTotalDV TO aimedEjection["deltaV"] + aimedArrivalDV.
+				IF NOT repriceWinner(winningTrajectory["r_1"], arrivalPosition + aimOffset) BREAK.
+				SET winningTrajectory["Aim Offset"] TO aimOffset.
 			}
 		}
 	}
 
-	// Mutate the caller's statsOut in place (see the note in porkchopDeltaV on why).
+	// The exact-timed burn for the exit velocity of the arc that won.
+	IF exactTiming AND precision["exactExit"] AND winningTrajectory:ISTYPE("Lexicon") {
+		LOCAL timedEjection IS ejectionDeltaVForExit(orbitSpec, winningTrajectory["v_1"] - fromBodyVelocity, fromBody, tSOI, TRUE, precision, earliestBurnUT).
+		IF timedEjection["deltaV"] >= invalidDeltaV {
+			SET lastExitVelocity TO winningTrajectory["v_1"] - fromBodyVelocity.
+			SET winningTrajectory TO 0.
+			SET bestTotalDV TO invalidDeltaV.
+			SET failureReason TO "No valid ejection burn".
+		} ELSE {
+			SET winningEjection TO timedEjection.
+			SET bestTotalDV TO timedEjection["deltaV"] + winningArrivalDV.
+		}
+	}
+
+	// Copy into the caller's statsOut (never reassign it).
 	IF winningTrajectory:ISTYPE("Lexicon") {
 		FOR statKey IN winningTrajectory:KEYS {
 			SET statsOut[statKey] TO winningTrajectory[statKey].
@@ -2108,18 +1751,21 @@ FUNCTION transferDeltaV {
 		SET statsOut["Failure Reason"] TO failureReason.
 	}
 	SET statsOut["Rejected Arcs"] TO rejectedArcs.
+	IF winningTrajectory:ISTYPE("Lexicon") {
+		// The exit velocity of the arc that won (bestExitShift in phaseLockedDeparture uses it).
+		SET statsOut["Exit Velocity"] TO winningTrajectory["v_1"] - fromBodyVelocity.
+	} ELSE {
+		SET statsOut["Exit Velocity"] TO lastExitVelocity.
+	}
 	RETURN bestTotalDV.
 }
 
-// Returns a delegate f(tSOI, timeOfFlight, seed, statsOut) -> total dV (phase-free), with
-// everything fixed for a whole search bound in - suitable for porkchopGrid and hillClimb2D.
-// precision (from ejectionPrecision) sets how hard each ejection search works: "quick" for a
-// coarse search, "full" for anything that is reported.
+// Returns a delegate f(tSOI, timeOfFlight, seed, statsOut) -> total dV (phase-free), for porkchopGrid
+// and hillClimb2D. precision is from ejectionPrecision.
 FUNCTION bindTransferDeltaV {
 	PARAMETER fromBody.
 	PARAMETER toBody.
 	PARAMETER sunBody.
-	PARAMETER solverType.
 	PARAMETER orbitSpec.
 	PARAMETER captureRadius IS 0.
 	PARAMETER precision IS ejectionPrecision("full").
@@ -2128,7 +1774,6 @@ FUNCTION bindTransferDeltaV {
 	SET bound TO bound:BIND(fromBody).
 	SET bound TO bound:BIND(toBody).
 	SET bound TO bound:BIND(sunBody).
-	SET bound TO bound:BIND(solverType).
 	SET bound TO bound:BIND(orbitSpec).
 	SET bound TO bound:BIND(captureRadius).
 	SET bound TO bound:BIND(precision).
@@ -2140,89 +1785,139 @@ FUNCTION bindTransferDeltaV {
 // Exact timing, and the node
 // ----------------------------------------------------------------------------
 
-// Exact timing for a ship already in a BOUND orbit: lock the departure to the best burn PHASE instead of
-// scanning departure times. (A ship on an escape orbit has no phase to lock to: see
-// escapeLockedDeparture.)
-//
-// The parking orbit repeats every period, so every burn phase occurs once per period. The
-// cheapest exact-timing burn is therefore the phase-free best burn point (bestEjectionFromOrbit),
-// moved to whichever repeat lies nearest the grid's departure time: that fixes the SOI exit
-// time as burn time + transit time + a whole number of periods. Lambert then has to be recomputed
-// at that new exit time (it changes only slightly, so this settles in a pass or two); each pass
-// re-prices at full precision and moves tSOI to the phase it finds. One exact-timing solve at the
-// end gives the burn the node needs. Each of those prices is a full-precision transferDeltaV, so each
-// one also moves the start of the Lambert arc to the SOI-exit point the ejection reaches (see there);
-// nothing in the phase lock itself depends on where the arc starts, since it only reads the burn offset and
-// the transit time from the ejection.
-// (Checked offline at a fixed exit velocity: pricing at tSOI = best phase's exit time gives the
-// phase-free minimum. What this ignores, against a full scan of departure times, is the tiny variation of
-// the Lambert cost across at most half a parking period, which is a second-order effect at a minimum.)
-//   tSOI, timeOfFlight - from the grid / hill climb
-//   earliestBurnUT     - burns earlier than this (e.g. now + a margin) are not allowed; the departure
-//                        moves a period later instead
-//   maxPasses          - at most this many phase-lock passes (it stops early once tSOI moves less than
-//                        0.2% of the orbit period, which is about the resolution of the burn-point search,
-//                        or once the price agrees with the previous pass to 0.1 m/s)
-// Returns a LEXICON: "tSOI", "deltaV" (invalidDeltaV if nothing works),
-// "stats" (stats["Ejection"] has the burn), plus "phaseFreeDeltaV" (the price of the best burn point
-// anywhere in the orbit, for comparison) and "passes".
+// Exact timing for a ship in a BOUND orbit: lock the departure to the best burn phase.
+// The orbit repeats, so the cheapest timed burn is the phase-free best burn point at the repeat nearest
+// the search's departure: tSOI = burn time + transit time + whole periods. Lambert is re-priced at that
+// tSOI and the lock repeated until it settles; one exact-timing solve then gives the node's burn.
+//   tSOI, timeOfFlight - from the search
+//   earliestBurnUT     - no burn before this; the departure moves a period later instead
+//   maxPasses          - at most this many lock passes
+//   firstDeltaV, firstStats - the full-precision phase-free price at tSOI and its statsOut, if the caller
+//                        already has them: they are used as the first lock pass
+// Returns a LEXICON: "tSOI", "deltaV" (invalidDeltaV if nothing works), "stats" (stats["Ejection"] has
+// the burn), "phaseFreeDeltaV", "passes" and "timings" (real seconds per stage, as text).
 FUNCTION phaseLockedDeparture {
 	PARAMETER fromBody.
 	PARAMETER toBody.
 	PARAMETER sunBody.
-	PARAMETER solverType.
 	PARAMETER orbitSpec.
 	PARAMETER captureRadius.
 	PARAMETER tSOI.
 	PARAMETER timeOfFlight.
 	PARAMETER earliestBurnUT IS 0.
 	PARAMETER maxPasses IS 4.
+	PARAMETER firstDeltaV IS invalidDeltaV.
+	PARAMETER firstStats IS 0.
 
 	LOCAL period IS orbitSpec["period"].
 	LOCAL currentTSOI IS tSOI.
 	LOCAL phaseFreeDeltaV IS invalidDeltaV.
 	LOCAL previousDeltaV IS invalidDeltaV.
 	LOCAL passesUsed IS 0.
+	// Real-world seconds each stage took, as text, for the caller to print and log.
+	LOCAL timingNotes IS LIST().
+	LOCAL lapStart IS KUNIVERSE:REALWORLDTIME.
+	FUNCTION lap {
+		PARAMETER label.
+
+		LOCAL nowTime IS KUNIVERSE:REALWORLDTIME.
+		timingNotes:ADD(label + " " + ROUND(nowTime - lapStart, 1) + " s").
+		SET lapStart TO nowTime.
+	}
+
+	// The SOI exit time of the burn a phase-free pricing found, at the repeat nearest nearTSOI with no burn
+	// before earliestBurnUT.
+	FUNCTION lockedExit {
+		PARAMETER stats.
+		PARAMETER nearTSOI.
+
+		LOCAL ejection IS stats["Ejection"].
+		LOCAL transit IS ejection["ejection"]["transitTime"].
+		LOCAL exitUT IS orbitSpec["epoch"] + ejection["offset"] + transit.
+		LOCAL locked IS exitUT + ROUND((nearTSOI - exitUT) / period) * period.
+		UNTIL locked - transit >= earliestBurnUT {
+			SET locked TO locked + period.
+		}
+		RETURN locked.
+	}
 
 	UNTIL passesUsed >= maxPasses {
 		LOCAL stats IS LEXICON().
-		LOCAL totalDV IS transferDeltaV(fromBody, toBody, sunBody, solverType, orbitSpec, captureRadius, ejectionPrecision("full"),
-										currentTSOI, timeOfFlight, LEXICON(), stats, FALSE, 0).
+		LOCAL totalDV IS invalidDeltaV.
+		IF passesUsed = 0 AND firstStats:ISTYPE("Lexicon") {
+			SET stats TO firstStats.
+			SET totalDV TO firstDeltaV.
+			lap("Lock pass 1 (reused)").
+		} ELSE {
+			SET totalDV TO transferDeltaV(fromBody, toBody, sunBody, orbitSpec, captureRadius, ejectionPrecision("full"),
+											currentTSOI, timeOfFlight, LEXICON(), stats, FALSE, 0).
+			lap("Lock pass " + (passesUsed + 1)).
+		}
 		IF totalDV >= invalidDeltaV BREAK.
 		SET phaseFreeDeltaV TO totalDV.
 		SET passesUsed TO passesUsed + 1.
 
 		// When the best burn point is reached, and when the ship then crosses the SOI edge.
-		LOCAL ejection IS stats["Ejection"].
-		LOCAL transit IS ejection["ejection"]["transitTime"].
-		LOCAL exitUT IS orbitSpec["epoch"] + ejection["offset"] + transit.
-
-		// The repeat of that moment nearest the current tSOI, and no burn before earliestBurnUT.
-		LOCAL lockedTSOI IS exitUT + ROUND((currentTSOI - exitUT) / period) * period.
-		UNTIL lockedTSOI - transit >= earliestBurnUT {
-			SET lockedTSOI TO lockedTSOI + period.
-		}
+		LOCAL lockedTSOI IS lockedExit(stats, currentTSOI).
 		LOCAL movement IS ABS(lockedTSOI - currentTSOI).
 		SET currentTSOI TO lockedTSOI.
-		// The burn-point search places the best burn to about 0.3 degrees of orbit, so the locked time
-		// jitters by a couple of seconds from pass to pass; a tenth of a percent of the period is
-		// as settled as it can get (about 5 s for a 45-minute orbit). It can also move more than that
-		// while the price has stopped changing (a flat optimum, or two near-equal burn phases), and
-		// then further passes only cost time, so a price that agrees with the previous pass to
-		// 0.1 m/s counts as settled too.
+		// Settled when tSOI moves under 0.2% of the period (the burn-point search's resolution), or when the
+		// price agrees with the last pass to 0.1 m/s and tSOI moved under 0.5%: the exact-timing solve fails
+		// if tSOI is tens of seconds from where the best burn really exits.
 		IF movement < 0.002 * period BREAK.
-		IF passesUsed >= 2 AND ABS(totalDV - previousDeltaV) < 0.1 BREAK.
+		IF passesUsed >= 2 AND ABS(totalDV - previousDeltaV) < 0.1 AND movement < 0.005 * period BREAK.
 		SET previousDeltaV TO totalDV.
 	}
 
 	LOCAL result IS LEXICON("tSOI", currentTSOI, "deltaV", invalidDeltaV, "stats", LEXICON(),
-							"phaseFreeDeltaV", phaseFreeDeltaV, "passes", passesUsed).
+							"phaseFreeDeltaV", phaseFreeDeltaV, "passes", passesUsed, "timings", timingNotes).
 	IF phaseFreeDeltaV >= invalidDeltaV RETURN result.
 
-	// The exact-timing solve at the locked departure: its burn is the one the node needs.
+	// The shift (s) from aroundTSOI to the exit time where the exact-timed burn for an exit velocity costs
+	// least, by the game's own prediction: a coarse scan of +-100 s, then a finer one. Returns the shift and
+	// the burn's price there (invalidDeltaV if none).
+	FUNCTION bestExitShift {
+		PARAMETER exitVelocity.
+		PARAMETER aroundTSOI.
+
+		LOCAL bestShift IS 0.
+		LOCAL bestShiftDV IS invalidDeltaV.
+		LOCAL soiPasses IS ejectionPrecision("full")["soiIterations"].
+		FOR scanRange IN LIST(LIST(-100, 100, 10), LIST(-8, 8, 2)) {
+			LOCAL centre IS bestShift.
+			IF scanRange[2] = 10 SET centre TO 0.
+			FROM {LOCAL shift IS centre + scanRange[0].} UNTIL shift > centre + scanRange[1] STEP {SET shift TO shift + scanRange[2].} DO {
+				LOCAL shiftedDV IS ejectionForExitTime(orbitSpec, exitVelocity, aroundTSOI + shift, fromBody:SOIRADIUS, earliestBurnUT, soiPasses)["deltaV"].
+				IF shiftedDV < bestShiftDV {
+					SET bestShiftDV TO shiftedDV.
+					SET bestShift TO shift.
+				}
+			}
+		}
+		RETURN LEXICON("shift", bestShift, "deltaV", bestShiftDV).
+	}
+
+	// The exact-timing solve at the locked departure: its burn is the node's. If it finds no burn, move tSOI
+	// to the best exit time (bestExitShift) and try again, up to three solves.
 	LOCAL finalStats IS LEXICON().
-	LOCAL finalDV IS transferDeltaV(fromBody, toBody, sunBody, solverType, orbitSpec, captureRadius, ejectionPrecision("full"),
-									currentTSOI, timeOfFlight, LEXICON(), finalStats, TRUE, earliestBurnUT).
+	LOCAL finalDV IS invalidDeltaV.
+	FROM {LOCAL attempt IS 1.} UNTIL attempt > 3 STEP {SET attempt TO attempt + 1.} DO {
+		SET finalStats TO LEXICON().
+		SET finalDV TO transferDeltaV(fromBody, toBody, sunBody, orbitSpec, captureRadius, ejectionPrecision("full"),
+										currentTSOI, timeOfFlight, LEXICON(), finalStats, TRUE, earliestBurnUT).
+		lap("Exact solve " + attempt).
+		IF finalDV < invalidDeltaV AND finalStats:HASKEY("Ejection") BREAK.
+		IF attempt < 3 {
+			// Use the best exit time a little early: later exit times fail first.
+			IF NOT finalStats:HASKEY("Exit Velocity") BREAK.
+			LOCAL found IS bestExitShift(finalStats["Exit Velocity"], currentTSOI).
+			lap("Retry scan " + attempt).
+			IF found["deltaV"] >= invalidDeltaV BREAK.
+			SET currentTSOI TO currentTSOI + found["shift"] - 4.
+			SET result["tSOI"] TO currentTSOI.
+			SET result["passes"] TO result["passes"] + 1.
+		}
+	}
 	IF finalDV < invalidDeltaV AND finalStats:HASKEY("Ejection") {
 		SET result["deltaV"] TO finalDV.
 		SET result["stats"] TO finalStats.
@@ -2230,25 +1925,17 @@ FUNCTION phaseLockedDeparture {
 	RETURN result.
 }
 
-// The departure time to report for a ship on an escape orbit, which has no burn phase to lock to
-// (phaseLockedDeparture's counterpart). The search prices each transfer with the exit time left free
-// (ejectionFreeExit) and tSOI pinned to the ship's own exit (see "pinExit" in transferDeltaV), so the burn
-// it finds exits the SOI at a slightly different time. Lambert has to start from where the ship really is
-// then, so this moves tSOI to that exit time and prices again, until the two agree. The exit time barely
-// depends on the Lambert start, so it settles in a pass or two; the stats it returns are from a pass priced
-// at the tSOI it returns. The flight time the search found was priced at the pinned departure, so the
-// flight time is then searched again here, at the settled departure, and the departure settled again.
-//   tSOI, timeOfFlight - from the grid / hill climb
-//   maxPasses          - at most this many passes per settling; it stops early once the exit time is
-//                        within 2 s of tSOI
-// Returns a LEXICON: "tSOI", "flightTime", "deltaV" (invalidDeltaV if nothing works), "stats"
-// (stats["Ejection"] has the burn), "phaseFreeDeltaV" (the same price, kept so the caller can treat it
-// like phaseLockedDeparture's) and "passes" (in all).
+// The departure for a ship on an escape orbit (phaseLockedDeparture's counterpart). The search priced with
+// the exit time free and tSOI pinned to the ship's own exit, so this moves tSOI to the burn's real exit time
+// and prices again until they agree, then searches the flight time again there and settles once more.
+//   tSOI, timeOfFlight - from the search
+//   maxPasses          - at most this many passes per settling (it stops within 2 s)
+// Returns a LEXICON: "tSOI", "flightTime", "deltaV" (invalidDeltaV if nothing works), "stats",
+// "phaseFreeDeltaV" (the same price) and "passes".
 FUNCTION escapeLockedDeparture {
 	PARAMETER fromBody.
 	PARAMETER toBody.
 	PARAMETER sunBody.
-	PARAMETER solverType.
 	PARAMETER orbitSpec.
 	PARAMETER captureRadius.
 	PARAMETER tSOI.
@@ -2269,14 +1956,12 @@ FUNCTION escapeLockedDeparture {
 	FUNCTION costAtFlight {
 		PARAMETER flightTime.
 
-		RETURN transferDeltaV(fromBody, toBody, sunBody, solverType, freeSpec, captureRadius, ejectionPrecision("quick"),
+		RETURN transferDeltaV(fromBody, toBody, sunBody, freeSpec, captureRadius, ejectionPrecision("quick"),
 								currentTSOI, flightTime, LEXICON(), LEXICON(), FALSE, 0).
 	}
 
-	// Phase 1 settles the departure for the flight time the search found. That flight time was found with the
-	// departure pinned and the Lambert start a little off the burn's real exit, so phase 2 searches the flight
-	// time again, at the settled departure (a golden-section search, +-10% of the flight time), and settles
-	// the departure once more. The cheaper settled result wins.
+	// Phase 1 settles the departure for the search's flight time; phase 2 searches the flight time again
+	// there (+-10%) and settles again. The cheaper result wins.
 	FOR phase IN LIST(1, 2) {
 		IF phase = 2 {
 			IF best["deltaV"] >= invalidDeltaV BREAK.
@@ -2288,7 +1973,7 @@ FUNCTION escapeLockedDeparture {
 		LOCAL passesInPhase IS 0.
 		UNTIL passesInPhase >= maxPasses {
 			LOCAL stats IS LEXICON().
-			LOCAL totalDV IS transferDeltaV(fromBody, toBody, sunBody, solverType, freeSpec, captureRadius, ejectionPrecision("full"),
+			LOCAL totalDV IS transferDeltaV(fromBody, toBody, sunBody, freeSpec, captureRadius, ejectionPrecision("full"),
 											currentTSOI, flight, LEXICON(), stats, FALSE, 0).
 			SET passesInPhase TO passesInPhase + 1.
 			SET passesUsed TO passesUsed + 1.
@@ -2308,11 +1993,12 @@ FUNCTION escapeLockedDeparture {
 	RETURN best.
 }
 
-// The bodies whose SOIs the ship's predicted path passes through, in order, once the maneuver node is
-// executed: the body of the orbit after the node, then the body of each patched-conic patch after it.
-// Empty if there is no node. Only as many patches as KSP predicts (its patch limit, and the tracking
-// station's patched-conics level) show up, so a long path can be cut short.
+// The bodies whose SOIs the ship's predicted path passes through after the maneuver node, in order.
+// Empty if there is no node. Only as many patches as KSP predicts show up.
+//   patchStarts - a LIST that gets the UT each patch after the first begins
 FUNCTION predictedSOIPath {
+	PARAMETER patchStarts IS LIST().
+
 	LOCAL soiPath IS LIST().
 	// A tick, so KSP has re-solved the flight plan for a node that was only just added.
 	WAIT 0.
@@ -2321,33 +2007,33 @@ FUNCTION predictedSOIPath {
 	LOCAL patch IS NEXTNODE:ORBIT.
 	soiPath:ADD(patch:BODY:NAME).
 	UNTIL NOT patch:HASNEXTPATCH {
+		patchStarts:ADD(TIME:SECONDS + patch:NEXTPATCHETA).
 		SET patch TO patch:NEXTPATCH.
 		soiPath:ADD(patch:BODY:NAME).
 	}
 	RETURN soiPath.
 }
 
-// Checks the predicted SOI path of the maneuver node just made for a transfer, against what the transfer
-// is meant to do. The path should be: the departure body (or, in the same SOI, the central body), then
-// the central body, then, if the destination is a body, a change into that body's SOI. Anything else
-// before the destination is a problem: another body's SOI is crossed (for example the Mun, on the way
-// from Kerbin orbit to Minmus), the departure body is met again, or a destination body is never reached.
-// Whatever happens after the destination's SOI is entered is not checked.
+// Checks the predicted SOI path of the node just made. It should be the departure body (same SOI: the
+// central body), the central body, then the destination body's SOI. Before the destination, another
+// body's SOI, the departure body again, or never reaching a destination body is a problem.
 //   fromOrbitable - the source (the departure body, or the ship in a same-SOI transfer)
 //   toOrbitable   - the destination
 //   sameSOI       - TRUE for a transfer inside one SOI
-// Returns a LEXICON: "path" (the LIST of body names), "text" (the path as "Mun > Kerbin > Minmus"),
-// and "problems" (a LIST of short messages, empty if the path is as intended).
+//   arrivalUT     - same SOI: the planned arrival (0 for none); a patch that begins after it is not a problem
+// Returns a LEXICON: "path" (LIST of body names), "text" (the path joined by " > ") and "problems" (LIST of messages).
 FUNCTION checkTransferSOIPath {
 	PARAMETER fromOrbitable.
 	PARAMETER toOrbitable.
 	PARAMETER sameSOI.
+	PARAMETER arrivalUT IS 0.
 
 	LOCAL centralName IS fromOrbitable:BODY:NAME.
 	LOCAL leadingName IS fromOrbitable:NAME.
 	IF sameSOI SET leadingName TO centralName.
 
-	LOCAL soiPath IS predictedSOIPath().
+	LOCAL patchStarts IS LIST().
+	LOCAL soiPath IS predictedSOIPath(patchStarts).
 	LOCAL problems IS LIST().
 	LOCAL pathText IS "".
 	LOCAL targetIsBody IS toOrbitable:ISTYPE("Body").
@@ -2369,6 +2055,10 @@ FUNCTION checkTransferSOIPath {
 			} ELSE {
 				SET problem TO "crosses " + bodyName + "'s SOI before the target".
 			}
+			// A patch that begins after the planned arrival is after the target, not before it.
+			IF problem <> "" AND sameSOI AND arrivalUT > 0 AND index - 1 < patchStarts:LENGTH {
+				IF patchStarts[index - 1] >= arrivalUT SET problem TO "".
+			}
 			IF problem <> "" AND NOT problems:CONTAINS(problem) problems:ADD(problem).
 		}
 	}
@@ -2381,11 +2071,8 @@ FUNCTION checkTransferSOIPath {
 	RETURN LEXICON("path", soiPath, "text", pathText, "problems", problems).
 }
 
-// Adds a maneuver node for an exact-timing ejection (the "Ejection" LEXICON from
-// phaseLockedDeparture / ejectionForExitTime), carrying the whole burn vector - radial,
-// normal and prograde - so the node's delta-V is the true cost, plane change included.
-// The sign of the node's normal axis depends on coordinate handedness, so each choice is
-// checked against the node's own :DELTAV and the one that matches is kept.
+// Adds a maneuver node for an ejection (an "Ejection" LEXICON) with the whole burn vector. The sign of the
+// node's normal axis depends on handedness, so both are tried against the node's own :DELTAV.
 // Returns LEXICON("created", "verified", "prograde", "normal", "radial", "nodeError").
 FUNCTION addEjectionNode {
 	PARAMETER ejection.
@@ -2427,27 +2114,82 @@ FUNCTION addEjectionNode {
 					"prograde", progradeDV, "normal", normalDV, "radial", radialDV, "nodeError", nodeError).
 }
 
+// Checks a same-SOI transfer's node against the game's prediction: (1) the periapsis and apoapsis of the
+// orbit after the node against the plan's arc; (2) the ship's distance from the destination at the planned
+// arrival, from POSITIONAT. (2) only counts if the prediction follows the node: the ship's position at
+// arrival must have moved from shipBefore.
+//   ejection     - the node's burn, as addEjectionNode took it
+//   toOrbitable  - the destination; centralBody - the body both orbit
+//   arrivalUT    - the planned arrival
+//   shipBefore   - POSITIONAT(SHIP, arrivalUT), taken before the node was added
+//   aimOffset    - statsOut["Aim Offset"], or V(0, 0, 0)
+//   captureRadius - m from the destination body's centre the plan passes it at (0 for none, or a vessel). With
+//                  one, the destination's gravity bends the path away from the aim point, so the game's
+//                  periapsis at the destination is what is compared, not the position at arrival
+// Returns a LEXICON: "available", "miss" (m from the destination at arrival), "deviation" (m from where the
+// plan aimed), "nodeMoved" (m), "planPeriapsis", "gamePeriapsis" and, for a bound orbit, "planApoapsis",
+// "gameApoapsis" (altitudes, m). With a capture radius: "captureAimed" (TRUE), and, if the game predicts an
+// encounter, "planCapture" and "gameCapture" (periapsis altitudes at the destination, m) and
+// "captureTolerance" (m: half the capture radius) and "captureFloor" (m: the lowest safe periapsis altitude,
+// the top of the atmosphere or 0).
+FUNCTION checkNodeEncounter {
+	PARAMETER ejection.
+	PARAMETER toOrbitable.
+	PARAMETER centralBody.
+	PARAMETER arrivalUT.
+	PARAMETER shipBefore.
+	PARAMETER aimOffset IS V(0, 0, 0).
+	PARAMETER captureRadius IS 0.
+
+	LOCAL result IS LEXICON("available", FALSE, "miss", 0, "deviation", 0, "nodeMoved", 0).
+	// A tick, so KSP has re-solved the flight plan for a node that was only just added.
+	WAIT 0.
+	IF NOT HASNODE RETURN result.
+
+	LOCAL planSpec IS makeOrbitSpec(ejection["burnPosition"], ejection["parkVelocity"] + ejection["dvVector"],
+									ejection["burnUT"], centralBody:MU, 0).
+	LOCAL nodeOrbit IS NEXTNODE:ORBIT.
+	SET result["planPeriapsis"] TO planSpec["periapsisRadius"] - centralBody:RADIUS.
+	SET result["gamePeriapsis"] TO nodeOrbit:PERIAPSIS.
+	IF planSpec["eccentricity"] < 1 {
+		SET result["planApoapsis"] TO planSpec["sma"] * (1 + planSpec["eccentricity"]) - centralBody:RADIUS.
+		SET result["gameApoapsis"] TO nodeOrbit:APOAPSIS.
+	}
+
+	LOCAL shipAfter IS POSITIONAT(SHIP, arrivalUT).
+	SET result["nodeMoved"] TO (shipAfter - shipBefore):MAG.
+	IF result["nodeMoved"] > 1 {
+		LOCAL targetPosition IS POSITIONAT(toOrbitable, arrivalUT).
+		SET result["miss"] TO (shipAfter - targetPosition):MAG.
+		SET result["deviation"] TO (shipAfter - targetPosition - aimOffset):MAG.
+		SET result["available"] TO TRUE.
+	}
+	IF captureRadius > 0 AND toOrbitable:ISTYPE("Body") {
+		SET result["captureAimed"] TO TRUE.
+		LOCAL patch IS nodeOrbit.
+		LOCAL foundPatch IS FALSE.
+		UNTIL foundPatch OR NOT patch:HASNEXTPATCH {
+			SET patch TO patch:NEXTPATCH.
+			IF patch:BODY:NAME = toOrbitable:NAME SET foundPatch TO TRUE.
+		}
+		IF foundPatch {
+			SET result["planCapture"] TO captureRadius - toOrbitable:RADIUS.
+			SET result["gameCapture"] TO patch:PERIAPSIS.
+			SET result["captureTolerance"] TO 0.5 * captureRadius.
+			SET result["captureFloor"] TO bodyClearanceRadius(toOrbitable) - toOrbitable:RADIUS.
+		}
+	}
+	RETURN result.
+}
+
 
 // ----------------------------------------------------------------------------
-// Parking-plane design (moved here from transferCalc.ks)
+// Parking-plane design
 // ----------------------------------------------------------------------------
 
-// -- PLANE-AWARE -- (new) ----------------------------------------------------
-// Builds the normal vector of a (possibly not-yet-flown) parking orbit purely
-// from inclination and LAN, by rotating the body's own equatorial normal (its
-// spin axis -- the same reference KSP measures inclination against). Usable at
-// the design stage, before any vessel exists in that orbit.
-//
-// Handedness: KSP's (Unity's) coordinates are left-handed, so a rotation by a positive angle
-// and VCRS both turn the opposite way to the usual right-handed picture. The ascending node
-// rotated from the prime vector by +LAN about the spin axis is right as it stands, but the
-// plane must tilt by -inclination about that node, not +inclination. (Confirmed in-game against
-// the ship's own orbit and nine bodies, measured from POSITIONAT samples: every normal matched.
-// A normal measured from :VELOCITY:ORBIT was wrong for several far-away bodies, because on an
-// orbitable that is not the ship that suffix is relative to SHIP:BODY, not to the orbitable's own
-// parent, so it is not a reliable way to measure one unless the parent is SHIP:BODY.)
-// Written with the documented Direction * Vector form; the old Vector * Direction form was
-// checked in-game and does the same thing, so this does not change the result.
+// The normal of an orbit plane from its inclination and LAN, by rotating the body's spin axis.
+// KSP's coordinates are left-handed: the node is the prime vector turned by +LAN about the spin axis,
+// and the plane tilts by -inclination about the node.
 FUNCTION getOrbitPlaneNormal {
 	PARAMETER centralBody.
 	PARAMETER inclinationDeg.
@@ -2460,24 +2202,9 @@ FUNCTION getOrbitPlaneNormal {
 }
 
 
-// -- PLANE-AWARE -- (new) ----------------------------------------------------
-// For the not-yet-launched case: there's no real parking orbit yet, so instead
-// of checking a plane mismatch, this computes the plane that WOULD give zero
-// mismatch, so it can be printed as a launch target. Among every plane that
-// contains v_infinity's direction, the minimum-inclination one is found by
-// projecting the body's spin axis onto the plane perpendicular to v_infinity
-// (VXCL does exactly this) - a standard result: the minimum achievable
-// inclination for a departure plane equals the declination of v_infinity
-// above the body's equator, and this constructs it directly as a vector
-// operation instead of via that trig identity, so it doesn't depend on getting
-// a separate declination/right-ascension formula's sign conventions right.
-//
-// Uses the SAME primeInPlane/eastInPlane construction as getOrbitPlaneNormal,
-// so it's self-consistent with it by construction; the verificationResidual
-// field feeds the computed (inclination, lan) back through getOrbitPlaneNormal
-// and reports the leftover mismatch, which should come back at ~0. Print it -
-// if it's not close to zero, the two functions' conventions have diverged
-// somehow and the recommendation shouldn't be trusted until that's found.
+// The minimum-inclination plane that contains v_infinity's direction: its normal is the spin axis
+// projected perpendicular to v_infinity. "verificationResidual" feeds the result back through
+// getOrbitPlaneNormal and should be ~0.
 FUNCTION computeMinimumInclinationPlane {
 	PARAMETER centralBody.
 	PARAMETER vInfinityVector.
@@ -2511,24 +2238,11 @@ FUNCTION computeMinimumInclinationPlane {
 	RETURN LEXICON("inclination", inclination, "lan", lan, "verificationResidual", verificationResidual).
 }
 
-// -- PLANE-AWARE -- (new) ----------------------------------------------------
-// A direct-ascent launch can never reach an inclination LOWER than the launch
-// site's latitude (that needs a dogleg); it can always reach any inclination
-// AT OR ABOVE it. So if the pure minimum-inclination plane above sits below
-// the launch site's latitude, that plane isn't actually reachable - the real
-// floor on achievable inclination is whichever of the two is further from the
-// equator. This solves for the ascending node(s) that keep the plane
-// containing v_infinity exactly once the inclination is raised to that floor.
-//
-// Derivation: writing v_infinity in the (primeInPlane, eastInPlane,
-// equatorialNormal) basis as (vx, vy, vz), the zero-mismatch condition
-// VDOT(h_hat(i,LAN), v_infinity) = 0 reduces to
+// The ascending node(s) of the plane of a given inclination that contains v_infinity (for a launch-site
+// latitude above the minimum inclination). With v_infinity as (vx, vy, vz) in the (prime, east, spin axis)
+// basis, the condition is
 //     vx*SIN(LAN) - vy*COS(LAN) = vz*COS(i)/SIN(i)
-// (the plane's normal is (-SIN(i)*SIN(LAN), SIN(i)*COS(LAN), COS(i)) in that basis, because of
-// the left-handed tilt described at getOrbitPlaneNormal)
-// whose left side is R*SIN(LAN - phi) with R = SQRT(vx^2+vy^2), phi =
-// ARCTAN2(vy,vx) - giving zero, one, or two solutions for LAN depending on
-// whether the right-hand side's magnitude is above, at, or below 1.
+// which has zero, one or two solutions. Returns them as a LIST.
 FUNCTION solveLANForInclination {
 	PARAMETER centralBody.
 	PARAMETER vInfinityVector.
@@ -2561,11 +2275,8 @@ FUNCTION solveLANForInclination {
 	RETURN LIST(normalizeAngle360(phi + asinVal), normalizeAngle360(phi + 180 - asinVal)).
 }
 
-// -- PLANE-AWARE -- (new) ----------------------------------------------------
-// Top-level recommendation used by the not-launched branch: the pure
-// minimum-inclination plane, raised to the launch site's latitude if that's
-// the more restrictive (further-from-equator) floor, with the ascending node
-// re-solved so the plane still contains v_infinity exactly either way.
+// The parking plane to launch into: the minimum-inclination plane, raised to the launch site's latitude
+// if that is higher, with the node re-solved so the plane still contains v_infinity.
 FUNCTION computeRecommendedParkingPlane {
 	PARAMETER centralBody.
 	PARAMETER vInfinityVector.
@@ -2582,10 +2293,7 @@ FUNCTION computeRecommendedParkingPlane {
 	IF binding {
 		LOCAL lanOptions IS solveLANForInclination(centralBody, vInfinityVector, finalInclination).
 		IF lanOptions:LENGTH = 2 {
-			// Pick whichever of the two valid nodes is the smaller angular
-			// change from the pure-minimum-inclination LAN, so the "primary"
-			// answer stays as close as possible to the unconstrained one; the
-			// other is still reported as a valid alternate.
+			// Take the node nearer the unconstrained one; the other is the alternate.
 			LOCAL diff1 IS ABS(normalizeAngle180(lanOptions[0] - pureMin["lan"])).
 			LOCAL diff2 IS ABS(normalizeAngle180(lanOptions[1] - pureMin["lan"])).
 			IF diff1 <= diff2 {
@@ -2596,12 +2304,7 @@ FUNCTION computeRecommendedParkingPlane {
 				SET alternateLan TO lanOptions[0].
 			}
 		}
-		// else: solveLANForInclination came back empty, meaning finalInclination
-		// was somehow still below the true minimum (shouldn't happen since
-		// finalInclination = MAX(pureMin, latitudeFloor) >= pureMin) - fall
-		// through and leave finalLan/alternateLan at the pure-minimum values,
-		// which the verificationResidual below will then correctly flag as
-		// nonzero, rather than silently claiming a clean match.
+		// No solution leaves the pure-minimum values, and verificationResidual shows it.
 	}
 
 	LOCAL checkNormal IS getOrbitPlaneNormal(centralBody, finalInclination, finalLan).
@@ -2621,30 +2324,22 @@ FUNCTION computeRecommendedParkingPlane {
 // ============================================================================
 
 // Works out what a transfer goes from and to, from the destination alone.
-//   destinationName - a body or a vessel (resolveOrbitable: a vessel wins a name clash)
-//   sourceName      - "" (the default) to infer the source from where the ship is; otherwise the
-//                     name of the source to use instead
-// With no source given, the source is
-//   - the SHIP, when the destination orbits the body the ship is in (a vessel or a moon in the
-//     same sphere of influence). This is a same-SOI transfer: no sphere of influence is left.
-//   - the body the ship is in, when the destination orbits that body's parent (Duna from Kerbin
-//     orbit, Minmus from Mun orbit, a vessel in solar orbit from Kerbin orbit). The ship leaves
-//     that body's SOI.
-//   - for a destination VESSEL that orbits a moon of the ship's body, or a moon of the ship's body's parent
-//     (a vessel at Minmus, from Kerbin or Mun orbit), the transfer goes to that moon ("to" is the moon, and
-//     "destinationVessel" is the vessel): the moon's own SOI is what is reached, and the vessel only says
-//     where to capture (the caller's choice: transferCalc uses the vessel's orbit size).
-// Anything else (the destination's parent is the body the ship is in, or it is in a different
-// system altogether, like Kerbin from Mun orbit or Duna from Mun orbit) is an error.
-// A given source must orbit the same body as the destination.
-// Returns a LEXICON: "error" ("None", or a message), "from", "to" (orbitables), "sameSOI"
-// (TRUE if the source is a vessel, i.e. the transfer stays inside one SOI), and "destinationVessel"
-// (the vessel the destination was named by when "to" is its moon, else 0).
+//   destinationName - a body or a vessel, by name or as the object (see resolveOrbitable)
+//   sourceName      - "" to infer the source from where the ship is; otherwise its name
+// With no source given:
+//   - the destination orbits the ship's body: from the SHIP (a same-SOI transfer)
+//   - it orbits that body's parent: from the ship's body
+//   - a VESSEL at a moon of the ship's body or of its parent: to that moon ("destinationVessel" is the vessel)
+//   - a MOON of another planet, or of a moon of the ship's body: to the moon's planet ("destinationMoon" is
+//     the moon); reaching the moon is a second transfer from there
+// Anything else is an error. A given source must orbit the same body as the destination.
+// Returns a LEXICON: "error" ("None", or a message), "from", "to", "sameSOI" (the source is a vessel),
+// "destinationVessel" and "destinationMoon" (0 if not used).
 FUNCTION resolveTransferEndpoints {
 	PARAMETER destinationName.
 	PARAMETER sourceName IS "".
 
-	LOCAL endpoints IS LEXICON("error", "None", "from", 0, "to", 0, "sameSOI", FALSE, "destinationVessel", 0).
+	LOCAL endpoints IS LEXICON("error", "None", "from", 0, "to", 0, "sameSOI", FALSE, "destinationVessel", 0, "destinationMoon", 0).
 
 	LOCAL toOrbitable IS resolveOrbitable(destinationName).
 	IF toOrbitable:ISTYPE("Scalar") {
@@ -2665,44 +2360,63 @@ FUNCTION resolveTransferEndpoints {
 			RETURN endpoints.
 		}
 	} ELSE {
-		IF toOrbitable:ISTYPE("Vessel") AND toOrbitable:NAME = SHIP:NAME {
-			SET endpoints["error"] TO destinationName + " is the ship itself!".
-			RETURN endpoints.
+		// Two vessels can share a name, so a vessel with the ship's name is the ship only if it is the ship.
+		IF toOrbitable:ISTYPE("Vessel") {
+			IF toOrbitable:NAME = SHIP:NAME AND toOrbitable = SHIP {
+				SET endpoints["error"] TO toOrbitable:NAME + " is the ship itself!".
+				RETURN endpoints.
+			}
 		}
-		IF toOrbitable:NAME = here:NAME {
+		IF toOrbitable:ISTYPE("Body") AND toOrbitable:NAME = here:NAME {
 			SET endpoints["error"] TO "The ship is already in " + here:NAME + "'s sphere of influence!".
 			RETURN endpoints.
 		}
-		// For a vessel, the parent of the body it orbits ("" if that body has none): checked in steps, as an
-		// AND does not stop at its first false part.
+		// The parent of the body a vessel orbits (in steps: AND does not short-circuit).
 		LOCAL vesselBodyParent IS "".
 		IF toOrbitable:ISTYPE("Vessel") {
 			IF toOrbitable:BODY:HASBODY SET vesselBodyParent TO toOrbitable:BODY:BODY:NAME.
+		}
+		// The parent of a moon's planet.
+		LOCAL moonPlanetParent IS "".
+		IF toOrbitable:ISTYPE("Body") AND toParent <> "" {
+			IF toOrbitable:BODY:HASBODY SET moonPlanetParent TO toOrbitable:BODY:BODY:NAME.
 		}
 		IF toParent = here:NAME {
 			SET fromOrbitable TO SHIP.
 		} ELSE IF toParent <> "" AND toParent = hereParent {
 			SET fromOrbitable TO here.
 		} ELSE IF vesselBodyParent <> "" AND vesselBodyParent = here:NAME {
-			// A vessel orbiting a moon of the ship's body (a vessel at Minmus, from Kerbin orbit): the transfer goes to
-			// the moon, and the vessel's orbit sets the capture there.
+			// A vessel at a moon of the ship's body.
 			SET endpoints["destinationVessel"] TO toOrbitable.
 			SET toOrbitable TO toOrbitable:BODY.
 			SET toParent TO here:NAME.
 			SET fromOrbitable TO SHIP.
 		} ELSE IF vesselBodyParent <> "" AND vesselBodyParent = hereParent {
-			// The same from a moon of the ship's body's parent (a vessel at Minmus, from Mun orbit).
+			// A vessel at a moon of the ship's body's parent.
 			SET endpoints["destinationVessel"] TO toOrbitable.
 			SET toOrbitable TO toOrbitable:BODY.
 			SET toParent TO hereParent.
 			SET fromOrbitable TO here.
+		} ELSE IF moonPlanetParent <> "" AND moonPlanetParent = here:NAME {
+			// A moon of a moon of the ship's body.
+			SET endpoints["destinationMoon"] TO toOrbitable.
+			SET toOrbitable TO toOrbitable:BODY.
+			SET toParent TO here:NAME.
+			SET fromOrbitable TO SHIP.
+		} ELSE IF moonPlanetParent <> "" AND moonPlanetParent = hereParent {
+			// A moon of another planet.
+			SET endpoints["destinationMoon"] TO toOrbitable.
+			SET toOrbitable TO toOrbitable:BODY.
+			SET toParent TO hereParent.
+			SET fromOrbitable TO here.
 		} ELSE {
-			SET endpoints["error"] TO destinationName + " (orbiting " + toParent + ") is in a different system from the ship (in " + here:NAME + "'s sphere of influence)!".
+			SET endpoints["error"] TO toOrbitable:NAME + " (orbiting " + toParent + ") is in a different system from the ship (in " + here:NAME + "'s sphere of influence)!".
 			RETURN endpoints.
 		}
 	}
 
-	IF fromOrbitable:NAME = toOrbitable:NAME {
+	// Names are not unique: the same name is the same orbitable only if the objects are equal too.
+	IF fromOrbitable:NAME = toOrbitable:NAME AND fromOrbitable = toOrbitable {
 		SET endpoints["error"] TO "The source and the destination are the same!".
 		RETURN endpoints.
 	}
@@ -2776,66 +2490,35 @@ FUNCTION orbitTimeToRadius {
 	RETURN hyperbolaTransitTime(centralBody:MU, SQRT(centralBody:MU / semiMajorAbs), eccentricity, nowAnomaly, wantedAnomaly).
 }
 
-// The search window for a transfer between two orbitables that orbit the same body (the source is the
-// ship or a body, the destination a body or a vessel; see resolveTransferEndpoints). It chooses the
-// departure and flight-time samples, with defaults to suit the kind of transfer. Either orbit may be an
-// escape orbit (eccentricity >= 1).
+// The search window for a transfer between two orbitables that orbit the same body: the departure and
+// flight-time samples. Either orbit may be an escape orbit.
 //   endpoints        - from resolveTransferEndpoints
 //   startOffset      - s from now to the start of the first window (>= 30)
-//   departureWindows - how many windows to search, back to back (see "A window" below)
-//   samplesPerWindow - departure times per window; below 1 (-1) chooses a default. The grid has
-//                      samplesPerWindow x (the departure range / a window) departure times in all.
-//   tofSamples       - flight times; below 1 (-1) chooses a default
-//   coarse           - TRUE for a coarse search that is refined afterwards (transferCalc), FALSE for
-//                      a fine one that is plotted (porkchopplot): only affects the defaults
-//   searchSpan       - s, the length of the departure range, or -1 (the default) for departureWindows
-//                      windows. departureWindows is ignored when this is given. It is the way to ask only
-//                      for departures soon (a window a day away, say) rather than a whole synodic period.
-//   departureCount   - the number of departure times in all, or -1 (the default) to work it out from
-//                      samplesPerWindow and the range. For a range much shorter than a window, where
-//                      the per-window counts give too few.
-// A window: between two bodies, one synodic period of the two orbits. In the same SOI, a synodic period or
-// four orbits of the ship, whichever is shorter (the cost repeats with the ship's orbit, so the departure
-// axis needs a dozen or two samples per ship orbit; two nearly-equal orbits have a synodic period of
-// thousands of orbits). If either orbit is an escape orbit there is no period to take a synodic period
-// from, so a window is the time until the first SOI change of either orbit (a prediction after that is not
-// on the orbit any more) or, with no SOI change to end it, searchSpan, which is then required.
-// The search is trimmed to the feasible triangle, so cells that could never arrive in time are not sampled:
-// the destination's last usable moment is its SOI change or, in the same SOI, the time it climbs to
-// soiEdgeFraction (95%) of the central body's SOI radius (orbitTimeToRadius). The longest flight ends there,
-// and the departure range ends at that moment less the shortest flight, or at the source's own SOI change if
-// that is sooner. (The shortest flight is not raised for geometry: no minimum flight time follows from the
-// positions alone.)
-// Defaults, with a "period" being the period of a bound orbit or, for an escape orbit, the period of a
-// circular orbit at its current distance (orbitTimeScale):
-//   - between bodies: departures scale with the window. The geometry changes as fast as the quicker of the
-//     two moves, so the count is the window length in periods of that one times 8 (coarse) or 24 (fine):
-//     never fewer than 4 (coarse) or 40 (fine), never more than 24 (coarse) or 120 (fine). A window of a
-//     synodic period is 1.15 periods of the Mun against Minmus (9 coarse, 40 fine), but about 2.1 years of
-//     Kerbin against Duna (17 coarse, 51 fine). Flight times: 5 (coarse) or 41 (fine).
-//   - in the same SOI: 12 (coarse) or 24 (fine) departures per ship orbit (12 to 240), and 7 (coarse) or 31
-//     (fine) flight times.
-//   A departure range shorter than a window gets proportionally fewer departures, but never fewer than the
-//   lower limit above (4, 40 or 12) unless samplesPerWindow is given.
-// Flight times run from 0.5 to 4 times the Hohmann time between the two orbits (an escape orbit is sized
-// by its current distance, see orbitSizeRadius).
-// Everything is absolute: departure times are UT, flight times are seconds.
-// Returns a LEXICON. "error" is "None" if everything is fine; otherwise it holds a message and no other
-// key is set. Otherwise:
+//   departureWindows - how many windows to search, back to back
+//   samplesPerWindow - departure times per window; below 1 chooses a default
+//   tofSamples       - flight times; below 1 chooses a default
+//   coarse           - TRUE for a search that is refined afterwards, FALSE for a plot: only affects the defaults
+//   searchSpan       - s, the length of the departure range in place of departureWindows windows (-1: not used)
+//   departureCount   - the number of departure times in all (-1: from samplesPerWindow and the range)
+// A window: between bodies, a synodic period. In the same SOI, a synodic period or four ship orbits,
+// whichever is shorter. With an escape orbit, the time to the first SOI change of either orbit, or searchSpan.
+// The search stops where no flight could arrive: the destination's last usable moment is its SOI change or,
+// in the same SOI, the time it reaches soiEdgeFraction of the SOI radius.
+// Defaults ("period": of a bound orbit, or see orbitTimeScale):
+//   - between bodies: 8 (coarse) or 24 (fine) departures per period of the quicker orbit, within 4 to 24
+//     (coarse) or 40 to 120 (fine); 5 or 41 flight times
+//   - same SOI: 12 (coarse) or 24 (fine) departures per ship orbit (12 to 240); 7 or 31 flight times
+// Flight times run from 0.5 to 4 times the Hohmann time.
+// Returns a LEXICON. "error" is "None", or a message with no other key set. Otherwise:
 //   "sunBody"                          - the body both orbit
-//   "synodicPeriod", "hohmannTime" (s) - the synodic period is 0 if either orbit is an escape orbit
+//   "synodicPeriod", "hohmannTime" (s) - the synodic period is 0 with an escape orbit
 //   "hyperbolic"                       - TRUE if either orbit is an escape orbit
-//   "windowLength" (s), "samplesPerWindow" - as above
-//   "startTime", "departureStart", "departureEnd" - UT (startTime is the same as departureStart). Departures
-//       are evenly spaced from departureStart and stop short of departureEnd, so the end itself is not
-//       sampled and consecutive windows tile without repeating a time.
-//   "tofStart", "tofEnd" - s, the shortest and longest flight time, evenly spaced and both sampled
-//   "departureSamples", "tofSamples" - how many of each
-//   "departureTimes" - LIST of departure UTs; "timeOfFlights" - LIST of flight times (s), ascending
-//   "departureStep", "tofStep" - the spacing between samples, in seconds (handy as the
-//       starting step for a hill climb)
-//   "departureUnit", "tofUnit" - "Days"/"Hours"/"Minutes", for labelling
-//   "departureUnitSeconds", "tofUnitSeconds" - seconds per label unit
+//   "windowLength" (s), "samplesPerWindow"
+//   "startTime", "departureStart", "departureEnd" - UT; departures are evenly spaced from the start and stop short of the end
+//   "tofStart", "tofEnd" - s, both sampled
+//   "departureSamples", "tofSamples", "departureTimes" (UT), "timeOfFlights" (s, ascending)
+//   "departureStep", "tofStep" - the spacing, s
+//   "departureUnit", "tofUnit" - "Days"/"Hours"/"Minutes"; "departureUnitSeconds", "tofUnitSeconds"
 FUNCTION buildTransferWindow {
 	PARAMETER endpoints.
 	PARAMETER startOffset.
@@ -2859,9 +2542,7 @@ FUNCTION buildTransferWindow {
 	LOCAL fromScale IS orbitTimeScale(fromOrbitable, sunBody).
 	LOCAL toScale IS orbitTimeScale(toOrbitable, sunBody).
 
-	// The last UT the source can depart (its own SOI change) and the last the destination can be met: its
-	// SOI change or, in the same SOI, the moment it climbs to soiEdgeFraction of the central body's SOI
-	// radius (sameSOITransferDeltaV rejects an arrival further out), whichever is sooner. 0 for none.
+	// The last UT the source can depart (its SOI change) and the last the destination can be met. 0 for none.
 	LOCAL fromPatchUT IS orbitPatchUT(fromOrbitable).
 	LOCAL toCapUT IS orbitPatchUT(toOrbitable).
 	IF sameSOI AND sunBody:HASBODY AND toOrbitable:ORBIT:ECCENTRICITY >= 1 {
@@ -2908,9 +2589,7 @@ FUNCTION buildTransferWindow {
 		}
 	}
 
-	// The departure range, trimmed to the feasible triangle: nothing departs after the source's own SOI
-	// change, and a departure later than the destination's last usable moment less the shortest flight
-	// cannot arrive in time for any flight time in the range.
+	// The departure range, ended by the source's SOI change or the last departure that can still arrive.
 	LOCAL departureRange IS departureWindows * windowLength.
 	IF searchSpan > 0 SET departureRange TO searchSpan.
 	LOCAL lastDeparture IS startUT + departureRange.
@@ -2998,10 +2677,15 @@ FUNCTION buildTransferWindow {
 					"tofUnitSeconds", timeUnitSeconds(tofUnit)).
 }
 
-// The orbit of an orbitable around centralBody, as an orbit spec (see makeOrbitSpec), as of now.
-// The ship's own state is read directly; for anything else the position is taken relative to the
-// central body and the velocity from VELOCITYAT (:VELOCITY:ORBIT on an orbitable that is not the
-// ship is relative to SHIP:BODY, not to the orbitable's own parent).
+// The line every transfer script prints about its search window (a buildTransferWindow result).
+FUNCTION searchWindowLine {
+	PARAMETER window.
+
+	RETURN "Search window " + timeToString(window["departureEnd"] - window["departureStart"]) + ", " + window["departureSamples"] + " departures.".
+}
+
+// The orbit of an orbitable around centralBody as an orbit spec, as of now. For anything but the ship the
+// velocity is from VELOCITYAT (:VELOCITY:ORBIT is relative to SHIP:BODY).
 FUNCTION orbitSpecAround {
 	PARAMETER orbitable.
 	PARAMETER centralBody.
@@ -3012,14 +2696,10 @@ FUNCTION orbitSpecAround {
 							orbitable, centralBody).
 }
 
-// Why a Lambert arc is not flyable, or "" if it is. The arc stays clear of the central body and inside
-// its sphere of influence. The arc starts at startPosition with startVelocity and sweeps sweepAngle
-// degrees round the central body. Its lowest point is an end (which are above minRadius) or the
-// periapsis of its orbit, if the arc passes it; its highest is an end or, for a bound orbit, the
-// apoapsis, if the arc passes that.
-//   minRadius - m from the centre; an arc whose periapsis is lower (and reached) is rejected
-//   maxRadius - m from the centre, normally the SOI radius; an arc that reaches an apoapsis higher than
-//               this is rejected (the real path would leave the sphere of influence). 0 means no limit.
+// Why a Lambert arc is not flyable, or "": it must stay clear of the central body and inside its SOI.
+// The arc starts at startPosition with startVelocity and sweeps sweepAngle degrees; a periapsis or apoapsis
+// only counts if the arc passes it.
+//   minRadius - m from the centre; maxRadius - m, normally the SOI radius (0: no limit)
 // Returns "Intercepts the central body", "Leaves the central body's SOI", or "".
 FUNCTION transferArcProblem {
 	PARAMETER startPosition.
@@ -3053,30 +2733,23 @@ FUNCTION transferArcProblem {
 	RETURN "".
 }
 
-// Total delta-V (m/s) of a transfer that stays inside one SOI: a burn at departureTime on the
-// ship's own orbit onto a Lambert arc that meets the target timeOfFlight later, and a burn to match
-// the target's velocity (arrivalDeltaV) there. There is no sphere of influence to leave, so the burn
-// time IS the departure time and no exit hyperbola is involved. The better of Lambert's short-way and
-// long-way arcs is taken; an arc that dips below the central body's surface (or atmosphere) is
-// rejected, and so is a transfer angle within 0.05 degrees of 0 or 180 where Lambert's plane is
-// undefined. Both orbits are predicted with orbitStateAt, and a departure or arrival after either
-// orbit's next SOI change is rejected ("Orbit changes SOI first"), as is an arrival further out than 95%
-// of the central body's SOI radius ("Meets the target at the SOI edge").
+// Total delta-V (m/s) of a transfer inside one SOI: a burn at departureTime on the ship's orbit onto a
+// Lambert arc that meets the target timeOfFlight later, plus the arrival (arrivalDeltaV). The better of the
+// short-way and long-way arcs. Rejected: an arc that hits the central body or leaves its SOI, a transfer
+// angle within 0.05 degrees of 0 or 180, a time after either orbit's SOI change, and an arrival beyond
+// soiEdgeFraction of the SOI radius.
 //   fromSpec, toSpec  - orbit specs of the ship and the target (orbitSpecAround)
-//   toOrbitable       - the target (a vessel: arrival matches its velocity; a body: see arrivalDeltaV)
-//   solverType        - "Gauss" or "Gooding"
-//   captureRadius     - see arrivalDeltaV. The winner is also aimed at it (arrivalAimOffset): statsOut["Aim Offset"]
-//   earliestDeparture - UT; an earlier departure is invalid (a burn in the past cannot be flown)
-//   maxRadius         - m, the central body's SOI radius (0 for none): an arc whose apoapsis is higher is rejected
-//   departureTime, timeOfFlight, seed, statsOut - as for transferDeltaV. statsOut gets the winning
-//                       Lambert data, "Arrival Delta V" and "Ejection": a LEXICON with "deltaV",
-//                       "dvVector", "burnPosition", "parkVelocity" and "burnUT", the keys addEjectionNode needs
+//   toOrbitable       - the target
+//   captureRadius     - see arrivalDeltaV; the winner is aimed at it (statsOut["Aim Offset"])
+//   earliestDeparture - UT; an earlier departure is invalid
+//   maxRadius         - m, the central body's SOI radius (0 for none)
+//   departureTime, timeOfFlight, seed, statsOut - as for transferDeltaV. statsOut["Ejection"] has "deltaV",
+//                       "dvVector", "burnPosition", "parkVelocity" and "burnUT" (for addEjectionNode)
 // The leading arguments are in the order bindSameSOIDeltaV binds them.
 FUNCTION sameSOITransferDeltaV {
 	PARAMETER fromSpec.
 	PARAMETER toSpec.
 	PARAMETER toOrbitable.
-	PARAMETER solverType.
 	PARAMETER captureRadius.
 	PARAMETER earliestDeparture.
 	PARAMETER maxRadius.
@@ -3107,53 +2780,53 @@ FUNCTION sameSOITransferDeltaV {
 	LOCAL leavesPatch IS (fromSpec["patchUT"] > 0 AND departureTime > fromSpec["patchUT"])
 						OR (toSpec["patchUT"] > 0 AND departureTime + timeOfFlight > toSpec["patchUT"]).
 
+	// Prices one arc, to endPosition: if it is flyable and costs less than mustBeat it becomes the winner.
+	// Returns transferArcProblem's text ("" for a flyable arc).
+	FUNCTION tryArc {
+		PARAMETER trajectory.
+		PARAMETER endPosition.
+		PARAMETER mustBeat.
+		PARAMETER departureState.
+		PARAMETER arrivalState.
+	
+		LOCAL sweepAngle IS VANG(departureState["position"], endPosition).
+		IF NOT trajectory["Short Way"] SET sweepAngle TO 360 - sweepAngle.
+		LOCAL arcProblem IS transferArcProblem(departureState["position"], trajectory["v_1"], sweepAngle, mu, fromSpec["minPeriapsis"], maxRadius).
+		IF arcProblem <> "" RETURN arcProblem.
+		LOCAL burnVector IS trajectory["v_1"] - departureState["velocity"].
+		LOCAL arrivalDV IS arrivalDeltaV(trajectory["v_2"] - arrivalState["velocity"], toOrbitable, captureRadius).
+		IF burnVector:MAG + arrivalDV < mustBeat {
+			SET bestTotalDV TO burnVector:MAG + arrivalDV.
+			SET winningTrajectory TO trajectory.
+			SET winningArrivalDV TO arrivalDV.
+			SET winningDeparture TO LEXICON("deltaV", burnVector:MAG, "dvVector", burnVector,
+										"burnPosition", departureState["position"], "parkVelocity", departureState["velocity"],
+										"burnUT", departureTime).
+		}
+		RETURN "".
+	}
+
 	IF timeOfFlight > 0 AND departureTime >= earliestDeparture AND NOT leavesPatch {
 		LOCAL departureState IS orbitStateAt(fromSpec, departureTime).
 		LOCAL arrivalState IS orbitStateAt(toSpec, departureTime + timeOfFlight).
 		LOCAL separation IS VANG(departureState["position"], arrivalState["position"]).
-		// Meeting the target out at the SOI edge is no use: the real path changes patch there, so the
-		// two-body arc stops being the orbit the ship flies. (A target that flies through the SOI otherwise
-		// makes the cheapest intercept the one at the edge, where it moves slowest.)
+		// Out at the SOI edge the two-body arc is not what the ship flies.
 		LOCAL arrivesAtEdge IS maxRadius > 0 AND arrivalState["position"]:MAG > soiEdgeMargin * maxRadius.
 
 		IF separation > 0.05 AND separation < 179.95 AND NOT arrivesAtEdge {
-			LOCAL shortTrajectory IS 0.
-			LOCAL longTrajectory IS 0.
-			IF solverType = "Gooding" {
-				SET shortTrajectory TO lambertGooding(departureState["position"], arrivalState["position"], timeOfFlight, mu, TRUE, shortStartSeed).
-				SET longTrajectory TO lambertGooding(departureState["position"], arrivalState["position"], timeOfFlight, mu, FALSE, longStartSeed).
-			} ELSE {
-				SET shortTrajectory TO lambertGauss(departureState["position"], arrivalState["position"], timeOfFlight, mu, TRUE, shortStartSeed).
-				SET longTrajectory TO lambertGauss(departureState["position"], arrivalState["position"], timeOfFlight, mu, FALSE, longStartSeed).
-			}
-
-			FOR trajectory IN LIST(shortTrajectory, longTrajectory) {
+			FOR shortWay IN LIST(TRUE, FALSE) {
+				LOCAL startSeed IS longStartSeed.
+				IF shortWay SET startSeed TO shortStartSeed.
+				LOCAL trajectory IS lambertGooding(departureState["position"], arrivalState["position"], timeOfFlight, mu, shortWay, startSeed).
 				IF trajectory["Motion Type"] <> "Failed" {
-					LOCAL sweepAngle IS separation.
-					IF trajectory["Short Way"] {
-						SET seed["shortSeed"] TO trajectory["Final Value"].
-					} ELSE {
-						SET seed["longSeed"] TO trajectory["Final Value"].
-						SET sweepAngle TO 360 - separation.
-					}
-
-					LOCAL arcProblem IS transferArcProblem(departureState["position"], trajectory["v_1"], sweepAngle, mu, fromSpec["minPeriapsis"], maxRadius).
+					IF shortWay SET seed["shortSeed"] TO trajectory["Final Value"].
+					ELSE SET seed["longSeed"] TO trajectory["Final Value"].
+					LOCAL arcProblem IS tryArc(trajectory, arrivalState["position"], bestTotalDV, departureState, arrivalState).
 					IF arcProblem <> "" {
 						SET rejectedArcs TO rejectedArcs + 1.
 						IF failureRank < 3 {
 							SET failureRank TO 3.
 							SET failureReason TO arcProblem.
-						}
-					} ELSE {
-						LOCAL burnVector IS trajectory["v_1"] - departureState["velocity"].
-						LOCAL arrivalDV IS arrivalDeltaV(trajectory["v_2"] - arrivalState["velocity"], toOrbitable, captureRadius).
-						IF burnVector:MAG + arrivalDV < bestTotalDV {
-							SET bestTotalDV TO burnVector:MAG + arrivalDV.
-							SET winningTrajectory TO trajectory.
-							SET winningArrivalDV TO arrivalDV.
-							SET winningDeparture TO LEXICON("deltaV", burnVector:MAG, "dvVector", burnVector,
-															"burnPosition", departureState["position"], "parkVelocity", departureState["velocity"],
-															"burnUT", departureTime).
 						}
 					}
 				} ELSE IF failureRank < 1 {
@@ -3162,10 +2835,8 @@ FUNCTION sameSOITransferDeltaV {
 					IF trajectory:HASKEY("Failure Reason") SET failureReason TO trajectory["Failure Reason"].
 				}
 			}
-
-			// The aim stage: the arcs above end at the destination's centre. Move the winner's end to the aim point
-			// that passes a destination body at captureRadius (arrivalAimOffset), and re-price it. The offset depends
-			// a little on the arrival speed, which the move changes, so it is done twice at most.
+	
+			// The aim stage: move the winner's end to the aim point (arrivalAimOffset) and re-price, twice at most.
 			IF winningTrajectory:ISTYPE("Lexicon") AND captureRadius > 0 AND toOrbitable:ISTYPE("Body") {
 				LOCAL orbitNormal IS VCRS(arrivalState["position"], arrivalState["velocity"]).
 				FROM {LOCAL pass IS 1.} UNTIL pass > 2 STEP {SET pass TO pass + 1.} DO {
@@ -3174,27 +2845,12 @@ FUNCTION sameSOITransferDeltaV {
 					IF winningTrajectory:HASKEY("Aim Offset") {
 						IF (aimOffset - winningTrajectory["Aim Offset"]):MAG < 0.002 * aimOffset:MAG BREAK.
 					}
-
+	
 					LOCAL aimPosition IS arrivalState["position"] + aimOffset.
-					LOCAL aimedTrajectory IS 0.
-					IF solverType = "Gooding" {
-						SET aimedTrajectory TO lambertGooding(departureState["position"], aimPosition, timeOfFlight, mu, winningTrajectory["Short Way"], winningTrajectory["Final Value"]).
-					} ELSE {
-						SET aimedTrajectory TO lambertGauss(departureState["position"], aimPosition, timeOfFlight, mu, winningTrajectory["Short Way"], winningTrajectory["Final Value"]).
-					}
+					LOCAL aimedTrajectory IS lambertGooding(departureState["position"], aimPosition, timeOfFlight, mu, winningTrajectory["Short Way"], winningTrajectory["Final Value"]).
 					IF aimedTrajectory["Motion Type"] = "Failed" BREAK.
-					LOCAL aimedSweep IS VANG(departureState["position"], aimPosition).
-					IF NOT aimedTrajectory["Short Way"] SET aimedSweep TO 360 - aimedSweep.
-					IF transferArcProblem(departureState["position"], aimedTrajectory["v_1"], aimedSweep, mu, fromSpec["minPeriapsis"], maxRadius) <> "" BREAK.
-
-					LOCAL aimedBurn IS aimedTrajectory["v_1"] - departureState["velocity"].
-					SET winningArrivalDV TO arrivalDeltaV(aimedTrajectory["v_2"] - arrivalState["velocity"], toOrbitable, captureRadius).
-					SET bestTotalDV TO aimedBurn:MAG + winningArrivalDV.
-					SET aimedTrajectory["Aim Offset"] TO aimOffset.
-					SET winningTrajectory TO aimedTrajectory.
-					SET winningDeparture TO LEXICON("deltaV", aimedBurn:MAG, "dvVector", aimedBurn,
-													"burnPosition", departureState["position"], "parkVelocity", departureState["velocity"],
-													"burnUT", departureTime).
+					IF tryArc(aimedTrajectory, aimPosition, 4 * invalidDeltaV, departureState, arrivalState) <> "" BREAK.
+					SET winningTrajectory["Aim Offset"] TO aimOffset.
 				}
 			}
 		} ELSE IF arrivesAtEdge {
@@ -3207,7 +2863,7 @@ FUNCTION sameSOITransferDeltaV {
 		ELSE SET failureReason TO "Orbit changes SOI first".
 	}
 
-	// Mutate the caller's statsOut in place (see the note in porkchopDeltaV on why).
+	// Copy into the caller's statsOut (never reassign it).
 	IF winningTrajectory:ISTYPE("Lexicon") {
 		FOR statKey IN winningTrajectory:KEYS {
 			SET statsOut[statKey] TO winningTrajectory[statKey].
@@ -3223,14 +2879,11 @@ FUNCTION sameSOITransferDeltaV {
 	RETURN bestTotalDV.
 }
 
-// Returns a delegate f(departureTime, timeOfFlight, seed, statsOut) -> total dV for a transfer
-// from fromOrbitable (the ship, or another vessel) to toOrbitable inside the SOI of the body they
-// both orbit, with everything else bound - suitable for porkchopGrid and hillClimb2D. Both must
-// be in bound orbits. If that body has no SOI (the Sun), arcs are not limited by an SOI radius.
+// Returns a delegate f(departureTime, timeOfFlight, seed, statsOut) -> total dV for a transfer inside the
+// SOI of the body both orbit, for porkchopGrid and hillClimb2D.
 FUNCTION bindSameSOIDeltaV {
 	PARAMETER fromOrbitable.
 	PARAMETER toOrbitable.
-	PARAMETER solverType.
 	PARAMETER captureRadius IS 0.
 	PARAMETER earliestDeparture IS 0.
 
@@ -3239,7 +2892,6 @@ FUNCTION bindSameSOIDeltaV {
 	SET bound TO bound:BIND(orbitSpecAround(fromOrbitable, centralBody)).
 	SET bound TO bound:BIND(orbitSpecAround(toOrbitable, centralBody)).
 	SET bound TO bound:BIND(toOrbitable).
-	SET bound TO bound:BIND(solverType).
 	SET bound TO bound:BIND(captureRadius).
 	SET bound TO bound:BIND(earliestDeparture).
 	// A central body with no parent (the Sun) has no SOI to leave, so no apoapsis limit applies.

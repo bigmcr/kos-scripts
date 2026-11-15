@@ -1,79 +1,49 @@
 @LAZYGLOBAL OFF.
 
 // ============================================================================
-// transferCalc.ks - finds the cheapest transfer to a destination (a body or a vessel) and, for a
-// ship in orbit, makes the maneuver node for it. Built on libraryTransfer.ks, in patched-conic
-// terms. porkchopplot.ks takes the same parameters in the same order and plots the same window.
+// transferCalc.ks - finds the cheapest transfer to a destination (a body or a vessel) and, for a ship in
+// orbit, makes the maneuver node for it. Built on libraryTransfer.ks. porkchopplot.ks plots the same window.
 //
-// Only the destination is needed: resolveTransferEndpoints works out the source from where the ship is.
-//   - A destination that orbits the body the ship is in (a satellite, or a moon) is a SAME-SOI
-//     transfer: from the ship, with no sphere of influence to leave (case 3 below).
-//   - A destination that orbits that body's parent (Duna from Kerbin orbit; Minmus from Mun orbit)
-//     is a transfer from the body the ship is in (cases 1 and 2 below).
-//   - A destination VESSEL at a moon of the ship's body, or of its body's parent (a vessel at Minmus, from
-//     Kerbin or Mun orbit), plans the transfer to that moon, aimed at a periapsis equal to the vessel's
-//     orbit size (semi-major axis) unless captureAltitude says otherwise. The vessel stays the target.
-//   - Anything else (Kerbin from Mun orbit, Duna from Mun orbit) is reported as an error.
+// The source is worked out from where the ship is (resolveTransferEndpoints):
+//   - a destination that orbits the ship's body: a SAME-SOI transfer from the ship (case 3)
+//   - a destination that orbits that body's parent: a transfer from the ship's body (cases 1, 2 and 4)
+//   - a VESSEL at a moon of the ship's body or of its parent: to that moon, capturing at the vessel's orbit size
+//   - a MOON of another planet: to that planet, capturing at the moon's orbit size
+//   - anything else is an error
 //
-//   Case 1 (ship on the pad, or landed): a circular parking orbit is designed for the winning
-//     transfer and its inclination and LAN are printed as a launch target. The grid prices the
-//     best burn point anywhere in that orbit.
-//   Case 2 (ship in a bound orbit around the departure body): the real orbit - both plane angles,
-//     its shape, and where the ship is in it - sets the ejection cost. The grid prices the best
-//     burn point anywhere in the orbit; the final stage then uses the burn point the timing
-//     actually dictates, which can cost more.
-//   Case 3 (same SOI): the ship burns straight onto a Lambert arc to the destination and matches its
-//     velocity there. The burn time is the departure time, so there is no exit-time or phase logic.
-//   Case 4 (ship on an escape orbit around the departure body, e.g. after the main ejection burn): a
-//     correction burn. It does not repeat, so there is no burn phase to lock to, and its exit time can
-//     only move by minutes, so exit time is not searched. Every price is for the cheapest burn, between
-//     now and a few minutes before the ship's own SOI exit, that reaches the wanted exit velocity
-//     (ejectionFreeExit), whenever it then exits, and tSOI is pinned to the ship's own exit time, so only
-//     the flight time is searched. The winner's departure is then moved to the burn's real exit time and
-//     its flight time searched once more there (escapeLockedDeparture).
+//   Case 1 (on the ground): a circular parking orbit is designed for the winning transfer and its
+//     inclination and LAN are printed as a launch target.
+//   Case 2 (in a bound orbit around the departure body): the real orbit sets the ejection cost. The search
+//     prices the best burn point anywhere in the orbit; the final stage uses the one the timing dictates.
+//   Case 3 (same SOI): the ship burns straight onto a Lambert arc to the destination.
+//   Case 4 (on an escape orbit around the departure body): a correction burn. tSOI is pinned to the ship's
+//     own exit time, so only the flight time is searched (see escapeLockedDeparture).
 //
 // The steps:
-//   1. buildTransferWindow picks the departure and flight-time samples: a COARSE search over
-//      departureWindows windows (see the PARAMETERs). For a fine search over a window see porkchopplot.ks.
-//   2. porkchopGrid runs the coarse grid. Cases 1 and 2: each cell is priced by transferDeltaV (Lambert's
-//      short-way and long-way solutions, the ejection from the departure orbit onto the velocity wanted
-//      at the departure body's SOI edge, and the arrival). Case 3: by sameSOITransferDeltaV.
-//   3. The best cell of each departure window is refined: a hill climb (hillClimb2D) down to 1/8 of the
-//      grid spacing, then two Newton steps (newtonRefine2D, in library.ks). With several windows there
-//      are several refinements, and the cheapest of them wins. Cases 1 and 2 use the quick ejection
-//      cost here; the winner is then re-priced at full precision.
-//   4. Case 2 only: phaseLockedDeparture moves the departure to the best burn phase of the ship's
-//      orbit (case 4: escapeLockedDeparture moves it to the correction burn's exit time). Cases 2, 3
-//      and 4: addEjectionNode adds the maneuver node (radial + normal + prograde).
+//   1. buildTransferWindow picks the departure and flight-time samples.
+//   2. porkchopGrid runs the coarse grid (transferDeltaV, or sameSOITransferDeltaV in case 3).
+//   3. The best cell of each window is refined: a hill climb to 1/8 of the grid spacing, then two Newton
+//      steps, with the quick ejection cost. The winner is re-priced at full precision.
+//   4. Case 2: phaseLockedDeparture moves the departure to the best burn phase (case 4:
+//      escapeLockedDeparture). Cases 2 to 4: addEjectionNode adds the node, and the game's own prediction
+//      is compared with the plan.
 //
-// "tSOI" below is the moment the ship leaves the departure body's sphere of influence - the
-// departure time Lambert sees. The ejection burn itself happens earlier, by the hyperbolic
-// transit time from the burn to the SOI edge.
+// "tSOI" is the moment the ship leaves the departure body's sphere of influence: the departure time
+// Lambert sees. The burn is earlier, by the transit time to the SOI edge.
 //
 // PARAMETERs:
-//   destinationName  - the destination: a body, or a vessel (a vessel wins a name clash). If it is valid
-//                      it also becomes the ship's target. "Default" uses the current target
+//   destinationName  - a body or a vessel (a vessel wins a name clash); it becomes the ship's target.
+//                      "Default" uses the current target
 //   startOffset      - s from now to the start of the search window (>= 30)
-//   departureWindows - how many departure windows to search. Between bodies a window is a synodic
-//                      period; in the same SOI it is a synodic period or four ship orbits, whichever is shorter
-//   samplesPerWindow - departure times sampled in each window; the grid covers
-//                      departureWindows x samplesPerWindow departure times in all (in case 4, the total, 1 by default: the departure is pinned there). -1 (the default) chooses:
-//                      between bodies 8 per period of the quicker body in the window (4 to 24), 12 per ship orbit in the same SOI
-//   tofSamples       - flight times sampled (1 to 4 times the Hohmann time). -1 (the default) chooses:
-//                      5 between bodies, 7 in the same SOI
-//   parkingAltitude  - m, case 1 only: altitude of the parking orbit to design. -1 (the default) chooses
-//                      50 km, or 30 km above the atmosphere if there is one.
-//   captureAltitude  - m above the destination body's surface to capture into a circular orbit.
-//                      -1 (the default) chooses 15 km, or 5 km above the atmosphere if there is one; or, for
-//                      a destination vessel at a moon (see below), the vessel's orbit size (semi-major axis).
-//                      The trajectory is aimed at this periapsis, not at the body's centre (arrivalAimOffset:
-//                      the impact parameter, on the side of a prograde capture). A vessel in the ship's own SOI has
-//                      no capture: only its arrival excess speed is priced.
-//   solverType       - the Lambert solver: "Gooding" (the default) or "Gauss"
-//   searchDays       - game days, the length of the departure range, in place of departureWindows windows.
-//                      -1 (the default) uses departureWindows. Searches only the departures soon, instead of
-//                      a whole synodic period; also needed when a vessel is on an escape orbit with no SOI
-//                      change to end the search (see buildTransferWindow)
+//   departureWindows - how many departure windows to search (see buildTransferWindow)
+//   samplesPerWindow - departure times per window (case 4: in all). -1 chooses a default
+//   tofSamples       - flight times sampled. -1 chooses a default
+//   parkingAltitude  - m, case 1 only: altitude of the orbit to design. -1 chooses 50 km, or 30 km above
+//                      the atmosphere
+//   captureAltitude  - m above the destination body's surface to capture into a circular orbit, which the
+//                      trajectory is aimed at. -1 chooses 15 km, or 5 km above the atmosphere; or the orbit
+//                      size of a destination vessel or moon
+//   searchDays       - game days, the length of the departure range in place of departureWindows. -1: not used
 // ============================================================================
 
 PARAMETER destinationName IS "Default".
@@ -83,7 +53,6 @@ PARAMETER samplesPerWindow IS -1.
 PARAMETER tofSamples IS -1.
 PARAMETER parkingAltitude IS "Default".
 PARAMETER captureAltitude IS "Default".
-PARAMETER solverType IS "Gooding".
 PARAMETER searchDays IS -1.
 // The source is always where the ship is: this script is run by the ship that will do the burn.
 LOCAL sourceName IS "".
@@ -94,76 +63,30 @@ IF captureAltitude = errorValue SET captureAltitude TO -1.
 
 CLEARSCREEN.
 
+// The current target is carried as the object, not its name: two vessels can share a name.
 IF destinationName = "Default" {
-	IF HASTARGET SET destinationName TO TARGET:NAME.
-	ELSE SET destinationName TO "None".
+	SET destinationName TO "None".
+	LOCAL currentTarget IS currentTargetOrbitable().
+	IF NOT currentTarget:ISTYPE("Scalar") SET destinationName TO currentTarget.
 }
 
-// With debug on (a global from library.ks), the script writes what each step produced to one CSV
-// on the archive: first the coarse porkchop grid (writePorkchopCsv, which replaces the file), then
-// everything else as Section,Name,Value rows. Rows produced before the grid exists are held back
-// and added after it. With debug off none of this runs and nothing is written.
+// With debug on (a global from library.ks), each step's results go to one CSV on the archive: the coarse
+// grid first, then Section,Name,Value rows (held back until the grid is written).
 GLOBAL transferGridFile IS "0:transferCalc porkchop.csv".
 GLOBAL transferGridWritten IS FALSE.
 GLOBAL transferPendingLog IS LIST().
+// Real-world seconds each stage took (markTime), printed at the end and logged as "Timing" rows.
+GLOBAL stageTimings IS LIST().
+GLOBAL stageMark IS KUNIVERSE:REALWORLDTIME.
+FUNCTION markTime {
+	PARAMETER label.
 
-// The unit of a logged value, from its type and its name (the part after any "." is what counts).
-// Anything that is just a number with no unit is "unitless"; counts are "count".
-FUNCTION debugUnits {
-	PARAMETER section.
-	PARAMETER name.
-	PARAMETER value.
-
-	IF value:ISTYPE("Boolean") RETURN "boolean".
-	IF value:ISTYPE("String") RETURN "text".
-	IF NOT (value:ISTYPE("Scalar") OR value:ISTYPE("Vector") OR value:ISTYPE("List")) RETURN "text".
-	IF name:STARTSWITH("failureReasons.") RETURN "count".
-
-	LOCAL key IS name.
-	IF name:CONTAINS(".") SET key TO name:SUBSTRING(name:FINDLAST(".") + 1, name:LENGTH - name:FINDLAST(".") - 1).
-	SET key TO key:TOLOWER.
-	LOCAL unit IS "unitless".
-
-	IF key = "final value" {
-		SET unit TO "unitless".
-	} ELSE IF key = "mu" {
-		SET unit TO "m^3/s^2".
-	} ELSE IF key:CONTAINS("unitseconds") {
-		SET unit TO "s per unit".
-	} ELSE IF key = "finalguess1" OR key = "initialguess1" {
-		SET unit TO "s (UT)".
-	} ELSE IF key = "finalguess2" OR key = "initialguess2" {
-		SET unit TO "s".
-	} ELSE IF key = "initialvalue" OR key = "deltavalue" OR key = "vinfinity" {
-		SET unit TO "m/s".
-	} ELSE IF key:CONTAINS("anomaly") {
-		SET unit TO "deg".
-	} ELSE IF key:CONTAINS("exit offset") {
-		SET unit TO "m".
-	} ELSE IF key:CONTAINS("rejected") {
-		SET unit TO "count".
-	} ELSE IF key:CONTAINS("deltav") OR key:CONTAINS("delta v") OR key = "dv" OR key = "finalvalue" OR key:CONTAINS("velocity") OR key = "v_1" OR key = "v_2" OR key = "dvvector" OR key = "prograde" OR key = "normal" OR key = "radial" OR key = "nodeerror" {
-		SET unit TO "m/s".
-	} ELSE IF key:CONTAINS("position") OR key = "r_1" OR key = "r_2" OR key:CONTAINS("altitude") OR key:CONTAINS("radius") OR key = "sma" OR key:CONTAINS("periapsis") {
-		SET unit TO "m".
-	} ELSE IF key:CONTAINS("latitude") OR key:CONTAINS("inclination") OR key:ENDSWITH("lan") OR key:CONTAINS("residual") {
-		SET unit TO "deg".
-	} ELSE IF key:CONTAINS("flighttime") OR key:CONTAINS("timeofflight") OR key:CONTAINS("tofstart") OR key:CONTAINS("tofend") OR key:CONTAINS("period") OR key:CONTAINS("hohmann")
-			OR key:CONTAINS("step") AND NOT key:CONTAINS("steps") OR key:CONTAINS("windowlength") OR key:CONTAINS("startoffset") OR key:CONTAINS("transit") OR key = "offset"
-			OR key:CONTAINS("seconds") OR key = "timeofflights" OR key = "tof" {
-		SET unit TO "s".
-	} ELSE IF key:CONTAINS("departuretime") OR key:CONTAINS("starttime") OR key:CONTAINS("departurestart") OR key:CONTAINS("departureend") OR key = "epoch" OR key = "tsoi" OR key = "burnut" {
-		SET unit TO "s (UT)".
-	} ELSE IF key = "dv" OR key = "mindeltav" {
-		SET unit TO "m/s".
-	} ELSE IF key:CONTAINS("samples") OR key:CONTAINS("windows") OR key:CONTAINS("cells") OR key:CONTAINS("iteration") OR key:CONTAINS("evaluations") OR key = "steps" OR key = "passes" OR key:CONTAINS("sense") {
-		SET unit TO "count".
-	}
-	IF value:ISTYPE("List") RETURN unit + " (each item)".
-	RETURN unit.
+	LOCAL nowTime IS KUNIVERSE:REALWORLDTIME.
+	stageTimings:ADD(label + " " + ROUND(nowTime - stageMark, 1) + " s").
+	SET stageMark TO nowTime.
 }
 
-// Adds one Section,Name,Value,Units row (each quoted, since values such as vectors contain commas).
+// Adds one Section,Name,Value row (each quoted, since values such as vectors contain commas).
 FUNCTION debugLine {
 	PARAMETER section.
 	PARAMETER name.
@@ -179,7 +102,7 @@ FUNCTION debugLine {
 			SET valueText TO valueText + item:TOSTRING.
 		}
 	}
-	LOCAL line IS quote + section + quote + "," + quote + name + quote + "," + quote + valueText + quote + "," + quote + debugUnits(section, name, value) + quote.
+	LOCAL line IS quote + section + quote + "," + quote + name + quote + "," + quote + valueText + quote.
 	IF transferGridWritten {
 		IF connectionToKSC() LOG line TO transferGridFile.
 	} ELSE {
@@ -198,7 +121,7 @@ FUNCTION debugFlush {
 		RETURN.
 	}
 	LOG "" TO transferGridFile.
-	LOG "Section,Name,Value,Units" TO transferGridFile.
+	LOG "Section,Name,Value" TO transferGridFile.
 	FOR line IN transferPendingLog {
 		LOG line TO transferGridFile.
 	}
@@ -221,14 +144,15 @@ FUNCTION debugLogValues {
 		}
 	}
 }
-// Prints where the ship's predicted path goes after the node just made, and anything wrong with it (see
-// checkTransferSOIPath). Returns the number of problems.
+// Prints the predicted SOI path after the node just made and anything wrong with it (checkTransferSOIPath).
+// Returns the number of problems.
 FUNCTION reportSOIPath {
 	PARAMETER fromOrbitable.
 	PARAMETER toOrbitable.
 	PARAMETER sameSOI.
+	PARAMETER arrivalUT IS 0.
 
-	LOCAL soiCheck IS checkTransferSOIPath(fromOrbitable, toOrbitable, sameSOI).
+	LOCAL soiCheck IS checkTransferSOIPath(fromOrbitable, toOrbitable, sameSOI, arrivalUT).
 	PRINT "SOI path: " + soiCheck["text"] + ".".
 	FOR problem IN soiCheck["problems"] {
 		PRINT "WARNING: " + problem + ".".
@@ -243,12 +167,55 @@ FUNCTION reportSOIPath {
 	}
 	RETURN soiCheck["problems"]:LENGTH.
 }
+// Prints how the game's prediction for a same-SOI node compares with the plan (checkNodeEncounter).
+// Returns the number of disagreements: an orbit more than 1 km from the plan's, and either a periapsis at a
+// destination body that is unsafe or more than half the capture radius from the plan, or (a vessel) an
+// arrival more than 1 km from where the plan aimed.
+FUNCTION reportNodeEncounter {
+	PARAMETER nodeCheck.
+
+	LOCAL disagreements IS 0.
+	PRINT "Game's orbit after the node: Pe " + distanceToString(nodeCheck["gamePeriapsis"]) + " (plan " + distanceToString(nodeCheck["planPeriapsis"]) + ").".
+	IF ABS(nodeCheck["gamePeriapsis"] - nodeCheck["planPeriapsis"]) > 1000 SET disagreements TO disagreements + 1.
+	IF nodeCheck:HASKEY("gameApoapsis") {
+		PRINT "  Ap " + distanceToString(nodeCheck["gameApoapsis"]) + " (plan " + distanceToString(nodeCheck["planApoapsis"]) + ").".
+		IF ABS(nodeCheck["gameApoapsis"] - nodeCheck["planApoapsis"]) > 1000 SET disagreements TO disagreements + 1.
+	}
+	IF nodeCheck:HASKEY("captureAimed") {
+		// A body with a capture radius: its gravity bends the path, so the periapsis there is what counts.
+		IF nodeCheck:HASKEY("gameCapture") {
+			PRINT "The game predicts a periapsis of " + distanceToString(nodeCheck["gameCapture"]) + " at the destination (plan " + distanceToString(nodeCheck["planCapture"]) + ").".
+			// The plan's periapsis is only good to a few tens of percent (the game hands over to the destination's
+			// gravity at its SOI edge), so only a pass that hits it, or one far from the plan, is a disagreement.
+			IF nodeCheck["gameCapture"] < nodeCheck["captureFloor"] {
+				PRINT "  That is below its surface or inside its atmosphere!".
+				SET disagreements TO disagreements + 1.
+			} ELSE IF ABS(nodeCheck["gameCapture"] - nodeCheck["planCapture"]) > nodeCheck["captureTolerance"] {
+				PRINT "  That is more than " + distanceToString(nodeCheck["captureTolerance"]) + " from the plan!".
+				SET disagreements TO disagreements + 1.
+			}
+		} ELSE {
+			PRINT "The game predicts no encounter with the destination: its periapsis there is not checked.".
+		}
+	} ELSE IF nodeCheck["available"] {
+		PRINT "At arrival the game puts the ship " + distanceToString(nodeCheck["miss"]) + " from the destination.".
+		IF nodeCheck["deviation"] > 1000 {
+			PRINT "  That is " + distanceToString(nodeCheck["deviation"]) + " from where the plan aimed!".
+			SET disagreements TO disagreements + 1.
+		}
+	} ELSE {
+		PRINT "The game's position prediction does not follow the node: arrival not checked.".
+	}
+	IF disagreements > 0 PRINT "WARNING: the game disagrees with the plan.".
+	IF debug debugLogValues("Node check", nodeCheck).
+	RETURN disagreements.
+}
 IF debug {
 	IF connectionToKSC() AND EXISTS(transferGridFile) DELETEPATH(transferGridFile).
 	debugLine("Run", "start", "UT " + TIME:SECONDS + ", " + SHIP:NAME + " in " + SHIP:BODY:NAME + "'s SOI, " + SHIP:STATUS).
 	debugLogValues("Parameters", LEXICON("destinationName", destinationName, "startOffset", startOffset, "departureWindows", departureWindows,
 		"samplesPerWindow", samplesPerWindow, "tofSamples", tofSamples, "sourceName", sourceName,
-		"parkingAltitude", parkingAltitude, "captureAltitude", captureAltitude, "solverType", solverType, "searchDays", searchDays)).
+		"parkingAltitude", parkingAltitude, "captureAltitude", captureAltitude, "searchDays", searchDays)).
 }
 LOCAL errorCode IS "None".
 
@@ -257,21 +224,23 @@ SET errorCode TO endpoints["error"].
 LOCAL fromOrbitable IS endpoints["from"].
 LOCAL toOrbitable IS endpoints["to"].
 LOCAL sameSOI IS endpoints["sameSOI"].
-// A destination vessel at a moon of the ship's body (or of its body's parent): the transfer goes to the moon
-// (toOrbitable), and the vessel (or the target itself) is what the ship ends up near.
+// A destination vessel at a moon: the transfer goes to the moon (toOrbitable); the vessel stays the target.
 LOCAL destinationVessel IS endpoints["destinationVessel"].
+// A destination moon of another planet: the transfer goes to its planet; the moon stays the target.
+LOCAL destinationMoon IS endpoints["destinationMoon"].
+LOCAL captureOrbitable IS destinationVessel.
+IF destinationMoon:ISTYPE("Body") SET captureOrbitable TO destinationMoon.
 LOCAL targetOrbitable IS toOrbitable.
 IF errorCode = "None" AND destinationVessel:ISTYPE("Vessel") SET targetOrbitable TO destinationVessel.
+IF errorCode = "None" AND destinationMoon:ISTYPE("Body") SET targetOrbitable TO destinationMoon.
 // A valid destination becomes the ship's target (the one named, or the one already targeted).
 IF errorCode = "None" {
 	IF HASTARGET {
-		IF TARGET:NAME <> targetOrbitable:NAME SET TARGET TO targetOrbitable.
+		// By object, not name: a different vessel with the same name is not the target.
+		IF TARGET <> targetOrbitable SET TARGET TO targetOrbitable.
 	} ELSE {
 		SET TARGET TO targetOrbitable.
 	}
-}
-IF errorCode = "None" AND solverType <> "Gauss" AND solverType <> "Gooding" {
-	SET errorCode TO "solverType must be Gauss or Gooding, not " + solverType + "!".
 }
 IF debug {
 	IF errorCode = "None" {
@@ -293,14 +262,8 @@ IF errorCode = "None" AND sameSOI {
 // Burns earlier than this (the next minute) can't be flown.
 LOCAL minimumBurnLead IS 60.
 
-// A ship already leaving the departure body on an escape orbit (case 4, a correction burn after the main
-// ejection burn): there is no parking orbit to burn from, and its own SOI exit is already close to the
-// wanted one: a burn can move the exit by minutes, not hours. So exit time is not searched: every price
-// pins tSOI to the ship's own exit (orbitSpec["pinExit"], see transferDeltaV), the departure axis is a
-// single sample (searchDays and samplesPerWindow, here the total, can change that, to no effect), and the
-// flight time carries the search. The window is only exitSpread seconds before the ship's own exit.
-// escapeLockedDeparture then moves the winner's tSOI to the correction burn's real exit time and searches
-// the flight time once more there.
+// Case 4, a ship already on an escape orbit: tSOI is pinned to the ship's own exit (orbitSpec["pinExit"]),
+// the departure axis is one sample, and the window is exitSpread seconds before that exit.
 LOCAL exitSpread IS 1800.
 LOCAL shipEscaping IS FALSE.
 LOCAL searchSpan IS -1.
@@ -332,9 +295,7 @@ IF errorCode = "None" {
 	SET errorCode TO window["error"].
 }
 
-// Which case is this? On the ground (case 1): there is no orbit yet, so one is designed.
-// In a bound orbit around the departure body (case 2): that orbit is used as it is.
-// Inside one SOI (case 3): the ship's orbit is read by the cost function itself.
+// Which case: on the ground (1), in a bound orbit around the departure body (2), or same SOI (3).
 LOCAL orbitSpec IS 0.
 LOCAL shipInParkingOrbit IS FALSE.
 LOCAL launchLatitude IS 0.
@@ -342,8 +303,7 @@ LOCAL designAltitude IS parkingAltitude.
 
 IF errorCode = "None" AND NOT sameSOI {
 	IF SHIP:STATUS = "PRELAUNCH" OR SHIP:STATUS = "LANDED" OR SHIP:STATUS = "SPLASHED" {
-		// SHIP:LATITUDE on the ground is the launch site's latitude - but only if the ship is
-		// actually on the departure body.
+		// The launch site's latitude, if the ship is on the departure body.
 		IF SHIP:BODY:NAME = fromOrbitable:NAME SET launchLatitude TO SHIP:LATITUDE.
 		ELSE PRINT "Ship not on " + fromOrbitable:NAME + ": no latitude floor.".
 		IF designAltitude < 0 {
@@ -377,11 +337,10 @@ IF errorCode = "None" {
 	LOCAL captureRadius IS 0.
 	IF toOrbitable:ISTYPE("Body") {
 		IF captureAltitude < 0 {
-			IF destinationVessel:ISTYPE("Vessel") {
-				// Captured into the destination vessel's own orbit size: its semi-major axis (the distance from the
-				// moon's centre, for a vessel that is not on a closed orbit).
-				SET captureAltitude TO orbitSizeRadius(destinationVessel, toOrbitable) - toOrbitable:RADIUS.
-				PRINT destinationVessel:NAME + " orbits " + toOrbitable:NAME + ": capturing at its orbit size, " + ROUND(captureAltitude / 1000, 1) + " km up.".
+			IF captureOrbitable:ISTYPE("Vessel") OR captureOrbitable:ISTYPE("Body") {
+				// The destination vessel's or moon's orbit size.
+				SET captureAltitude TO orbitSizeRadius(captureOrbitable, toOrbitable) - toOrbitable:RADIUS.
+				PRINT captureOrbitable:NAME + " orbits " + toOrbitable:NAME + ": capturing at its orbit size, " + ROUND(captureAltitude / 1000, 1) + " km up.".
 			} ELSE {
 				// The default: 15 km up with no atmosphere, 5 km above the top of one.
 				SET captureAltitude TO 15000.
@@ -392,33 +351,31 @@ IF errorCode = "None" {
 	}
 
 	IF debug {
-		debugLogValues("Setup", LEXICON("solver", solverType, "captureRadius", captureRadius, "shipInParkingOrbit", shipInParkingOrbit,
+		debugLogValues("Setup", LEXICON("captureRadius", captureRadius, "shipInParkingOrbit", shipInParkingOrbit,
 			"launchLatitude", launchLatitude, "designAltitude", designAltitude)).
 		debugLogValues("Window", window).
 		IF orbitSpec:ISTYPE("Lexicon") debugLogValues("Orbit spec", orbitSpec).
 	}
 
-	// Between bodies, the coarse stages (the grid, then the hill climbs) use a quick ejection search
-	// (24 burn points instead of 48, fewer polish steps, a lighter exact check - see ejectionPrecision
-	// for its measured accuracy). The winner is then re-priced with the full one, and that is what
-	// gets reported. Inside one SOI there is no ejection search, so one delegate does it all.
+	// Between bodies the coarse stages use the quick ejection search; the winner is re-priced with the full one.
 	LOCAL quickDelegate IS 0.
 	LOCAL fullDelegate IS 0.
 	IF sameSOI {
 		PRINT fromOrbitable:NAME + " -> " + toOrbitable:NAME + " (same SOI).".
-		PRINT "Window " + timeToString(window["windowLength"]) + ", " + window["samplesPerWindow"] + " departures each.".
-		SET quickDelegate TO bindSameSOIDeltaV(fromOrbitable, toOrbitable, solverType, captureRadius, window["startTime"]).
+		SET quickDelegate TO bindSameSOIDeltaV(fromOrbitable, toOrbitable, captureRadius, window["startTime"]).
 		SET fullDelegate TO quickDelegate.
 	} ELSE {
 		PRINT fromOrbitable:NAME + " -> " + toOrbitable:NAME + " (around " + window["sunBody"]:NAME + ").".
-		SET quickDelegate TO bindTransferDeltaV(fromOrbitable, toOrbitable, window["sunBody"], solverType, orbitSpec, captureRadius, ejectionPrecision("quick")).
-		SET fullDelegate TO bindTransferDeltaV(fromOrbitable, toOrbitable, window["sunBody"], solverType, orbitSpec, captureRadius, ejectionPrecision("full")).
+		SET quickDelegate TO bindTransferDeltaV(fromOrbitable, toOrbitable, window["sunBody"], orbitSpec, captureRadius, ejectionPrecision("quick")).
+		SET fullDelegate TO bindTransferDeltaV(fromOrbitable, toOrbitable, window["sunBody"], orbitSpec, captureRadius, ejectionPrecision("full")).
 	}
 
-	// Coarse grid over the whole search window. Only benefits from the Lambert warm-start
-	// seed here: hillClimb2D below always calls its delegate with exactly two arguments, so
-	// seed falls back to its default on every evaluation during the refinement pass.
+	PRINT searchWindowLine(window).
+
+	// Coarse grid over the whole search window.
+	markTime("Setup").
 	LOCAL grid IS porkchopGrid(quickDelegate, window).
+	markTime("Coarse grid").
 	PRINT "Grid: " + grid["totalCells"] + " cells.".
 	PRINT motionTypeSummary(grid, TRUE).
 	FOR reasonLine IN failureReasonLines(grid) {
@@ -429,7 +386,7 @@ IF errorCode = "None" {
 	LOCAL coarseCandidates IS porkchopBestPerBand(grid).
 
 	IF debug {
-		writePorkchopCsv(grid, window, transferGridFile, solverType, fromOrbitable, toOrbitable).
+		writePorkchopCsv(grid, window, transferGridFile, fromOrbitable, toOrbitable).
 		debugFlush().
 		debugLogValues("Coarse grid", LEXICON("cells", grid["totalCells"], "motionTypes", motionTypeSummary(grid), "failureReasons", grid["failureReasonCounts"],
 			"minDeltaV", grid["minDeltaV"]["value"], "minDepartureTime", grid["minDeltaV"]["departureTime"],
@@ -440,24 +397,31 @@ IF errorCode = "None" {
 		}
 	}
 
-	// --- Refine each band's best coarse point: hill climb, then Newton steps ---
-	// Step sizes are in seconds: the hill climb starts at the coarse grid's own spacing on each axis
-	// (departure spacing is a fraction of the window, TOF spacing a fraction of the Hohmann
-	// time). It prices 8 neighbours per iteration and only halves its step when none improves, so its
-	// long tail of halvings is the expensive part. It is therefore stopped at 1/8 of the grid spacing
-	// (hillClimbRatio = 3 halvings) and finished with two Newton steps (newtonRefine2D), which fit the
-	// local bowl and jump to its bottom: fewer evaluations and a more precise minimum. (The exact-timing
-	// stage re-optimizes tSOI afterwards in any case.)
+	// Refine each window's best cell: a hill climb stopped at 1/8 of the grid spacing (hillClimbRatio
+	// halvings), then two Newton steps.
 	LOCAL hillClimbRatio IS 3.
+	// The departure is clamped to the window: a refinement that leaves it finds a plan that cannot be flown.
+	// Outside the window the price also rises a little with the distance outside (0.001 m/s per second), so
+	// the refinement is led back in: a flat price there lets it drift away on rounding noise, and from a
+	// step or more outside it no longer sees the departures inside.
+	LOCAL windowStartUT IS window["departureStart"].
+	LOCAL windowEndUT IS window["departureEnd"].
+	LOCAL boundedDelegate IS {
+		PARAMETER departureUT.
+		PARAMETER flightTime.
+
+		LOCAL heldUT IS MAX(windowStartUT, MIN(windowEndUT, departureUT)).
+		RETURN quickDelegate(heldUT, flightTime) + 0.001 * ABS(departureUT - heldUT).
+	}.
 	LOCAL bestOverall IS LEXICON("finalValue", invalidDeltaV).
 	FOR band IN coarseCandidates:KEYS {
 		PRINT "Refining window " + band + ".".
 		LOCAL seed IS coarseCandidates[band].
-		LOCAL climbed IS hillClimb2D(quickDelegate,			// already-bound delegate
+		LOCAL climbed IS hillClimb2D(boundedDelegate,		// already-bound delegate, held to the window
 			seed["departureTime"], seed["flightTime"],		// initial guesses, from the coarse pass - both absolute (seconds)
 			window["departureStep"], window["tofStep"],		// initial step size, in seconds
 			"", 20, hillClimbRatio).						// log, iterationMax, smallestStepRatio
-		LOCAL refined IS newtonRefine2D(quickDelegate, climbed["finalGuess1"], climbed["finalGuess2"], climbed["finalValue"],
+		LOCAL refined IS newtonRefine2D(boundedDelegate, climbed["finalGuess1"], climbed["finalGuess2"], climbed["finalValue"],
 			window["departureStep"] / 2 ^ hillClimbRatio, window["tofStep"] / 2 ^ hillClimbRatio, 2).
 		PRINT "  " + climbed["iteration"] + " climb steps + " + refined["steps"] + " Newton steps.".
 		IF debug {
@@ -467,17 +431,19 @@ IF errorCode = "None" {
 		IF refined["finalValue"] < bestOverall["finalValue"] SET bestOverall TO refined.
 	}
 
+	markTime("Hill climb and Newton").
 	IF bestOverall["finalValue"] >= invalidDeltaV {
 		SET errorCode TO "No valid transfer was found in the search window.".
 	} ELSE {
-		// finalGuess1 is an absolute UT (seconds) - the SOI exit time, tSOI (case 3: the burn time);
-		// finalGuess2 is an absolute flight duration (seconds).
-		LOCAL reportTSOI IS bestOverall["finalGuess1"].
+		// finalGuess1 is tSOI (case 3: the burn time), a UT; finalGuess2 is the flight time.
+		LOCAL reportTSOI IS MAX(windowStartUT, MIN(windowEndUT, bestOverall["finalGuess1"])).
 		LOCAL reportTimeOfFlight IS bestOverall["finalGuess2"].
 		LOCAL reportStats IS LEXICON().
 		// Re-price the winner with the full ejection search - the hill climb only saw the quick one.
 		LOCAL reportDV IS fullDelegate(reportTSOI, reportTimeOfFlight, LEXICON(), reportStats).
+		markTime("Full-precision pricing").
 		LOCAL soiProblems IS 0.
+		LOCAL nodeDisagreements IS 0.
 		IF debug {
 			debugLogValues("Winner", LEXICON("departureTime", reportTSOI, "flightTime", reportTimeOfFlight, "deltaV", reportDV)).
 			debugLogValues("Full-precision pricing of the winner", reportStats).
@@ -486,6 +452,9 @@ IF errorCode = "None" {
 		IF sameSOI {
 			// Case 3: the burn is at the departure time itself.
 			LOCAL departure IS reportStats["Ejection"].
+			// The ship's predicted position at arrival before the node, for checkNodeEncounter.
+			LOCAL plannedArrival IS departure["burnUT"] + reportTimeOfFlight.
+			LOCAL shipBeforeNode IS POSITIONAT(SHIP, plannedArrival).
 			LOCAL nodeResult IS addEjectionNode(departure).
 			IF debug debugLogValues("Node (same SOI)", nodeResult).
 			PRINT "Node set: burn in " + timeToString(departure["burnUT"] - TIME:SECONDS) + ", " + ROUND(departure["deltaV"], 1) + " m/s.".
@@ -493,27 +462,32 @@ IF errorCode = "None" {
 			IF NOT nodeResult["verified"] {
 				PRINT "WARNING: node dV off by " + ROUND(nodeResult["nodeError"], 2) + " m/s.".
 			}
-			SET soiProblems TO reportSOIPath(fromOrbitable, toOrbitable, sameSOI).
+			SET soiProblems TO reportSOIPath(fromOrbitable, toOrbitable, sameSOI, plannedArrival).
+			LOCAL aimOffset IS V(0, 0, 0).
+			IF reportStats:HASKEY("Aim Offset") SET aimOffset TO reportStats["Aim Offset"].
+			SET nodeDisagreements TO reportNodeEncounter(checkNodeEncounter(departure, toOrbitable, fromOrbitable:BODY, plannedArrival, shipBeforeNode, aimOffset, captureRadius)).
 		} ELSE IF shipInParkingOrbit OR shipEscaping {
 			LOCAL timed IS 0.
 			IF shipEscaping {
-				// An escape orbit does not repeat, so there is no burn phase to lock to. Every price in the
-				// search was for the cheapest correction burn whenever it exits, so what is left is to move
-				// tSOI to the exit time that burn really has and price again.
+				// No burn phase to lock to: move tSOI to the correction burn's real exit time and price again.
 				PRINT "Moving the departure to the correction burn's exit time.".
-				SET timed TO escapeLockedDeparture(fromOrbitable, toOrbitable, window["sunBody"], solverType, orbitSpec, captureRadius,
+				SET timed TO escapeLockedDeparture(fromOrbitable, toOrbitable, window["sunBody"], orbitSpec, captureRadius,
 					reportTSOI, reportTimeOfFlight).
 				PRINT "Exit time lock: " + timed["passes"] + " passes, " + ROUND(timed["deltaV"], 1) + " m/s.".
 			} ELSE {
-				// The search priced the best burn point anywhere in the orbit. The orbit repeats every
-				// period, so the cheapest burn the ship can really make is that same point at the repeat
-				// nearest the grid's departure: lock tSOI to the best burn phase (burn time + transit time,
-				// shifted by whole periods), recompute Lambert there, and repeat until it settles.
+				// Lock tSOI to the best burn phase of the ship's orbit. The full-precision price just made is its first pass.
 				PRINT "Locking to the best burn phase.".
-				SET timed TO phaseLockedDeparture(fromOrbitable, toOrbitable, window["sunBody"], solverType, orbitSpec, captureRadius,
-					reportTSOI, reportTimeOfFlight, TIME:SECONDS + minimumBurnLead).
+				SET timed TO phaseLockedDeparture(fromOrbitable, toOrbitable, window["sunBody"], orbitSpec, captureRadius,
+					reportTSOI, reportTimeOfFlight, TIME:SECONDS + minimumBurnLead, 4, reportDV, reportStats).
 				PRINT "Phase lock: " + timed["passes"] + " passes. Any phase " + ROUND(timed["phaseFreeDeltaV"], 1) +
 					" m/s, timed " + ROUND(timed["deltaV"], 1) + " m/s.".
+				// The phase lock's own stages (library timings), in place of one lump.
+				IF timed:HASKEY("timings") {
+					FOR lapNote IN timed["timings"] {
+						stageTimings:ADD("  " + lapNote).
+					}
+				}
+				markTime("Phase lock total (incl. the above)").
 			}
 			IF debug {
 				debugLogValues("Phase lock", LEXICON("passes", timed["passes"], "phaseFreeDeltaV", timed["phaseFreeDeltaV"],
@@ -534,16 +508,61 @@ IF errorCode = "None" {
 					PRINT "WARNING: node dV off by " + ROUND(nodeResult["nodeError"], 2) + " m/s.".
 				}
 				SET soiProblems TO reportSOIPath(fromOrbitable, toOrbitable, sameSOI).
+				// Compare the game's own prediction with the plan.
+				IF NOT shipEscaping {
+					LOCAL aimOffsetSize IS 0.
+					IF reportStats:HASKEY("Aim Offset") SET aimOffsetSize TO reportStats["Aim Offset"]:MAG.
+					// The game's orbit after the SOI exit against the plan's arc there. If they match, a missing encounter
+					// is more likely the game's prediction than the plan.
+					LOCAL solarOrbitMatches IS FALSE.
+					IF HASNODE {
+						LOCAL ejectionPatch IS NEXTNODE:ORBIT.
+						IF ejectionPatch:HASNEXTPATCH AND reportStats:HASKEY("r_1") AND reportStats:HASKEY("v_1") {
+							LOCAL gameExitUT IS TIME:SECONDS + ejectionPatch:NEXTPATCHETA.
+							// The game's velocity one second after the exit against the plan's (v_1 advanced under the central body's pull).
+							LOCAL checkAfter IS 1.
+							LOCAL gameVelocity IS VELOCITYAT(SHIP, reportTSOI + checkAfter):ORBIT.
+							LOCAL planPull IS reportStats["r_1"]:NORMALIZED * (-window["sunBody"]:MU / reportStats["r_1"]:MAG ^ 2).
+							LOCAL planVelocity IS reportStats["v_1"] + planPull * checkAfter.
+							LOCAL velocityError IS gameVelocity - planVelocity.
+							// Within 0.05 m/s and the same exit time.
+							IF velocityError:MAG < 0.05 AND ABS(gameExitUT - reportTSOI) < 2 SET solarOrbitMatches TO TRUE.
+							PRINT "Solar velocity just after the exit: the game's differs from the plan's by " + ROUND(velocityError:MAG, 3) + " m/s,".
+							PRINT "  " + ROUND(VANG(gameVelocity, planVelocity), 4) + " deg apart in direction (speed " + ROUND(gameVelocity:MAG - planVelocity:MAG, 3) + " m/s).".
+							IF debug debugLogValues("Solar velocity check", LEXICON("gameVelocity", gameVelocity, "planVelocity", planVelocity,
+								"velocityError", velocityError:MAG, "directionError", VANG(gameVelocity, planVelocity), "speedError", gameVelocity:MAG - planVelocity:MAG)).
+						}
+					}
+					// The game's patch at the destination, and its periapsis there.
+					IF toOrbitable:ISTYPE("Body") AND HASNODE {
+						LOCAL planPeriapsisAltitude IS captureRadius - toOrbitable:RADIUS.
+						LOCAL patch IS NEXTNODE:ORBIT.
+						LOCAL foundPatch IS FALSE.
+						UNTIL foundPatch OR NOT patch:HASNEXTPATCH {
+							SET patch TO patch:NEXTPATCH.
+							IF patch:BODY:NAME = toOrbitable:NAME SET foundPatch TO TRUE.
+						}
+						IF foundPatch {
+							PRINT "The game predicts a capture at " + toOrbitable:NAME + ": periapsis " + distanceToString(patch:PERIAPSIS) + " (plan " + distanceToString(planPeriapsisAltitude) + ").".
+							PRINT "  Aimed " + distanceToString(aimOffsetSize) + " off its centre; its sphere of influence is " + distanceToString(toOrbitable:SOIRADIUS) + ".".
+							IF debug debugLogValues("Node check", LEXICON("gamePeriapsisAtDestination", patch:PERIAPSIS, "planPeriapsisAtDestination", planPeriapsisAltitude, "soiRadius", toOrbitable:SOIRADIUS, "aimOffsetMagnitude", aimOffsetSize)).
+						} ELSE {
+							PRINT "The game predicts no encounter with " + toOrbitable:NAME + " (its sphere of influence is " + distanceToString(toOrbitable:SOIRADIUS) + ", the aim " + distanceToString(aimOffsetSize) + " off centre).".
+							IF solarOrbitMatches AND soiProblems = 1 {
+								PRINT "  The game's solar orbit matches the plan's, so this is probably the game's prediction, not the plan: not counted as a warning.".
+								SET soiProblems TO 0.
+							}
+							IF debug debugLogValues("Node check", LEXICON("soiRadius", toOrbitable:SOIRADIUS, "aimOffsetMagnitude", aimOffsetSize, "solarOrbitMatches", solarOrbitMatches)).
+						}
+					}
+				}
 			} ELSE {
 				IF shipEscaping PRINT "No correction burn on this escape orbit reaches it: no node.".
 				ELSE PRINT "No burn in this orbit reaches it: no node.".
+				SET errorCode TO "No maneuver node was made: the exact-timed burn was not found".
 			}
 		} ELSE {
-			// Case 1: no real orbit to check a plane mismatch against, so report the parking
-			// orbit that was designed for the winning transfer: the minimum-inclination plane
-			// that contains the departure direction, raised to the launch site's latitude if
-			// that is the more restrictive floor (a direct-ascent launch can't reach an
-			// inclination below its own latitude without a dogleg).
+			// Case 1: report the parking orbit designed for the winning transfer.
 			LOCAL designed IS reportStats["Ejection"].
 			IF debug debugLogValues("Designed parking orbit", designed).
 			PRINT "".
@@ -558,11 +577,8 @@ IF errorCode = "None" {
 			}
 			PRINT "  (check residual " + ROUND(designed["verificationResidual"], 6) + " deg)".
 
-			// Save the plan on the ship's own disk (volume 1, never the archive) for a launch script to read
-			// back with READJSON. The ejection burn leaves the parking orbit one transit time before the
-			// ship crosses the SOI edge at tSOI. In the closed-form case (the designed plane contains the exit
-			// direction) that is a tangential burn at the orbit's own radius, so the hyperbola is rebuilt
-			// here from the orbit radius and the excess speed; otherwise the search result already has it.
+			// Save the plan on the ship's own disk for a launch script (READJSON). The burn is one transit time
+			// before tSOI; in the closed-form case the hyperbola is rebuilt from the orbit radius and the excess speed.
 			LOCAL planMu IS fromOrbitable:MU.
 			LOCAL planRadius IS orbitSpec["radius"].
 			LOCAL planVInfinity IS 0.
@@ -586,7 +602,6 @@ IF errorCode = "None" {
 				"createdUT", TIME:SECONDS,
 				"departureBody", fromOrbitable:NAME,
 				"destination", toOrbitable:NAME,
-				"solverType", solverType,
 				"burnUT", planBurnUT,
 				"burnCalendar", TIME(planBurnUT):CALENDAR,
 				"burnClock", TIME(planBurnUT):CLOCK,
@@ -633,12 +648,21 @@ IF errorCode = "None" {
 
 		SET loopMessage TO fromOrbitable:NAME + " -> " + toOrbitable:NAME + " " + ROUND(reportDV) + "m/s in " + durationToUnitString(reportTimeOfFlight).
 		IF soiProblems > 0 SET loopMessage TO loopMessage + " (SOI WARNING)".
+		IF nodeDisagreements > 0 SET loopMessage TO loopMessage + " (NODE CHECK WARNING)".
 	}
 }
 
 IF errorCode <> "None" SET loopMessage TO "Error: " + errorCode.
+markTime("Node and checks").
+PRINT "Time taken:".
+FOR timingLine IN stageTimings {
+	PRINT "  " + timingLine.
+}
 IF debug {
+	debugLine("Timing", "stages", stageTimings).
 	debugLogValues("Result", LEXICON("errorCode", errorCode, "loopMessage", loopMessage)).
 	debugFlush().
 }
 PRINT "Complete!".
+// Whether it made a node or stopped on an error, tell the operator it is done (a beep, then a 5 s wait).
+alertOperator().

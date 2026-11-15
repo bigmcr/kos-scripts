@@ -13,7 +13,8 @@
 //
 // PARAMETERs:
 //   destinationName  - the destination: a body, or a vessel (a vessel wins a name clash).
-//                      "Default" (the default) uses the current target
+//                      "Default" (the default) uses the current target itself (the object, so it is right even
+//                      when another vessel has the same name); a typed name that is the target's also means it
 //   sourceName       - "Default" (the default) takes the source from where the ship is. Otherwise the
 //                      source to use instead: it must orbit the same body as the destination
 //   departureWindows - how many departure windows to plot (a synodic period each between bodies;
@@ -32,8 +33,7 @@
 //   startDays        - game days from now to the start of the plotted window, added to the five minutes
 //                      below. 0 (the default) starts five minutes from now. To plot a later window,
 //                      or a particular range of dates, start there
-// Fixed in the script (LOCALs): the plot starts 300 s (five minutes) from now (plus startDays), and the
-// Lambert solver is "Gooding".
+// Fixed in the script: the plot starts 300 s (five minutes) from now (plus startDays).
 //
 // The plot is written to the archive as "porkchop <source>-<destination>.csv", so each pair keeps its
 // own file. The script stops at once, before the grid is calculated, if there is no archive connection.
@@ -49,16 +49,17 @@ PARAMETER searchDays IS -1.
 PARAMETER startDays IS 0.
 // A planning tool is not used to burn straight away, so the plot starts five minutes from now, or later by startDays.
 LOCAL startOffset IS 300 + MAX(0, startDays) * timeUnitSeconds("Days").
-LOCAL solverType IS "Gooding".
 IF sourceName = "Default" SET sourceName TO "".
 SET captureAltitude TO processScalarParameter(captureAltitude, errorValue).
 IF captureAltitude = errorValue SET captureAltitude TO -1.
 
 CLEARSCREEN.
 
+// The current target is carried as the object, not its name: two vessels can share a name.
 IF destinationName = "Default" {
-	IF HASTARGET SET destinationName TO TARGET:NAME.
-	ELSE SET destinationName TO "None".
+	SET destinationName TO "None".
+	LOCAL currentTarget IS currentTargetOrbitable().
+	IF NOT currentTarget:ISTYPE("Scalar") SET destinationName TO currentTarget.
 }
 
 // Wall-clock stopwatch (KUNIVERSE:REALWORLDTIME is real-world UNIX time, so it ignores time warp).
@@ -71,6 +72,10 @@ LOCAL toOrbitable IS endpoints["to"].
 LOCAL sameSOI IS endpoints["sameSOI"].
 // For a vessel at a moon of the ship's body (or its parent), the plot is for that moon, and "destinationVessel" is the vessel.
 LOCAL destinationVessel IS endpoints["destinationVessel"].
+// For a moon of another planet (or of a moon of the ship's body), the plot is for the moon's planet, and "destinationMoon" is the moon.
+LOCAL destinationMoon IS endpoints["destinationMoon"].
+LOCAL captureOrbitable IS destinationVessel.
+IF destinationMoon:ISTYPE("Body") SET captureOrbitable TO destinationMoon.
 // The plot can only be saved on the archive, so there is no point calculating it without a connection.
 IF errorCode = "None" AND NOT connectionToKSC() {
 	SET errorCode TO "No archive connection: the plot could not be saved!".
@@ -106,9 +111,9 @@ IF errorCode = "None" {
 	LOCAL captureRadius IS 0.
 	IF toOrbitable:ISTYPE("Body") {
 		IF captureAltitude < 0 {
-			IF destinationVessel:ISTYPE("Vessel") {
+			IF captureOrbitable:ISTYPE("Vessel") OR captureOrbitable:ISTYPE("Body") {
 				// A vessel at the destination moon: its own orbit size (semi-major axis, or distance if not closed).
-				SET captureAltitude TO orbitSizeRadius(destinationVessel, toOrbitable) - toOrbitable:RADIUS.
+				SET captureAltitude TO orbitSizeRadius(captureOrbitable, toOrbitable) - toOrbitable:RADIUS.
 			} ELSE {
 				// The default: 15 km up with no atmosphere, 5 km above the top of one.
 				SET captureAltitude TO 15000.
@@ -120,23 +125,22 @@ IF errorCode = "None" {
 
 	IF sameSOI {
 		PRINT fromOrbitable:NAME + " -> " + toOrbitable:NAME + " (same SOI).".
-		PRINT "Window " + timeToString(window["windowLength"]) + ", " + window["samplesPerWindow"] + " departures each.".
 	} ELSE {
 		PRINT fromOrbitable:NAME + " -> " + toOrbitable:NAME + " (around " + window["sunBody"]:NAME + ").".
 	}
+	PRINT searchWindowLine(window).
 
-	PRINT "Solver: " + solverType + ".".
 
 	LOCAL dvDelegate IS 0.
 	IF sameSOI {
-		SET dvDelegate TO bindSameSOIDeltaV(fromOrbitable, toOrbitable, solverType, captureRadius, startTime).
+		SET dvDelegate TO bindSameSOIDeltaV(fromOrbitable, toOrbitable, captureRadius, startTime).
 	} ELSE {
-		SET dvDelegate TO bindPorkchopDeltaV(fromOrbitable, toOrbitable, window["sunBody"], solverType).
+		SET dvDelegate TO bindPorkchopDeltaV(fromOrbitable, toOrbitable, window["sunBody"]).
 	}
 	LOCAL grid IS porkchopGrid(dvDelegate, window).
 	LOCAL minDeltaV IS grid["minDeltaV"].
 
-	LOCAL csvSaved IS writePorkchopCsv(grid, window, plotFile, solverType, fromOrbitable, toOrbitable).
+	LOCAL csvSaved IS writePorkchopCsv(grid, window, plotFile, fromOrbitable, toOrbitable).
 
 	PRINT grid["totalCells"] + " cells in " + realTimeToString(grid["realDuration"]) + ".".
 	PRINT motionTypeSummary(grid, TRUE).
