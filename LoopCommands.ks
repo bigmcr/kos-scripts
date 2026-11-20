@@ -698,7 +698,8 @@ PRINT "Loop Commands Run!".
 FUNCTION logWorldInfo {
 		LOCAL message IS "".
 		LOCAL fileName IS "BodyInfo.csv".
-		IF connectionToKSC() SET fileName TO "0:" + fileName.
+		IF NOT connectionToKSC() RETURN.
+		SET fileName TO "0:" + fileName.
 		IF EXISTS(fileName) DELETEPATH(fileName).
 		SET message TO message + "Body Name," + SHIP:BODY:NAME + "" + CHAR(10).
 		SET message TO message + "Body Description," + SHIP:BODY:DESCRIPTION + "" + CHAR(10).

@@ -88,7 +88,7 @@ WHEN MAXTHRUST = 0 THEN {
 	stageFunction().
 }
 
-LOG "Time,Horizontal Distance,Altitude,Height Above Ground,Mode,Vertical Speed,Horizontal Speed,TWR,Engine Burn Time,Pitch,Thrust,Mass" TO "altitude.csv".
+IF connectionToKSC() LOG "Time,Horizontal Distance,Altitude,Height Above Ground,Mode,Vertical Speed,Horizontal Speed,TWR,Engine Burn Time,Pitch,Thrust,Mass" TO "0:altitude.csv".
 
 LOCAL oldTime IS ROUND(TIME:SECONDS, 1).
 LOCAL thrust IS 0.
@@ -118,7 +118,7 @@ UNTIL mode > 5 {
 		SET message TO message + "," + thrust.
 		SET message TO message + "," + MASS * 1000.
 //		SET message TO message + "," + timeToSuicideBurn.
-		LOG message TO "altitude.csv".
+		IF connectionToKSC() LOG message TO "0:altitude.csv".
 		SET oldTime TO ROUND(TIME:SECONDS, 1).
 	}
 
@@ -132,7 +132,7 @@ UNTIL mode > 5 {
 
 		// make the heading the same direction as surface retrograde
 		SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), pitchValue).
-		IF debug {LOGPID(pitchPID, "GravTurnLandPitchPID.csv", TRUE).}
+		IF debug AND connectionToKSC() {LOGPID(pitchPID, "0:GravTurnLandPitchPID.csv", TRUE).}
 	}
 
 	// Mode 1 - Maintain Vertical Velocity at -50 m/s until horizontal speed is 5% of initial
@@ -144,7 +144,7 @@ UNTIL mode > 5 {
 		LOCAL pitchValue IS pitchPID:UPDATE( TIME:SECONDS, VERTICALSPEED).
 		// make the heading the same direction as surface retrograde
 		SET globalSteer TO HEADING (yaw_for(-VELOCITY:SURFACE), pitchValue).
-		IF debug {LOGPID(pitchPID, "GravTurnLandPitchPID.csv", TRUE).}
+		IF debug AND connectionToKSC() {LOGPID(pitchPID, "0:GravTurnLandPitchPID.csv", TRUE).}
 	}
 
 	// Mode 2 - Wait for suicide burn
@@ -175,7 +175,7 @@ UNTIL mode > 5 {
 		PRINT "             " AT (40, 3).
 		PRINT "AGL < 10     " AT (40, 4).
 		SET globalThrottle TO T_PID:UPDATE(TIME:SECONDS, VERTICALSPEED).
-		IF debug {LOGPID(T_PID, "GravTurnLandThrottlePID.csv", TRUE).}
+		IF debug AND connectionToKSC() {LOGPID(T_PID, "0:GravTurnLandThrottlePID.csv", TRUE).}
 		SET globalSteer TO -VELOCITY:SURFACE.
 	}
 

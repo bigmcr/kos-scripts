@@ -968,10 +968,10 @@ FUNCTION heightPrediction {
 		SET averageHeight TO averageHeight + smallList[3].
 	}
 	SET averageHeight TO averageHeight / heightList:LENGTH.
-	IF (createlogFileName) {
-		LOG "Time,Latitude,Longitude,Terrain Height" TO "Terrain Heights.csv".
+	IF (createlogFileName AND connectionToKSC()) {
+		LOG "Time,Latitude,Longitude,Terrain Height" TO "0:Terrain Heights.csv".
 		FOR smallList IN heightList {
-			LOG smallList[0] + "," + smallList[1] + "," + smallList[2] + "," + smallList[3] TO "Terrain Heights.csv".
+			LOG smallList[0] + "," + smallList[1] + "," + smallList[2] + "," + smallList[3] TO "0:Terrain Heights.csv".
 		}
 	}
 	RETURN LEXICON("min",minHeight,"max",maxHeight,"avg",averageHeight).

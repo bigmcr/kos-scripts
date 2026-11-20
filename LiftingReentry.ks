@@ -62,8 +62,8 @@ UNTIL ALTITUDE < 20000 AND SHIP:VELOCITY:SURFACE:MAG < 1000 {
 	SET SHIP:CONTROL:ROLL TO -rollTorquePID:Update(time:seconds, rollVelocity).
 	printPID(rollTorquePID, "Roll Torque", 0, 2).
 	printPID(rollVelocityPID, "Roll Velocity", 20, 2).
-	logPID(rollTorquePID, "logs/rollTorquePID.csv", TRUE).
-	logPID(rollVelocityPID, "logs/rollVelocityPID.csv", TRUE).
+	IF connectionToKSC() logPID(rollTorquePID, "0:logs/rollTorquePID.csv", TRUE).
+	IF connectionToKSC() logPID(rollVelocityPID, "0:logs/rollVelocityPID.csv", TRUE).
 	PRINT "Logged " + COUNT + " data sets." AT (0, 1).
 	WAIT 0.
 	SET COUNT TO COUNT + 1.

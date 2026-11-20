@@ -63,7 +63,7 @@ FOR northOffset IN RANGE(-dist, dist + 1, spacing) {
 }
 
 PRINT "Data has " + dataList:LENGTH + " points of data in it.".
-logData(dataList, 2, "MapDataHeight.csv").
-logData(dataList, 3, "MapDataSlope.csv").
-logData(dataList, 4, "MapDataCompass.csv").
+logData(dataList, 2, "0:MapDataHeight.csv").
+logData(dataList, 3, "0:MapDataSlope.csv").
+logData(dataList, 4, "0:MapDataCompass.csv").
 //}
