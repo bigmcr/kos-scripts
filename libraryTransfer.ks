@@ -2690,7 +2690,7 @@ FUNCTION orbitSpecAround {
 	PARAMETER orbitable.
 	PARAMETER centralBody.
 
-	IF orbitable:ISTYPE("Vessel") AND orbitable:NAME = SHIP:NAME RETURN orbitSpecFromVessel(SHIP).
+	IF orbitable:ISTYPE("Vessel") AND orbitable:NAME = SHIP:NAME AND orbitable = SHIP RETURN orbitSpecFromVessel(SHIP).
 	RETURN attachLiveOrbit(makeOrbitSpec(orbitable:POSITION - centralBody:POSITION, VELOCITYAT(orbitable, TIME:SECONDS):ORBIT,
 											TIME:SECONDS, centralBody:MU, bodyClearanceRadius(centralBody)),
 							orbitable, centralBody).

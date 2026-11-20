@@ -93,7 +93,7 @@ IF errorCode = "None" {
 
 // Inside one SOI the ship (if it is the source) has to be in orbit to have an orbit to burn from.
 IF errorCode = "None" AND sameSOI {
-	IF fromOrbitable:NAME = SHIP:NAME AND (SHIP:STATUS = "PRELAUNCH" OR SHIP:STATUS = "LANDED" OR SHIP:STATUS = "SPLASHED" OR SHIP:STATUS = "SUB_ORBITAL") {
+	IF fromOrbitable:NAME = SHIP:NAME AND fromOrbitable = SHIP AND (SHIP:STATUS = "PRELAUNCH" OR SHIP:STATUS = "LANDED" OR SHIP:STATUS = "SPLASHED" OR SHIP:STATUS = "SUB_ORBITAL") {
 		SET errorCode TO "A transfer to " + toOrbitable:NAME + " inside " + SHIP:BODY:NAME + "'s sphere of influence needs the ship in orbit!".
 	}
 }

@@ -252,7 +252,7 @@ IF debug {
 
 // A node can only be made for the ship, so a vessel source has to be the ship, in orbit.
 IF errorCode = "None" AND sameSOI {
-	IF fromOrbitable:NAME <> SHIP:NAME {
+	IF NOT (fromOrbitable:NAME = SHIP:NAME AND fromOrbitable = SHIP) {
 		SET errorCode TO "A maneuver node can only be planned for the ship, but the source is " + fromOrbitable:NAME + "!".
 	} ELSE IF SHIP:STATUS = "PRELAUNCH" OR SHIP:STATUS = "LANDED" OR SHIP:STATUS = "SPLASHED" {
 		SET errorCode TO "A transfer to " + toOrbitable:NAME + " inside " + SHIP:BODY:NAME + "'s sphere of influence needs the ship in orbit!".
