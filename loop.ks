@@ -24,8 +24,10 @@ RUNPATH("libraryPID").
 RUNPATH("loopCommands").
 RUNPATH("loopTerminal").
 
-IF isStock() SET STEERINGMANAGER:MAXSTOPPINGTIME TO 1.0.
-ELSE SET STEERINGMANAGER:MAXSTOPPINGTIME TO 30.0.
+SET STEERINGMANAGER:MAXSTOPPINGTIME TO defaultStoppingTime().		// 1 s stock, 15 s RealFuels
+// Replace that default with one based on how fast the ship can turn (the default if landed). Use the saved measurement from the
+// last boot if it still describes this ship, because measuring takes several seconds and moves the ship a little.
+updateStoppingTime(NOT loadRotationData(), TRUE).
 
 FUNCTION functionCaller {
 		PARAMETER func, minArguments, maxArguments, args.

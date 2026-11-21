@@ -2,7 +2,7 @@
 
 // loopTerminal - the screen that loop shows on the terminal.
 //
-// The screen is the "Main" area (the top 13 rows, always shown), and below it the area of one "mode",
+// The screen is the "Main" area (the top 18 rows, always shown), and below it the area of one "mode",
 // chosen by loopMode. Everything on the screen is described by a list of CELLS. A cell is a LEXICON with
 //			"x", "y"      where its label starts. The y is counted from the top of the area it is in.
 //			"label"       text printed once, when the screen is laid out.
@@ -23,6 +23,9 @@
 LOCAL oldTime IS TIME:SECONDS.
 LOCAL timeDelta IS TIME:SECONDS - oldTime.
 LOCAL pointing IS LEXICON("pitch", 0, "roll", 0, "yaw", 0).
+LOCAL pointingRate IS LEXICON("pitch", 0, "roll", 0, "yaw", 0).		// deg/s, how fast the three values in pointing are changing
+LOCAL rateStartAngles IS LEXICON("pitch", 0, "roll", 0, "yaw", 0).	// pointing when the rate was last worked out
+LOCAL rateStartTime IS -1.							// when that was (s), or -1 if it has not been done yet
 
 // The terminal row where the area of the active mode starts, which is just below the Main area.
 LOCAL mainScreenHeight IS 13.
@@ -130,7 +133,7 @@ FUNCTION rebootPendingText {
 }
 
 // ---- Main -------------------------------------------------------------------------------------------
-// The Main area is 13 rows:
+// The Main area is 18 rows. The previous commands fill the right-hand column (from column 51) from row 1 to row 16:
 //      Value     KSP Conn        Auto Steer Target Previous Commands
 // PIT                                                    (previous commands, newest first)
 // ROL             Mode            A Throttle

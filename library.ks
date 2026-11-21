@@ -22,6 +22,10 @@ GLOBAL densityLookUp IS LEXICON().
 FOR eachResource IN SHIP:RESOURCES {densityLookUp:ADD(eachResource:NAME, eachResource:DENSITY * 1000).}
 
 GLOBAL shipInfo IS Lexicon().
+GLOBAL rotationLastAccel IS 0.				// Last measured angular acceleration (rad/s²), the lower of pitch and yaw. 0 if never measured.
+GLOBAL rotationLastMass IS 1.				// SHIP:MASS (t) when rotationLastAccel was measured. Used to rescale it after staging.
+GLOBAL rotationLastRCS IS FALSE.			// Whether RCS was on when rotationLastAccel was measured (the RCS thrusters add to the torque). Recorded only; the measurement does not change it.
+GLOBAL rotationFile IS "1:rotation.json".	// On the local drive, so a reboot can skip the measurement. See saveRotationData and loadRotationData.
 
 LOCAL partListTree IS LEXICON().
 LOCAL decouplerList IS LIST().
@@ -177,10 +181,160 @@ FUNCTION recursivePartSort {
 	RETURN.
 }
 
+// Sets one of the ship's control axes ("Pitch", "Yaw" or "Roll") to a value from -1 to 1.
+FUNCTION setControlAxis {
+	PARAMETER axisName.
+	PARAMETER axisValue.
+	IF axisName = "Pitch" SET SHIP:CONTROL:PITCH TO axisValue.
+	ELSE IF axisName = "Yaw" SET SHIP:CONTROL:YAW TO axisValue.
+	ELSE SET SHIP:CONTROL:ROLL TO axisValue.
+}
+
+// Actively measures how quickly the ship can start rotating about each axis, by applying full control input and watching SHIP:ANGULARVEL.
+// Only call this when the ship is free to turn: it unlocks steering, turns SAS off during the test (and restores it), and leaves the
+// ship rotating about as it was. Returns a lexicon of "Pitch", "Yaw" and "Roll" angular accelerations in rad/s²
+// (0 where the ship did not respond).
+FUNCTION measureRotationAccel {
+	PARAMETER maxMeasureTime IS 2.					// longest time to apply full input (s)
+	PARAMETER maxRateChange IS 0.1.					// stop applying input once the rate has changed this much (rad/s)
+	LOCAL accelResult IS LEXICON("Pitch", 0, "Yaw", 0, "Roll", 0).
+	LOCAL oldSAS IS SAS.
+	SET SAS TO FALSE.
+	UNLOCK STEERING.
+	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
+	WAIT 0.5.
+
+	FOR axisName IN accelResult:KEYS {
+		// the axes are fixed in the ship-raw frame, the same frame that SHIP:ANGULARVEL is in
+		LOCAL axisVector IS SHIP:FACING:STARVECTOR.
+		IF axisName = "Yaw" SET axisVector TO SHIP:FACING:TOPVECTOR.
+		IF axisName = "Roll" SET axisVector TO SHIP:FACING:FOREVECTOR.
+
+		LOCAL startRate IS VDOT(SHIP:ANGULARVEL, axisVector).
+		LOCAL startMoment IS TIME:SECONDS.
+		setControlAxis(axisName, 1).
+		UNTIL (TIME:SECONDS - startMoment >= maxMeasureTime) OR (ABS(VDOT(SHIP:ANGULARVEL, axisVector) - startRate) >= maxRateChange) WAIT 0.
+		LOCAL elapsedTime IS TIME:SECONDS - startMoment.
+		LOCAL rateChange IS ABS(VDOT(SHIP:ANGULARVEL, axisVector) - startRate).
+		IF elapsedTime > 0 SET accelResult[axisName] TO rateChange / elapsedTime.
+
+		// Undo the rotation just added: push the other way until the rate is back to where it started.
+		setControlAxis(axisName, -1).
+		LOCAL stopStart IS TIME:SECONDS.
+		UNTIL (ABS(VDOT(SHIP:ANGULARVEL, axisVector) - startRate) < 0.005) OR (TIME:SECONDS - stopStart > 2 * elapsedTime + 1) WAIT 0.
+		SET SHIP:CONTROL:NEUTRALIZE TO TRUE.
+		WAIT 0.5.
+	}
+	SET SAS TO oldSAS.
+	RETURN accelResult.
+}
+
+// Finds the Max Stopping Time that lets a ship with the given angular acceleration (rad/s²) turn through turnAngle (degrees) in no more
+// than targetTime (s). The steering manager limits the rotation rate to accel * stoppingTime, so the turn takes turnAngle/(accel*T) + T.
+// The smallest (gentlest) T that meets targetTime is returned; if targetTime cannot be met, the T that turns fastest is returned.
+// The result is limited to between minTime and maxTime. If accel is not positive, maxTime is returned.
+FUNCTION calculateStoppingTime {
+	PARAMETER accel.
+	PARAMETER turnAngle IS 180.
+	PARAMETER targetTime IS 60.
+	PARAMETER minTime IS 1.
+	PARAMETER maxTime IS 30.
+	IF accel <= 0 RETURN maxTime.
+	LOCAL turnRadians IS turnAngle * CONSTANT:DEGTORAD.
+	LOCAL fastestTime IS 2 * SQRT(turnRadians / accel).
+	LOCAL bestStop IS SQRT(turnRadians / accel).
+	IF targetTime > fastestTime SET bestStop TO (targetTime - SQRT(targetTime^2 - 4 * turnRadians / accel)) / 2.
+	RETURN MIN(maxTime, MAX(minTime, bestStop)).
+}
+
+// How long a turn through turnAngle (degrees) takes, in seconds, for a ship that can accelerate its rotation at accel (rad/s^2) while the
+// steering manager limits the rotation rate to accel * stoppingTime. Returns -1 if accel is not positive (unknown).
+FUNCTION turnTimeFor {
+	PARAMETER accel.
+	PARAMETER stoppingTime.
+	PARAMETER turnAngle IS 180.
+	IF accel <= 0 RETURN -1.
+	LOCAL turnRadians IS turnAngle * CONSTANT:DEGTORAD.
+	IF turnRadians >= accel * stoppingTime^2 RETURN turnRadians / (accel * stoppingTime) + stoppingTime.	// speeds up, cruises at the limit, slows down
+	RETURN 2 * SQRT(turnRadians / accel).																// never reaches the limit
+}
+
+// Saves the last turn-rate measurement to the local drive (about 80 bytes), along with the ship's name and part count so that
+// loadRotationData can tell when it no longer describes this ship. Skipped if the drive is too full.
+FUNCTION saveRotationData {
+	IF rotationLastAccel <= 0 RETURN.
+	IF EXISTS(rotationFile) DELETEPATH(rotationFile).
+	IF CORE:VOLUME:FREESPACE < 300 RETURN.
+	WRITEJSON(LEXICON("Accel", rotationLastAccel, "Mass", rotationLastMass, "RCS", rotationLastRCS, "Name", SHIP:NAME, "Parts", SHIP:PARTS:LENGTH), rotationFile).
+}
+
+// Loads the measurement that saveRotationData saved, so that a reboot doesn't need to move the ship to measure it again.
+// The file is ignored (and TRUE is not returned) if it is missing or unreadable, or if the ship's name or number of parts has changed
+// (docking, a lost or added part, staging, or a different vessel on this core). Returns TRUE if rotationLastAccel and
+// rotationLastMass were loaded.
+FUNCTION loadRotationData {
+	IF NOT EXISTS(rotationFile) RETURN FALSE.
+	LOCAL savedData IS READJSON(rotationFile).
+	IF NOT savedData:ISTYPE("Lexicon") RETURN FALSE.
+	FOR eachKey IN LIST("Accel", "Mass", "Name", "Parts") IF NOT savedData:HASKEY(eachKey) RETURN FALSE.
+	IF savedData["Name"] <> SHIP:NAME OR savedData["Parts"] <> SHIP:PARTS:LENGTH RETURN FALSE.
+	IF savedData["Accel"] <= 0 OR savedData["Mass"] <= 0 RETURN FALSE.
+	SET rotationLastAccel TO savedData["Accel"].
+	SET rotationLastMass TO savedData["Mass"].
+	SET rotationLastRCS TO savedData:HASKEY("RCS") AND savedData["RCS"].		// files saved before this was recorded do not have it
+	RETURN TRUE.
+}
+
+// The Max Stopping Time to use when the ship has not been measured, or is on the ground: 1 s for stock, 15 s for RealFuels.
+FUNCTION defaultStoppingTime {
+	IF isStock() RETURN 1.0.
+	RETURN 15.0.
+}
+
+// Updates STEERINGMANAGER:MAXSTOPPINGTIME and shipInfo["Rotation"] for the ship as it is now.
+//		shipInfo["Rotation"] is a lexicon of "Accel" (rad/s^2, the slower of pitch and yaw, 0 if unknown), "StoppingTime" (s),
+//		"MaxRate" (rad/s, the rotation rate the steering manager will allow), "TurnTime" (s, for a 180 degree turn, -1 if unknown) and
+//		"Measured" (boolean, whether this call measured the ship, instead of rescaling the last measurement for the ship's present mass) and
+//		"RCS" (boolean, whether RCS was on when the turn rate was last measured; false if it has not been)
+// If the ship is LANDED (or on the pad, where it can't turn freely), the stopping time is the default from defaultStoppingTime (1 s stock, 15 s RealFuels).
+// measure - if TRUE and it is safe to (engines off), actively measure the ship; the controls are moved for several seconds.
+//		updateShipInfo calls this with FALSE, because it runs during burns. With no measurement to go on, the stopping time is left alone.
+FUNCTION updateStoppingTime {
+	PARAMETER measure IS FALSE.
+	PARAMETER announce IS FALSE.					// if TRUE, print to the terminal that the ship is being measured (don't use while the terminal display is up)
+	LOCAL turnAccel IS 0.
+	LOCAL didMeasure IS FALSE.
+	LOCAL onGround IS SHIP:STATUS = "LANDED" OR SHIP:STATUS = "PRELAUNCH".
+	IF measure AND THROTTLE = 0 AND NOT onGround {
+		LOCAL rcsWasOn IS RCS.								// recorded with the measurement; RCS itself is left as it is
+		IF announce PRINT "Measuring how fast the ship can rotate (about 10 s). The ship will move slightly.".
+		LOCAL measured IS measureRotationAccel().
+		SET turnAccel TO MIN(measured["Pitch"], measured["Yaw"]).
+		IF announce PRINT "Rotation measured: pitch " + ROUND(measured["Pitch"] * CONSTANT:RADTODEG, 3) + ", yaw " + ROUND(measured["Yaw"] * CONSTANT:RADTODEG, 3) + ", roll " + ROUND(measured["Roll"] * CONSTANT:RADTODEG, 3) + " deg/s^2".
+		IF turnAccel > 0 {
+			SET rotationLastAccel TO turnAccel.
+			SET rotationLastMass TO SHIP:MASS.
+			SET rotationLastRCS TO rcsWasOn.
+			SET didMeasure TO TRUE.
+			saveRotationData().
+		}
+	}
+	IF NOT didMeasure AND rotationLastAccel > 0 {
+		// the same torque acting on a moment of inertia that scales with mass (kOS has no suffix for the moment of inertia, so this is an estimate)
+		SET turnAccel TO rotationLastAccel * rotationLastMass / SHIP:MASS.
+	}
+	IF onGround SET STEERINGMANAGER:MAXSTOPPINGTIME TO defaultStoppingTime().
+	ELSE IF turnAccel > 0 SET STEERINGMANAGER:MAXSTOPPINGTIME TO calculateStoppingTime(turnAccel).
+	LOCAL stopTime IS STEERINGMANAGER:MAXSTOPPINGTIME.
+	SET shipInfo["Rotation"] TO LEXICON("Accel", turnAccel, "StoppingTime", stopTime, "MaxRate", turnAccel * stopTime,
+		"TurnTime", turnTimeFor(turnAccel, stopTime), "Measured", didMeasure, "RCS", rotationLastRCS).
+}
+
 // create and format the Ship Information lexicon.
 // For the entire ship, record the following information:
 //		NumberOfStages - scalar - number of stages in the current ship
 //		CurrentStage - lexicon - the current stage, following the below format
+//		Rotation - lexicon - how fast the ship can turn and the Max Stopping Time derived from it, see updateStoppingTime
 // For each stage, record the following information:
 //		Parts - List - containing PARTs in this stage
 //		Engines - List - ENGINEs in this stage, or in the closest stage if this only has resources
@@ -233,6 +387,7 @@ FUNCTION updateShipInfo {
 	// for each of the stages, determine the parts, engines and sensors
 	FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
 		LOCAL stageInfo IS LEXICON().
+		stageInfo:ADD("Number", stageNumber).
 		stageInfo:ADD("Parts",partListTree["Stage " + stageNumber]).
 
 		// Add a list of all of the engines in this stage.
@@ -336,6 +491,7 @@ FUNCTION updateShipInfo {
 		SET shipInfo["Stage " + stageNumber]["DeltaVPrev"] TO deltaVPrev.
 	}
 	SET shipInfo["CurrentStage"] TO shipInfo["Stage " + (shipInfo["NumberOfStages"] - 1)].
+	updateStoppingTime(FALSE).
 	SET augerList TO SHIP:PARTSTITLEDPATTERN("Auger").
 	SET smelterList TO SHIP:PARTSTITLEDPATTERN("Smelter").
 
@@ -395,6 +551,13 @@ FUNCTION logShipInfo {
 	PARAMETER includeResources IS FALSE.
 	PARAMETER fileName TO "0:" + SHIP:NAME + " Info Stage " + STAGE:NUMBER + ".csv".
 	LOG "Ship Information for " + SHIP:NAME TO fileName.
+	LOG "Rotation" TO fileName.
+	LOG ",Angular Acceleration," + ROUND(shipInfo["Rotation"]["Accel"] * CONSTANT:RADTODEG, 4) + ",deg/s^2" TO fileName.
+	LOG ",Max Stopping Time," + ROUND(shipInfo["Rotation"]["StoppingTime"], 3) + ",s" TO fileName.
+	LOG ",Max Rotation Rate," + ROUND(shipInfo["Rotation"]["MaxRate"] * CONSTANT:RADTODEG, 4) + ",deg/s" TO fileName.
+	LOG ",180 Degree Turn Time," + ROUND(shipInfo["Rotation"]["TurnTime"], 2) + ",s (-1 is unknown)" TO fileName.
+	LOG ",Measured This Update," + shipInfo["Rotation"]["Measured"] TO fileName.
+	LOG ",RCS On When Measured," + shipInfo["Rotation"]["RCS"] TO fileName.
 	LOCAL deltaVLogList IS "".
 	LOCAL deltaVDisplayList IS "".
 	// for each of the stages

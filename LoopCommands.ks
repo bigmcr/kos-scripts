@@ -120,6 +120,17 @@ FUNCTION createCommandList {
 		SET STEERINGMANAGER:MAXSTOPPINGTIME TO newTime.
 		RETURN "Changed Max Stopping time to " + STEERINGMANAGER:MAXSTOPPINGTIME.
 		})).
+	possibleCommands:ADD("stopTimeUpdate", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
+		// Re-measure how fast the ship can turn and set the Max Stopping Time from it (1 s if landed).
+		// The controls are moved for several seconds, so don't use this during a burn.
+		IF THROTTLE > 0 RETURN "stopTimeUpdate - not while the engines are firing".
+		updateStoppingTime(TRUE).
+		LOCAL rcsText IS "off".
+		IF shipInfo["Rotation"]["RCS"] SET rcsText TO "on".
+		IF shipInfo["Rotation"]["Measured"] RETURN "Measured turn rate " + ROUND(shipInfo["Rotation"]["Accel"] * CONSTANT:RADTODEG, 3) + " deg/s^2 with RCS " + rcsText + ", Max Stopping time is " + ROUND(STEERINGMANAGER:MAXSTOPPINGTIME, 2).
+		IF SHIP:STATUS = "LANDED" OR SHIP:STATUS = "PRELAUNCH" RETURN "Landed, Max Stopping time set to " + STEERINGMANAGER:MAXSTOPPINGTIME.
+		RETURN "stopTimeUpdate - ship did not turn, Max Stopping time left at " + STEERINGMANAGER:MAXSTOPPINGTIME.
+		})).
 	possibleCommands:ADD("warp", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER newPermission IS "".
 		IF newPermission = "" RETURN "Physics Warp Perm is currently " + (physicsWarpPerm + 1).
