@@ -26,10 +26,9 @@ LOCAL manifestVersion IS 3.
 // Global, so that loopTerminal can show it.
 GLOBAL kosVersionText IS CORE:VERSION:MAJOR + "." + CORE:VERSION:MINOR + "." + CORE:VERSION:PATCH + "." + CORE:VERSION:BUILD.
 
-// The archive's compiled folder, and the build record in it. A lock file stops two ships building at once.
+// The archive's compiled folder, and the build record in it.
 LOCAL buildFolder IS "0:Compiled".
 LOCAL buildFilePath IS "0:Compiled/build.json".
-LOCAL buildLockPath IS "0:Compiled/build.lock".
 LOCAL buildVersion IS 1.
 
 // The marker of an update that did not finish.
@@ -289,20 +288,13 @@ FUNCTION compileEntry {
 // pauses the program for a while, and a script with an error in it ends the program, so run this from a ship
 // that is not doing anything important.
 // Passed the following:
-//			forceAll (bool, compile every script again), ignoreLock (bool, build even if another ship's build lock is
-//			less than 5 minutes old; default FALSE)
+//			forceAll (bool, compile every script again)
 // Returns the following:
 //			a short message describing the result (string)
 FUNCTION buildArchive {
-	PARAMETER forceAll, ignoreLock IS FALSE.
+	PARAMETER forceAll.
 	IF NOT connectionToKSC() RETURN "No connection to the archive".
 	IF NOT EXISTS(buildFolder) CREATEDIR(buildFolder).
-	IF EXISTS(buildLockPath) {
-		LOCAL lockTime IS OPEN(buildLockPath):READALL:STRING:TRIM:TONUMBER(0).
-		IF (NOT ignoreLock) AND KUNIVERSE:REALWORLDTIME - lockTime < 300 RETURN "Another ship is building".
-		DELETEPATH(buildLockPath).
-	}
-	LOG KUNIVERSE:REALWORLDTIME TO buildLockPath.
 
 	LOCAL currentKos IS kosVersionText.
 	LOCAL items IS archiveItems().
@@ -346,7 +338,6 @@ FUNCTION buildArchive {
 
 	IF EXISTS(buildFilePath) DELETEPATH(buildFilePath).
 	WRITEJSON(LEXICON("version", buildVersion, "kos", currentKos, "builtRealTime", KUNIVERSE:REALWORLDTIME, "files", newFiles), buildFilePath).
-	DELETEPATH(buildLockPath).
 	RETURN "Built " + compiledCount + ", kept " + keptCount + ", removed " + removedCount.
 }
 

@@ -23,12 +23,10 @@
 LOCAL oldTime IS TIME:SECONDS.
 LOCAL timeDelta IS TIME:SECONDS - oldTime.
 LOCAL pointing IS LEXICON("pitch", 0, "roll", 0, "yaw", 0).
-LOCAL pointingRate IS LEXICON("pitch", 0, "roll", 0, "yaw", 0).		// deg/s, how fast the three values in pointing are changing
-LOCAL rateStartAngles IS LEXICON("pitch", 0, "roll", 0, "yaw", 0).	// pointing when the rate was last worked out
-LOCAL rateStartTime IS -1.							// when that was (s), or -1 if it has not been done yet
+LOCAL pointingRate IS LEXICON("pitch", 0, "roll", 0, "yaw", 0).		// deg/s, how fast the ship is turning about its pitch, roll and yaw axes
 
 // The terminal row where the area of the active mode starts, which is just below the Main area.
-LOCAL mainScreenHeight IS 13.
+LOCAL mainScreenHeight IS 18.
 
 // The latest input from loop, for the cells in the Main area.
 LOCAL screenInput IS LEXICON("input", "", "commands", LIST()).
@@ -135,17 +133,22 @@ FUNCTION rebootPendingText {
 // ---- Main -------------------------------------------------------------------------------------------
 // The Main area is 18 rows. The previous commands fill the right-hand column (from column 51) from row 1 to row 16:
 //      Value     KSP Conn        Auto Steer Target Previous Commands
-// PIT                                                    (previous commands, newest first)
-// ROL             Mode            A Throttle
-// YAW             dV Left         LS Delay
+// PIT                Debug                          (previous commands, newest first)
+//             deg/s  Mode            A Throttle
+// ROL                dV Left         LS Delay
+//             deg/s  Stock
+// YAW
+//             deg/s
 //
 // INC          deg               Auto Stopping Time
 // PER
 // LAN          deg
 // ECC
-//
-// Current Input                           Loop Message
-// (the input)                             (the message)
+// (reboot pending message)
+// Current Input
+// (the input)
+// Loop Message
+// (the message)
 // --------------------------------------------------------------------------------
 FUNCTION mainScreenCells {
 	LOCAL cells IS LIST().
@@ -155,15 +158,20 @@ FUNCTION mainScreenCells {
 	cells:ADD(screenCell(50, 0, "Previous Commands")).
 
 	cells:ADD(screenCell(0, 1, "PIT ", {RETURN ROUND(pointing["pitch"], 2):TOSTRING:PADLEFT(7).}, 7)).
+	cells:ADD(screenCell(0, 2, "    ", {RETURN ROUND(pointingRate["pitch"], 2):TOSTRING:PADLEFT(7).}, 7)).
 	cells:ADD(screenCell(16, 1, "Debug    ", {RETURN debug:TOSTRING:PADLEFT(5).}, 5)).
 
 	cells:ADD(screenCell(32, 1, "", {RETURN CHOOSE "None" IF autoSteer = "" ELSE autoSteer.}, 17)).
 
-	cells:ADD(screenCell(0, 2, "ROL ", {RETURN ROUND(pointing["roll"], 2):TOSTRING:PADLEFT(7).}, 7)).
+	cells:ADD(screenCell(0, 3, "ROL ", {RETURN ROUND(pointing["roll"], 2):TOSTRING:PADLEFT(7).}, 7)).
+	cells:ADD(screenCell(0, 4, "    ", {RETURN ROUND(pointingRate["roll"], 2):TOSTRING:PADLEFT(7).}, 7)).
 	cells:ADD(screenCell(16, 2, "Mode", {RETURN loopMode:PADLEFT(10).}, 10)).
 	cells:ADD(screenCell(32, 2, "A Throttle ", {RETURN globalThrottle:TOSTRING:PADLEFT(5).}, 5)).
 
-	cells:ADD(screenCell(0, 3, "YAW ", {RETURN ROUND(pointing["yaw"], 2):TOSTRING:PADLEFT(7).}, 7)).
+	cells:ADD(screenCell(0, 5, "YAW ", {RETURN ROUND(pointing["yaw"], 2):TOSTRING:PADLEFT(7).}, 7)).
+	cells:ADD(screenCell(0, 6, "    ", {RETURN ROUND(pointingRate["yaw"], 2):TOSTRING:PADLEFT(7).}, 7)).
+	// how fast the ship is turning about each axis (deg/s, the unit of the maximum rotation rate in the Ship info mode)
+	FOR rateRow IN LIST(2, 4, 6) cells:ADD(screenCell(11, rateRow, "deg/s")).
 	cells:ADD(screenCell(16, 3, "dV Left  ", {
 		IF (shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"] <> 0) {
 			RETURN ROUND(shipInfo["Stage 0"]["DeltaVPrev"] + shipInfo["Stage 0"]["DeltaV"], 0):TOSTRING:PADLEFT(5).
@@ -179,33 +187,34 @@ FUNCTION mainScreenCells {
 	}, 5)).
 	cells:ADD(screenCell(16, 4, "Stock     ", {RETURN isStock():TOSTRING:PADLEFT(5).}, 5)).
 
-	cells:ADD(screenCell(0, 5, "INC ", {RETURN ROUND(SHIP:ORBIT:INCLINATION, 3):TOSTRING:PADLEFT(8).}, 8)).
-	cells:ADD(screenCell(20, 5, "Auto Stopping Time")).
-	cells:ADD(screenCell(20, 6, "", {RETURN timeToString(STEERINGMANAGER:MAXSTOPPINGTIME):PADLEFT(18).}, 18)).
-	cells:ADD(screenCell(13, 5, "deg")).
-	cells:ADD(screenCell(0, 6, "", {
+	cells:ADD(screenCell(0, 8, "INC ", {RETURN ROUND(SHIP:ORBIT:INCLINATION, 3):TOSTRING:PADLEFT(8).}, 8)).
+	cells:ADD(screenCell(20, 8, "Auto Stopping Time")).
+	cells:ADD(screenCell(20, 9, "", {RETURN timeToString(STEERINGMANAGER:MAXSTOPPINGTIME):PADLEFT(18).}, 18)).
+	cells:ADD(screenCell(13, 8, "deg")).
+	cells:ADD(screenCell(0, 9, "", {
 		IF SHIP:ORBIT:SEMIMAJORAXIS > 0 RETURN "PER " + timeToString(SHIP:ORBIT:PERIOD, 0):PADLEFT(12).
 		RETURN "TTP " + timeToString(ETA:PERIAPSIS, 0):PADLEFT(12).
 	}, 16)).
-	cells:ADD(screenCell(0, 7, "LAN ", {RETURN ROUND(SHIP:ORBIT:LAN, 2):TOSTRING:PADLEFT(8).}, 8)).
-	cells:ADD(screenCell(13, 7, "deg")).
-	cells:ADD(screenCell(0, 8, "ECC ", {RETURN ROUND(SHIP:ORBIT:ECCENTRICITY, 6):TOSTRING:PADLEFT(8).}, 8)).
+	cells:ADD(screenCell(0, 10, "LAN ", {RETURN ROUND(SHIP:ORBIT:LAN, 2):TOSTRING:PADLEFT(8).}, 8)).
+	cells:ADD(screenCell(13, 10, "deg")).
+	cells:ADD(screenCell(0, 11, "ECC ", {RETURN ROUND(SHIP:ORBIT:ECCENTRICITY, 6):TOSTRING:PADLEFT(8).}, 8)).
 	// shows the names of the scripts that have been updated after they were loaded, until the next reboot
-	cells:ADD(screenCell(0, 9, "", {RETURN rebootPendingText().}, 79)).
+	cells:ADD(screenCell(0, 12, "", {RETURN rebootPendingText().}, 49)).
 
-	cells:ADD(screenCell(0, 10, "Current Input")).
-	cells:ADD(screenCell(40, 10, "Loop Message")).
+	// the input and the message have 49 characters of room, so that the previous commands (which start in column 51) are not covered
+	cells:ADD(screenCell(0, 13, "Current Input")).
 	// when the input is longer than its room, show the end of it, where the operator is typing
-	cells:ADD(screenCell(0, 11, "", {
+	cells:ADD(screenCell(0, 14, "", {
 		LOCAL typed IS screenInput["input"].
-		IF typed:LENGTH > 39 RETURN typed:SUBSTRING(typed:LENGTH - 39, 39).
+		IF typed:LENGTH > 49 RETURN typed:SUBSTRING(typed:LENGTH - 49, 49).
 		RETURN typed.
-	}, 39)).
-	cells:ADD(screenCell(40, 11, "", {RETURN loopMessage.}, 39)).
-	cells:ADD(screenCell(0, 12, "":PADLEFT(TERMINAL:WIDTH - 1):REPLACE(" ", "-"))).
+	}, 49)).
+	cells:ADD(screenCell(0, 15, "Loop Message")).
+	cells:ADD(screenCell(0, 16, "", {RETURN loopMessage.}, 49)).
+	cells:ADD(screenCell(0, 17, "":PADLEFT(TERMINAL:WIDTH - 1):REPLACE(" ", "-"))).
 
-	// the previous commands, newest first
-	FOR index IN RANGE(1, 8) {
+	// the previous commands, newest first, from the row below their title to the row of the message
+	FOR index IN RANGE(1, 17) {
 		LOCAL slot IS index.
 		cells:ADD(screenCell(51, slot, "", {
 			LOCAL commands IS screenInput["commands"].
@@ -462,6 +471,18 @@ FUNCTION addValuePair {
 	IF NOT rightDelegate:ISTYPE("Boolean") cells:ADD(screenCell(40, rowNumber, rightLabel:PADRIGHT(22), rightDelegate, 17)).
 }
 
+// Rotation Text
+// A value from shipInfo["Rotation"] with its unit, or "unknown" if the ship's turn rate has not been measured (it is 0, or -1 for the turn time).
+//		toDegrees - TRUE if the value is in radians and should be shown in degrees
+FUNCTION rotationText {
+	PARAMETER rotationKey, places, unitText, toDegrees.
+	LOCAL rotationValue IS shipInfo["Rotation"][rotationKey].
+	IF rotationKey = "StoppingTime" RETURN ROUND(rotationValue, places) + unitText.
+	IF rotationValue <= 0 RETURN "unknown".
+	IF toDegrees SET rotationValue TO rotationValue * CONSTANT:RADTODEG.
+	RETURN ROUND(rotationValue, places) + unitText.
+}
+
 FUNCTION shipInfoCells {
 	LOCAL cells IS LIST().
 	LOCAL rowNumber IS 0.
@@ -477,6 +498,14 @@ FUNCTION shipInfoCells {
 	SET rowNumber TO rowNumber + 1.
 	addValuePair(cells, rowNumber, "Dry mass, all stages", {RETURN massText(sumOverStages("DryMass")).},
 		"Resource mass, all stages", {RETURN massText(sumOverStages("ResourceMass")).}).
+	SET rowNumber TO rowNumber + 1.
+	addValuePair(cells, rowNumber, "Angular acceleration", {RETURN rotationText("Accel", 3, " deg/s^2", TRUE).},
+		"Max rotation rate", {RETURN rotationText("MaxRate", 3, " deg/s", TRUE).}).
+	SET rowNumber TO rowNumber + 1.
+	addValuePair(cells, rowNumber, "Max stopping time", {RETURN rotationText("StoppingTime", 2, " s", FALSE).},
+		"180 degree turn time", {RETURN rotationText("TurnTime", 1, " s", FALSE).}).
+	SET rowNumber TO rowNumber + 1.
+	addValuePair(cells, rowNumber, "RCS on when measured", {RETURN shipInfo["Rotation"]["RCS"]:TOSTRING.}).
 	SET rowNumber TO rowNumber + 2.
 
 	// the engines of the current stage
@@ -858,6 +887,16 @@ FUNCTION updateScreenDynamic {
 		SET pointing["pitch"] TO pitch_for(SHIP).
 		SET pointing["roll"] TO roll_for(SHIP).
 		SET pointing["yaw"] TO yaw_for(SHIP).
+		// How fast the ship is turning about each of its own axes: the ship's angular velocity (rad/s, which is 0 for a ship that is
+		// not turning in space, however the horizon moves under it) along the facing axes, in deg/s. kOS's frame is left handed, so
+		// the angular velocity points the opposite way to the right hand rule (a body's ANGULARVEL points south, for example), which
+		// is why pitch and roll have a minus. The signs match the values: pitch up, a turn to the right (heading increasing) and a
+		// roll to the right (right wing down) are positive. The + 0 turns -0 into 0, and ROUND shows less than 0.005 deg/s as 0.
+		LOCAL spinVector IS SHIP:ANGULARVEL * CONSTANT:RADTODEG.
+		LOCAL spinFacing IS SHIP:FACING.
+		SET pointingRate["pitch"] TO ROUND(-VDOT(spinVector, spinFacing:STARVECTOR), 2) + 0.
+		SET pointingRate["roll"] TO ROUND(-VDOT(spinVector, spinFacing:FOREVECTOR), 2) + 0.
+		SET pointingRate["yaw"] TO ROUND(VDOT(spinVector, spinFacing:TOPVECTOR), 2) + 0.
 		FOR resource IN SHIP:RESOURCES {
 			// a resource that was not on the ship when the library loaded (after docking, for example) has no entry in resourceList yet
 			IF NOT resourceList:HASKEY(resource:NAME) {

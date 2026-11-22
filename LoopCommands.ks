@@ -522,9 +522,9 @@ FUNCTION createCommandList {
 		})).
 
 	// Compile the scripts on the archive that changed (or all of them, with T) so that ships can install them
-	possibleCommands:ADD("build", LEXICON("PossibleArgs", 2, "RequiredArgs", 0, "Delegate", {
-		PARAMETER forceAll IS FALSE, ignoreLock IS FALSE.
-		RETURN buildArchive(forceAll, ignoreLock).
+	possibleCommands:ADD("build", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
+		PARAMETER forceAll IS FALSE.
+		RETURN buildArchive(forceAll).
 		})).
 
 	possibleCommands:ADD("listFiles", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
