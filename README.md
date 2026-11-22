@@ -32,7 +32,7 @@ Some other things to know:
 
 - The up and down arrow keys step through your previous commands. The last 50 are remembered, even after a reboot.
 - When a script ends, `loop` unlocks steering and throttle, turns off SAS and RCS, and clears any vector drawings, so the ship is not left under the script's control. A script that wants to keep control can set `dontKillAfterScript`.
-- The scripts that `loop` itself needs (`library`, `libraryTransfer`, `loop`, `loopCommands`, `loopTerminal`, and `boot`) are already loaded, so `loop` refuses to run them again from the terminal.
+- The scripts that `loop` itself needs (`library`, `libraryTransfer`, `libraryPID`, `librarySolvers`, `loop`, `loopCommands`, `loopTerminal`, and `boot`) are already loaded, so `loop` refuses to run them again from the terminal.
 - `exit`, `quit` or `done` leaves `loop` and returns you to the normal kOS terminal.
 
 ### Built-in commands

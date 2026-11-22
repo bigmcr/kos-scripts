@@ -1140,101 +1140,6 @@ FUNCTION heightPrediction {
 	RETURN LEXICON("min",minHeight,"max",maxHeight,"avg",averageHeight).
 }
 
-// Generic hill climbing function
-// Tries to minimize the value of the passed delegate.
-// Passed the following
-//			delegate, expecting a single scalar input and returns a single scalar
-//			initialGuess - initial guess of the final value
-//			initialStepSize - how much to start moving the initial guess by
-//			logFileName - log file name. If blank, does not log. Defaults to blank.
-//			iterationMax - maximum iteration number. Defaults to 100.
-//			smallestStepRatio - Ratio of smallest step size to initial step size
-//        (negative power of 2). Defaults to 15, so the smallest step size
-//        would be initialStepSize / (2^15).
-//			cyclicalPeriod - period of cyclical repition in the input of the delegate.
-//        -1 is a special case that indicates input is not cyclical.
-//        Defaults to -1.
-//			cyclicalPeriodCutoff - value below which cyclicalPeriod should be added to the current guess.
-//			deleteOldlogFileName - whether to delete the old version of the log file
-//				or append to the end of the file.
-// Returns the following:
-//			Lexicon with the following members:
-//				"iteration" - scalar - number of the final iteration
-//				"initialValue" - scalar - value of the delegate given the initial guess
-//				"initialGuess" - scalar - value of the initial guess
-//				"finalValue" - scalar - value of the delegate given the final guess. This is minimized.
-//				"finalGuess" - scalar - value of the final guess
-//				"deltaValue" - scalar - how much the delegate changed
-// A few notes about the delegate:
-//    It is assumed that the delegate recieves a single scalar input and returns a single scalar.
-//    This function is a minimization function; if you want it to maximimze instead, make the delegate return a negative.
-FUNCTION hillClimb {
-	PARAMETER delegate.
-	PARAMETER initialGuess.
-	PARAMETER initialStepSize.
-	PARAMETER logFileName IS "".
-	PARAMETER iterationMax IS 100.
-	PARAMETER smallestStepRatio IS 15.
-	PARAMETER cyclicalPeriod IS -1.
-	PARAMETER cyclicalPeriodCutoff IS 0.
-	PARAMETER deleteOldlogFileName IS TRUE.
-	
-	IF initialStepSize = 0 OR delegate:TYPENAME <> "UserDelegate" {
-		RETURN LEXICON("iteration", -1,
-										  "initialValue", delegate(initialGuess),
-										  "initialGuess", initialGuess,
-										  "finalValue", delegate(initialGuess),
-										  "finalGuess", initialGuess,
-										  "deltaValue", 0).
-	}
-
-	LOCAL logDataPerm IS (logFileName <> "").
-	IF logFileName:STARTSWITH("0:") AND NOT connectionToKSC() SET logDataPerm TO FALSE.
-	LOCAL stepSize IS initialStepSize.
-	LOCAL smallestStep IS initialStepSize / (2^smallestStepRatio).
-	LOCAL iteration IS 0.
-	LOCAL currentDelegate IS 0.
-	LOCAL currentPlusDelegate IS 0.
-	LOCAL currentMinusDelegate IS 0.
-	IF deleteOldlogFileName AND logDataPerm AND EXISTS(logFileName) DELETEPATH(logFileName).
-	IF logDataPerm LOG "Iteration,Power of 2,Current Guess,Step Size,Delegate at Current Guess,Delegate at Current Guess + Step,Delegate at Current Guess - Step" TO logFileName.
-	LOCAL currentGuess IS initialGuess.
-	LOCAL currentDelegate IS delegate(currentGuess).
-	LOCAL knownInitialValue IS currentDelegate.
-
-	UNTIL (stepSize <= smallestStep) OR (iteration > iterationMax) {
-		SET currentPlusDelegate TO delegate(currentGuess + stepSize).
-		SET currentMinusDelegate TO delegate(currentGuess - stepSize).
-
-		IF logDataPerm LOG iteration + "," + (LN(stepSize/initialStepSize)/LN(2)) + "," + currentGuess + "," + stepSize + "," + currentDelegate + "," + currentPlusDelegate + "," + currentMinusDelegate TO logFileName.
-
-		IF currentPlusDelegate < currentDelegate {
-			SET currentGuess TO currentGuess + stepSize.
-			SET currentDelegate TO currentPlusDelegate.
-		} ELSE IF currentMinusDelegate < currentDelegate {
-			SET currentGuess TO currentGuess - stepSize.
-			SET currentDelegate TO currentMinusDelegate.
-		} ELSE {
-			SET stepSize TO stepSize / 2.
-		}
-		SET iteration TO iteration + 1.
-		IF cyclicalPeriod <> -1 {
-			SET currentGuess TO MOD(currentGuess - cyclicalPeriodCutoff, cyclicalPeriod) + cyclicalPeriodCutoff.
-			IF currentGuess < cyclicalPeriodCutoff SET currentGuess TO currentGuess + cyclicalPeriod.
-		}
-	}
-	LOCAL initialValue IS knownInitialValue.
-	LOCAL finalValue IS currentDelegate.
-	LOCAL returnMe IS LEXICON().
-	returnMe:ADD("iteration", iteration - 1).
-	returnMe:ADD("initialValue", initialValue).
-	returnMe:ADD("initialGuess", initialGuess).
-	returnMe:ADD("finalValue", finalValue).
-	returnMe:ADD("finalGuess", currentGuess).
-	returnMe:ADD("deltaValue", finalValue - initialValue).
-	RETURN returnMe.
-}
-
 // Removes every maneuver node from the ship's flight plan. Goes through a snapshot of ALLNODES
 // rather than looping on HASNODE / NEXTNODE: kOS documents NEXTNODE as a runtime error when there is
 // no node, and KSP can take a tick to drop a removed node, so HASNODE can still read TRUE right after
@@ -1250,504 +1155,6 @@ FUNCTION clearManeuverNodes {
 		}
 		WAIT 0.
 	}
-}
-
-// 2D hill climb: minimizes delegate(guess1, guess2) by moving to the best of the 8 neighbours of the
-// current guess, halving the step when none improves. A point already priced at the current step size is
-// not priced again.
-//   delegate - two scalar inputs, one scalar output (return a negative to maximize)
-//   initialGuess1/2, initialStepSize1/2 - the starting point and step on each axis
-//   logFileName - log file ("" for none)
-//   iterationMax - defaults to 100
-//   smallestStepRatio - the smallest step is initialStepSize / 2^smallestStepRatio (default 15)
-//   cyclicalPeriod1/2, cyclicalPeriodCutoff1/2 - wrap an axis into [cutoff, cutoff + period); -1 for not cyclical
-//   deleteOldlogFileName - delete the old log file, or append to it
-// Returns a LEXICON: "iteration", "initialValue", "initialGuess1", "initialGuess2", "finalValue",
-// "finalGuess1", "finalGuess2", "deltaValue".
-FUNCTION hillClimb2D {
-	PARAMETER delegate.
-	PARAMETER initialGuess1.
-	PARAMETER initialGuess2.
-	PARAMETER initialStepSize1.
-	PARAMETER initialStepSize2.
-	PARAMETER logFileName IS "".
-	PARAMETER iterationMax IS 100.
-	PARAMETER smallestStepRatio IS 15.
-	PARAMETER cyclicalPeriod1 IS -1.
-	PARAMETER cyclicalPeriodCutoff1 IS 0.
-	PARAMETER cyclicalPeriod2 IS -1.
-	PARAMETER cyclicalPeriodCutoff2 IS 0.
-	PARAMETER deleteOldlogFileName IS TRUE.
-
-	LOCAL logDataPerm IS (logFileName <> "").
-	IF logFileName:STARTSWITH("0:") AND NOT connectionToKSC() SET logDataPerm TO FALSE.
-
-	// guard against a zero step size on either axis, which would otherwise
-	// make the smallest-step floor zero and exit the loop before it starts.
-	IF initialStepSize1 = 0 SET initialStepSize1 TO 0.001.
-	IF initialStepSize2 = 0 SET initialStepSize2 TO 0.001.
-
-	LOCAL stepSize1 IS initialStepSize1.
-	LOCAL stepSize2 IS initialStepSize2.
-	LOCAL smallestStep1 IS initialStepSize1 / (2^smallestStepRatio).
-	LOCAL smallestStep2 IS initialStepSize2 / (2^smallestStepRatio).
-	LOCAL iteration IS 0.
-
-	IF deleteOldlogFileName AND logDataPerm AND EXISTS(logFileName) DELETEPATH(logFileName).
-	IF logDataPerm LOG "Iteration,Guess1,Guess2,Step1,Step2,Current Delegate,Neighbor,Neighbor Delegate,Moved" TO logFileName.
-
-	LOCAL currentGuess1 IS initialGuess1.
-	LOCAL currentGuess2 IS initialGuess2.
-	LOCAL currentDelegate IS delegate(currentGuess1, currentGuess2).
-	LOCAL initialValue IS currentDelegate.
-
-	// 3x3 grid of (offset1, offset2) labels, skipping the center (0,0).
-	// Ordered N, NE, E, SE, S, SW, W, NW purely for readable logs.
-	LOCAL neighborLabels IS LIST("N", "NE", "E", "SE", "S", "SW", "W", "NW").
-	// The same neighbours in steps (-1, 0 or 1) on each axis, and the values already priced at this step size,
-	// keyed by position in steps from where the step size last changed (index1, index2).
-	LOCAL neighborSteps IS LIST(LIST(0, 1), LIST(1, 1), LIST(1, 0), LIST(1, -1), LIST(0, -1), LIST(-1, -1), LIST(-1, 0), LIST(-1, 1)).
-	LOCAL priced IS LEXICON("0,0", currentDelegate).
-	LOCAL index1 IS 0.
-	LOCAL index2 IS 0.
-
-	UNTIL ((stepSize1 <= smallestStep1) AND (stepSize2 <= smallestStep2)) OR (iteration > iterationMax) {
-		LOCAL neighborOffsets IS LIST(
-			LIST(       0,  stepSize2), 	// N
-			LIST( stepSize1,  stepSize2),	// NE
-			LIST( stepSize1,        0),		// E
-			LIST( stepSize1, -stepSize2),	// SE
-			LIST(       0, -stepSize2),		// S
-			LIST(-stepSize1, -stepSize2),	// SW
-			LIST(-stepSize1,        0),		// W
-			LIST(-stepSize1,  stepSize2)	// NW
-		).
-
-		LOCAL bestValue IS currentDelegate.
-		LOCAL bestGuess1 IS currentGuess1.
-		LOCAL bestGuess2 IS currentGuess2.
-		LOCAL bestLabel IS "None".
-		LOCAL bestNeighbor IS 0.
-		LOCAL neighborValue IS 0.
-		LOCAL testGuess1 IS 0.
-		LOCAL testGuess2 IS 0.
-
-		FOR neighborIndex IN RANGE(0, neighborOffsets:LENGTH) {
-			SET testGuess1 TO currentGuess1 + neighborOffsets[neighborIndex][0].
-			SET testGuess2 TO currentGuess2 + neighborOffsets[neighborIndex][1].
-			LOCAL pricedKey IS (index1 + neighborSteps[neighborIndex][0]) + "," + (index2 + neighborSteps[neighborIndex][1]).
-			IF priced:HASKEY(pricedKey) {
-				SET neighborValue TO priced[pricedKey].
-			} ELSE {
-				SET neighborValue TO delegate(testGuess1, testGuess2).
-				SET priced[pricedKey] TO neighborValue.
-				// This is present because kOS has odd results when complex calculations are spread across different physics ticks.
-				WAIT 0.
-			}
-
-			IF logDataPerm LOG iteration + "," + testGuess1 + "," + testGuess2 + "," + stepSize1 + "," + stepSize2 + "," + currentDelegate + "," + neighborLabels[neighborIndex] + "," + neighborValue + "," + (neighborValue < bestValue) TO logFileName.
-
-			IF neighborValue < bestValue {
-				SET bestValue TO neighborValue.
-				SET bestGuess1 TO testGuess1.
-				SET bestGuess2 TO testGuess2.
-				SET bestLabel TO neighborLabels[neighborIndex].
-				SET bestNeighbor TO neighborIndex.
-			}
-		}
-
-		IF bestLabel = "None" {
-			// no neighbor improved on the current point; shrink whichever
-			// axis step size(s) haven't hit their floor yet, and try again.
-			IF stepSize1 > smallestStep1 SET stepSize1 TO stepSize1 / 2.
-			IF stepSize2 > smallestStep2 SET stepSize2 TO stepSize2 / 2.
-			// Nothing priced so far is a neighbour at the new step size.
-			priced:CLEAR().
-			SET index1 TO 0.
-			SET index2 TO 0.
-			SET priced["0,0"] TO currentDelegate.
-		} ELSE {
-			SET currentGuess1 TO bestGuess1.
-			SET currentGuess2 TO bestGuess2.
-			SET currentDelegate TO bestValue.
-			SET index1 TO index1 + neighborSteps[bestNeighbor][0].
-			SET index2 TO index2 + neighborSteps[bestNeighbor][1].
-		}
-
-		// symmetric cyclical wraparound, applied independently per axis
-		IF cyclicalPeriod1 <> -1 {
-			SET currentGuess1 TO MOD(currentGuess1 - cyclicalPeriodCutoff1, cyclicalPeriod1).
-			IF currentGuess1 < 0 SET currentGuess1 TO currentGuess1 + cyclicalPeriod1.
-			SET currentGuess1 TO currentGuess1 + cyclicalPeriodCutoff1.
-		}
-		IF cyclicalPeriod2 <> -1 {
-			SET currentGuess2 TO MOD(currentGuess2 - cyclicalPeriodCutoff2, cyclicalPeriod2).
-			IF currentGuess2 < 0 SET currentGuess2 TO currentGuess2 + cyclicalPeriod2.
-			SET currentGuess2 TO currentGuess2 + cyclicalPeriodCutoff2.
-		}
-		// A wrapped guess is no longer where its index says, so start the priced points again.
-		IF cyclicalPeriod1 <> -1 OR cyclicalPeriod2 <> -1 {
-			priced:CLEAR().
-			SET index1 TO 0.
-			SET index2 TO 0.
-			SET priced["0,0"] TO currentDelegate.
-		}
-
-		SET iteration TO iteration + 1.
-	}
-
-	LOCAL returnMe IS LEXICON().
-	returnMe:ADD("iteration", iteration).
-	returnMe:ADD("initialValue", initialValue).
-	returnMe:ADD("initialGuess1", initialGuess1).
-	returnMe:ADD("initialGuess2", initialGuess2).
-	returnMe:ADD("finalValue", currentDelegate).
-	returnMe:ADD("finalGuess1", currentGuess1).
-	returnMe:ADD("finalGuess2", currentGuess2).
-	returnMe:ADD("deltaValue", currentDelegate - initialValue).
-	RETURN returnMe.
-}
-
-// ============================================================================
-// Gradient ascent / descent for a 2-input scalar delegate.
-//
-// This is intentionally written to sit alongside hillClimb2D in library.ks and
-// share its calling convention (a 2-argument delegate, a LEXICON result with
-// the same key names) so the two can be swapped for one another easily.
-//
-// See the accompanying explanation for how this differs from hillClimb2D:
-// hillClimb2D is a derivative-free "compass search" (it only ever asks
-// "is this neighbor better or worse?" at 8 fixed points a fixed step away),
-// while gradientDescent2D estimates the actual slope of the delegate via
-// finite differences and moves continuously along it, with a step size that
-// naturally shrinks as the slope flattens out near an optimum.
-// ============================================================================
-
-// Estimates the partial derivatives of a 2-argument delegate at (guess1, guess2)
-// using a central finite difference: (f(x+h) - f(x-h)) / (2h). Central
-// differences are used instead of forward differences (f(x+h) - f(x)) / h)
-// because they're second-order accurate rather than first-order - i.e. the
-// error shrinks with h^2 instead of just h, which matters a lot here since
-// gradientStepSize (h) also has to be small enough not to blur out real
-// curvature in the delegate's surface.
-// Passed the following:
-//			delegate, expecting two scalar inputs and returning a single scalar
-//			guess1, guess2 - the point to estimate the gradient at
-//			gradientStepSize - h, the finite-difference offset
-// Returns a LEXICON with "d1" (partial derivative w.r.t. input 1) and
-// "d2" (partial derivative w.r.t. input 2).
-FUNCTION estimateGradient2D {
-	PARAMETER delegate.
-	PARAMETER guess1.
-	PARAMETER guess2.
-	PARAMETER gradientStepSize.
-
-	LOCAL d1 IS (delegate(guess1 + gradientStepSize, guess2) - delegate(guess1 - gradientStepSize, guess2)) / (2 * gradientStepSize).
-	LOCAL d2 IS (delegate(guess1, guess2 + gradientStepSize) - delegate(guess1, guess2 - gradientStepSize)) / (2 * gradientStepSize).
-
-	RETURN LEXICON("d1", d1, "d2", d2).
-}
-
-// Generic 2D gradient ascent / descent function.
-// Minimizes (or maximizes, if ascend is TRUE) the value of the passed delegate,
-// which takes two scalar inputs and returns a single scalar, by repeatedly
-// estimating the local gradient and stepping along it (downhill to minimize,
-// uphill to maximize), scaled by learningRate.
-//
-// Includes simple backtracking: if a proposed step does not actually improve
-// the delegate's value (which can happen if learningRate is too large for the
-// local curvature - the classic gradient descent failure mode is overshooting
-// past a minimum), learningRate is halved and the same gradient is retried,
-// rather than taking the bad step. This is a much cheaper stand-in for a full
-// line search, and is the direct analog of hillClimb2D halving its step size
-// when no neighbor improves on the current point.
-//
-// Passed the following:
-//			delegate - expects two scalar inputs, returns a single scalar
-//			initialGuess1, initialGuess2 - starting point
-//			initialLearningRate - initial multiplier applied to the gradient
-//        each step (this is the "step size" of gradient descent - unlike
-//        hillClimb2D's fixed compass-direction step, the actual distance
-//        moved is learningRate * |gradient|, so it shrinks on its own as
-//        the surface flattens out near an optimum)
-//			gradientStepSize - h used for the finite-difference gradient estimate.
-//        Defaults to a small fraction of the learning rate; pass this
-//        explicitly if the delegate's inputs are on a very different scale
-//        than its output.
-//			gradientTolerance - stop once the gradient's magnitude drops below
-//        this value (i.e. the surface is locally ~flat - an optimum).
-//        Defaults to a small number; tune to the scale of the delegate.
-//			iterationMax - maximum number of accepted steps. Defaults to 100.
-//			maxBacktracks - maximum number of learningRate halvings to try in a
-//        single iteration before giving up and treating the search as
-//        converged (learningRate has become negligible). Defaults to 30.
-//			ascend - IF TRUE, maximizes the delegate instead of minimizing it.
-//        Defaults to FALSE (minimize), matching hillClimb2D's convention.
-//			logFileName - log file name. If blank, does not log. Defaults to blank.
-//			cyclicalPeriod1 / cyclicalPeriodCutoff1 - as in hillClimb2D: if axis 1
-//        wraps around (e.g. an angle or an orbital phase), pass the period
-//        here so the guess gets wrapped back into range each iteration.
-//        -1 means "not cyclical". Defaults to -1.
-//			cyclicalPeriod2 / cyclicalPeriodCutoff2 - as above, for axis 2.
-//			deleteOldlogFileName - whether to delete the old version of the log
-//        file or append to the end of it. Defaults to TRUE.
-// Returns the following:
-//			Lexicon with the following members (same shape as hillClimb2D's return,
-//      so the two are interchangeable at the call site):
-//				"iteration" - scalar - number of accepted steps taken
-//				"initialValue" - scalar - delegate's value at the initial guess
-//				"initialGuess1" / "initialGuess2" - the starting point
-//				"finalValue" - scalar - delegate's value at the final guess
-//				"finalGuess1" / "finalGuess2" - the final point
-//				"deltaValue" - scalar - how much the delegate's value changed
-//				"finalGradientMagnitude" - scalar - |gradient| at the final guess;
-//        useful for confirming whether the search actually converged
-//        (small) or bailed out on exhausted backtracks (still large)
-FUNCTION gradientDescent2D {
-	PARAMETER delegate.
-	PARAMETER initialGuess1.
-	PARAMETER initialGuess2.
-	PARAMETER initialLearningRate.
-	PARAMETER gradientStepSize IS initialLearningRate / 100.
-	PARAMETER gradientTolerance IS 1e-6.
-	PARAMETER iterationMax IS 100.
-	PARAMETER maxBacktracks IS 30.
-	PARAMETER ascend IS FALSE.
-	PARAMETER logFileName IS "".
-	PARAMETER cyclicalPeriod1 IS -1.
-	PARAMETER cyclicalPeriodCutoff1 IS 0.
-	PARAMETER cyclicalPeriod2 IS -1.
-	PARAMETER cyclicalPeriodCutoff2 IS 0.
-	PARAMETER deleteOldlogFileName IS TRUE.
-
-	IF (initialLearningRate = 0) OR (NOT delegate:ISTYPE("UserDelegate")) {
-		LOCAL fallbackValue IS delegate(initialGuess1, initialGuess2).
-		RETURN LEXICON("iteration", -1,
-									  "initialValue", fallbackValue,
-									  "initialGuess1", initialGuess1,
-									  "initialGuess2", initialGuess2,
-									  "finalValue", fallbackValue,
-									  "finalGuess1", initialGuess1,
-									  "finalGuess2", initialGuess2,
-									  "deltaValue", 0,
-									  "finalGradientMagnitude", 0).
-	}
-
-	LOCAL logDataPerm IS (logFileName <> "").
-	IF logFileName:STARTSWITH("0:") AND NOT connectionToKSC() SET logDataPerm TO FALSE.
-	IF deleteOldlogFileName AND logDataPerm AND EXISTS(logFileName) DELETEPATH(logFileName).
-	IF logDataPerm LOG "Iteration,Guess1,Guess2,Value,Gradient1,Gradient2,GradientMag,LearningRate,Backtracks" TO logFileName.
-
-	// ascending and descending are the same algorithm with the sign of the step
-	// flipped - climb the gradient uphill instead of stepping downhill against it.
-	LOCAL directionSign IS 1.
-	IF ascend SET directionSign TO -1.
-
-	LOCAL currentGuess1 IS initialGuess1.
-	LOCAL currentGuess2 IS initialGuess2.
-	LOCAL currentValue IS delegate(currentGuess1, currentGuess2).
-	LOCAL knownInitialValue IS currentValue.
-	LOCAL learningRate IS initialLearningRate.
-
-	LOCAL iteration IS 0.
-	LOCAL gradientMagnitude IS gradientTolerance + 1. // anything > tolerance, just to enter the loop
-
-	UNTIL (gradientMagnitude <= gradientTolerance) OR (iteration >= iterationMax) {
-		LOCAL gradient IS estimateGradient2D(delegate, currentGuess1, currentGuess2, gradientStepSize).
-		SET gradientMagnitude TO SQRT(gradient["d1"]^2 + gradient["d2"]^2).
-
-		IF gradientMagnitude <= gradientTolerance {
-			IF logDataPerm LOG iteration + "," + currentGuess1 + "," + currentGuess2 + "," + currentValue + "," +
-				gradient["d1"] + "," + gradient["d2"] + "," + gradientMagnitude + "," + learningRate + ",converged" TO logFileName.
-			BREAK.
-		}
-
-		// backtracking: try the full learning rate first, halving it until the
-		// step actually improves on currentValue (or we give up on this iteration)
-		LOCAL backtracks IS 0.
-		LOCAL stepAccepted IS FALSE.
-		LOCAL testGuess1 IS currentGuess1.
-		LOCAL testGuess2 IS currentGuess2.
-		LOCAL testValue IS currentValue.
-
-		UNTIL stepAccepted OR (backtracks >= maxBacktracks) {
-			SET testGuess1 TO currentGuess1 - directionSign * learningRate * gradient["d1"].
-			SET testGuess2 TO currentGuess2 - directionSign * learningRate * gradient["d2"].
-			SET testValue TO delegate(testGuess1, testGuess2).
-
-			LOCAL improved IS FALSE.
-			IF ascend SET improved TO (testValue > currentValue).
-			ELSE SET improved TO (testValue < currentValue).
-
-			IF improved {
-				SET stepAccepted TO TRUE.
-			} ELSE {
-				SET learningRate TO learningRate / 2.
-				SET backtracks TO backtracks + 1.
-			}
-		}
-
-		IF logDataPerm LOG iteration + "," + currentGuess1 + "," + currentGuess2 + "," + currentValue + "," +
-			gradient["d1"] + "," + gradient["d2"] + "," + gradientMagnitude + "," + learningRate + "," + backtracks TO logFileName.
-
-		IF NOT stepAccepted {
-			// learningRate has been halved maxBacktracks times and still can't find
-			// an improving step - the gradient estimate is unreliable this close in
-			// (often floating-point noise at the scale of gradientStepSize), so stop.
-			BREAK.
-		}
-
-		SET currentGuess1 TO testGuess1.
-		SET currentGuess2 TO testGuess2.
-		SET currentValue TO testValue.
-
-		IF cyclicalPeriod1 <> -1 {
-			SET currentGuess1 TO MOD(currentGuess1 - cyclicalPeriodCutoff1, cyclicalPeriod1) + cyclicalPeriodCutoff1.
-			IF currentGuess1 < cyclicalPeriodCutoff1 SET currentGuess1 TO currentGuess1 + cyclicalPeriod1.
-		}
-		IF cyclicalPeriod2 <> -1 {
-			SET currentGuess2 TO MOD(currentGuess2 - cyclicalPeriodCutoff2, cyclicalPeriod2) + cyclicalPeriodCutoff2.
-			IF currentGuess2 < cyclicalPeriodCutoff2 SET currentGuess2 TO currentGuess2 + cyclicalPeriod2.
-		}
-
-		SET iteration TO iteration + 1.
-	}
-
-	LOCAL returnMe IS LEXICON().
-	returnMe:ADD("iteration", iteration).
-	returnMe:ADD("initialValue", knownInitialValue).
-	returnMe:ADD("initialGuess1", initialGuess1).
-	returnMe:ADD("initialGuess2", initialGuess2).
-	returnMe:ADD("finalValue", currentValue).
-	returnMe:ADD("finalGuess1", currentGuess1).
-	returnMe:ADD("finalGuess2", currentGuess2).
-	returnMe:ADD("deltaValue", currentValue - knownInitialValue).
-	returnMe:ADD("finalGradientMagnitude", gradientMagnitude).
-	RETURN returnMe.
-}
-
-// Golden-section search for the minimum of costDelegate(x) on [lowBound, highBound].
-// Returns the x of the minimum. Derivative-free; assumes the cost is unimodal
-// there, which holds for the narrow brackets this file uses.
-FUNCTION goldenSectionMinimum {
-	PARAMETER costDelegate.
-	PARAMETER lowBound.
-	PARAMETER highBound.
-	PARAMETER iterations IS 14.
-
-	LOCAL inversePhi IS (SQRT(5) - 1) / 2.
-	LOCAL low IS lowBound.
-	LOCAL high IS highBound.
-	LOCAL probeLow IS high - inversePhi * (high - low).
-	LOCAL probeHigh IS low + inversePhi * (high - low).
-	LOCAL costLow IS costDelegate(probeLow).
-	LOCAL costHigh IS costDelegate(probeHigh).
-
-	FROM {LOCAL pass IS 0.} UNTIL pass >= iterations STEP {SET pass TO pass + 1.} DO {
-		IF costLow < costHigh {
-			SET high TO probeHigh.
-			SET probeHigh TO probeLow.
-			SET costHigh TO costLow.
-			SET probeLow TO high - inversePhi * (high - low).
-			SET costLow TO costDelegate(probeLow).
-		} ELSE {
-			SET low TO probeLow.
-			SET probeLow TO probeHigh.
-			SET costLow TO costHigh.
-			SET probeHigh TO low + inversePhi * (high - low).
-			SET costHigh TO costDelegate(probeHigh).
-		}
-	}
-	RETURN (low + high) / 2.
-}
-
-// Newton refinement of a minimum in two variables, to finish a hill climb. Each step prices a 3x3 patch
-// around the current point (8 new points), fits slope and curvature, and moves to the bottom of the fitted
-// bowl (capped at two patch widths) if that beats every point priced; otherwise to the best patch point.
-// Each later step halves the patch.
-//   costDelegate - f(guess1, guess2) -> value, to be minimized
-//   startGuess1/2, startValue - the point to refine and its value
-//   startStep1/2 - the patch half-width on each axis for the first step
-//   newtonSteps  - how many steps to take
-// Returns a LEXICON: "finalValue", "finalGuess1", "finalGuess2", "evaluations" and "steps" (steps that
-// moved to a better point).
-FUNCTION newtonRefine2D {
-	PARAMETER costDelegate.
-	PARAMETER startGuess1.
-	PARAMETER startGuess2.
-	PARAMETER startValue.
-	PARAMETER startStep1.
-	PARAMETER startStep2.
-	PARAMETER newtonSteps IS 2.
-
-	LOCAL guess1 IS startGuess1.
-	LOCAL guess2 IS startGuess2.
-	LOCAL currentValue IS startValue.
-	LOCAL step1 IS startStep1.
-	LOCAL step2 IS startStep2.
-	LOCAL evaluations IS 0.
-	LOCAL stepsTaken IS 0.
-
-	FROM {LOCAL newtonStep IS 1.} UNTIL newtonStep > newtonSteps STEP {SET newtonStep TO newtonStep + 1.} DO {
-		// The 3x3 patch, stored flat: position 3*i + j is the point at (guess1 + (i-1)*step1, guess2 + (j-1)*step2).
-		LOCAL patch IS LIST(0, 0, 0, 0, currentValue, 0, 0, 0, 0).
-		LOCAL bestPatchValue IS currentValue.
-		LOCAL bestPatch1 IS guess1.
-		LOCAL bestPatch2 IS guess2.
-		FOR patchIndex IN LIST(0, 1, 2, 3, 5, 6, 7, 8) {
-			LOCAL point1 IS guess1 + (FLOOR(patchIndex / 3) - 1) * step1.
-			LOCAL point2 IS guess2 + (MOD(patchIndex, 3) - 1) * step2.
-			LOCAL pointValue IS costDelegate(point1, point2).
-			SET evaluations TO evaluations + 1.
-			SET patch[patchIndex] TO pointValue.
-			IF pointValue < bestPatchValue {
-				SET bestPatchValue TO pointValue.
-				SET bestPatch1 TO point1.
-				SET bestPatch2 TO point2.
-			}
-			WAIT 0.
-		}
-
-		LOCAL slope1 IS (patch[7] - patch[1]) / (2 * step1).
-		LOCAL slope2 IS (patch[5] - patch[3]) / (2 * step2).
-		LOCAL curvature11 IS (patch[7] - 2 * patch[4] + patch[1]) / step1 ^ 2.
-		LOCAL curvature22 IS (patch[5] - 2 * patch[4] + patch[3]) / step2 ^ 2.
-		LOCAL curvature12 IS (patch[8] - patch[6] - patch[2] + patch[0]) / (4 * step1 * step2).
-		LOCAL determinant IS curvature11 * curvature22 - curvature12 ^ 2.
-
-		// Where this step ends up: the best patch point, unless the fitted bowl's bottom does better.
-		LOCAL nextValue IS bestPatchValue.
-		LOCAL next1 IS bestPatch1.
-		LOCAL next2 IS bestPatch2.
-		IF curvature11 > 0 AND determinant > 0 {
-			LOCAL move1 IS -(curvature22 * slope1 - curvature12 * slope2) / determinant.
-			LOCAL move2 IS -(curvature11 * slope2 - curvature12 * slope1) / determinant.
-			LOCAL overshoot IS MAX(ABS(move1) / (2 * step1), ABS(move2) / (2 * step2)).
-			IF overshoot > 1 {
-				SET move1 TO move1 / overshoot.
-				SET move2 TO move2 / overshoot.
-			}
-			LOCAL bowlValue IS costDelegate(guess1 + move1, guess2 + move2).
-			SET evaluations TO evaluations + 1.
-			WAIT 0.
-			IF bowlValue < nextValue {
-				SET nextValue TO bowlValue.
-				SET next1 TO guess1 + move1.
-				SET next2 TO guess2 + move2.
-			}
-		}
-
-		IF nextValue < currentValue {
-			SET currentValue TO nextValue.
-			SET guess1 TO next1.
-			SET guess2 TO next2.
-			SET stepsTaken TO stepsTaken + 1.
-		}
-		SET step1 TO step1 / 2.
-		SET step2 TO step2 / 2.
-	}
-
-	RETURN LEXICON("finalValue", currentValue, "finalGuess1", guess1, "finalGuess2", guess2, "evaluations", evaluations, "steps", stepsTaken).
 }
 
 // Return the vector pointing in the direction of upslope
@@ -2035,6 +1442,210 @@ FUNCTION engineCapabilities {
 					"CanRestart", allCanRestart,
 					"LowestThrustLimit", lowestThrustLimit,
 					"HighestMinThrottle", highestMinThrottle).
+}
+
+// Burn Feasibility Error
+// Works out whether the stages of the ship can deliver a burn, before any of the burn is started.
+// Checks, for the stages that would be needed, that the engines still have ignitions, that they thrust roughly forward,
+// and that the whole ship has enough delta V.
+// Passed the following
+//			stages that could burn, in the order that they would burn (list of shipInfo stage lexicons)
+//			delta V required (scalar, m/s)
+// Returns "None" if the burn is feasible, otherwise the reason that it is not (string)
+FUNCTION burnFeasibilityError {
+	PARAMETER usedStages.
+	PARAMETER dV_req.
+
+	IF usedStages:LENGTH = 0 RETURN "Ship has no stages with working engines!".
+
+	LOCAL dV_total IS 0.
+	LOCAL dV_remaining IS dV_req.
+	FOR eachStage IN usedStages {
+		SET dV_total TO dV_total + eachStage["DeltaV"].
+		IF dV_remaining > 0 {
+			// An engine that is not lit and has no ignitions left (ENGINE:IGNITIONS = 0) can never produce thrust.
+			// -1 means unlimited, and a lit engine has already used its ignition.
+			LOCAL thrustVector IS V(0, 0, 0).
+			FOR eachData IN eachStage["EngineData"] {
+				IF eachData["Ignitions"] = 0 AND NOT eachData["Running"] RETURN "Engine " + eachData["Engine"]:CONFIG + " has no ignitions remaining!".
+				SET thrustVector TO thrustVector + eachData["Engine"]:FACING:VECTOR * eachData["Engine"]:MAXTHRUST.
+			}
+			// the combined thrust of the stage has to be roughly forward
+			IF thrustVector:MAG > 0 AND VANG(thrustVector, SHIP:FACING:VECTOR) > 45 RETURN "Engines facing the wrong way!".
+			SET dV_remaining TO dV_remaining - eachStage["DeltaV"].
+		}
+	}
+
+	IF dV_total < dV_req RETURN "Not enough delta V! Need " + ROUND(dV_req, 1) + " m/s, ship has " + ROUND(dV_total, 1) + " m/s.".
+	RETURN "None".
+}
+
+// Vector To CSV
+// Formats a vector as three comma separated values with a trailing comma.
+// Passed the following
+//			vector (vector)
+//			number of decimal places (scalar)
+// Returns a string
+FUNCTION vectorToCSV {
+	PARAMETER vec.
+	PARAMETER decimals IS 5.
+	RETURN ROUND(vec:X, decimals) + "," + ROUND(vec:Y, decimals) + "," + ROUND(vec:Z, decimals) + ",".
+}
+
+// Burn Frame
+// Builds the reference frame used to log the motion of the ship during a burn.
+// The frame is inertial and fixed at the moment the function is called (the start of the burn), so that nothing in it
+// rotates during the burn, and the unit vectors are a few cross products of the ship's state at that moment.
+// All of the vectors in the frame are in kOS's raw (ship-raw, non-rotating) coordinates, centered on the ship's body for
+// positions, so the logged raw positions and velocities need no conversion.
+//		P is the direction of the ship's orbital velocity (prograde at the start of the burn)
+//		R is the direction from the body to the ship, with any part parallel to P removed (radial out at the start of the burn)
+//		N is VCRS(P, R). kOS's VCRS is left-handed, so this is expected to be along the orbit normal (the direction of a
+//		positive normal maneuver node component). The log records the node's own normal component and the projection of the
+//		initial burn vector on N so that the sign can be checked.
+// Passed the following
+//			no arguments
+// Returns a lexicon of "UT" (scalar, s), "Position" and "Velocity" (vectors, raw, body-relative, m and m/s), "P", "N" and "R" (unit vectors)
+FUNCTION burnFrame {
+	LOCAL r0 IS -SHIP:BODY:POSITION.
+	LOCAL v0 IS SHIP:VELOCITY:ORBIT.
+	LOCAL pHat IS v0:NORMALIZED.
+	LOCAL rHat IS VXCL(pHat, r0):NORMALIZED.
+	LOCAL nHat IS VCRS(pHat, rHat):NORMALIZED.
+	RETURN LEXICON("UT", TIME:SECONDS, "Position", r0, "Velocity", v0, "P", pHat, "N", nHat, "R", rHat).
+}
+
+// Burn Log Header
+// Builds the header of a burn log: the parameters of the burn and the frame, followed by the column titles of the samples.
+// Nothing is written to the archive, so that the start of the burn is not delayed by file writing. Put the lines in the
+// buffer that is given to burnLogFlush, ahead of the samples.
+// Passed the following
+//			burn frame (lexicon, from burnFrame)
+//			maneuver node (node)
+//			delta V vector of the burn at the start of the burn (vector, raw)
+//			planned total burn time (scalar, s)
+// Returns a list of strings
+FUNCTION burnLogHeader {
+	PARAMETER frame.
+	PARAMETER maneuverNode.
+	PARAMETER dv0.
+	PARAMETER plannedBurnTime.
+
+	LOCAL lines IS LIST().
+	lines:ADD("Burn log," + SHIP:NAME + "," + SHIP:BODY:NAME).
+	lines:ADD("Frame,inertial raw axes (non-rotating); positions body-relative; P/N/R fixed at the start of the burn").
+	lines:ADD("Start UT,"+ frame["UT"] + ",s").
+	lines:ADD("Node UT," + (TIME:SECONDS + maneuverNode:ETA) + ",s").
+	lines:ADD("Planned burn time," + plannedBurnTime + ",s").
+	lines:ADD("Initial dV," + dv0:MAG + ",m/s").
+	lines:ADD("Initial dV raw,x,y,z," + vectorToCSV(dv0)).
+	lines:ADD("Initial dV in frame,P,N,R," + VDOT(dv0, frame["P"]) + "," + VDOT(dv0, frame["N"]) + "," + VDOT(dv0, frame["R"])).
+	lines:ADD("Node components (KSP),prograde,normal,radial," + maneuverNode:PROGRADE + "," + maneuverNode:NORMAL + "," + maneuverNode:RADIALOUT).
+	lines:ADD("P raw,x,y,z," + vectorToCSV(frame["P"], 8)).
+	lines:ADD("N raw,x,y,z," + vectorToCSV(frame["N"], 8)).
+	lines:ADD("R raw,x,y,z," + vectorToCSV(frame["R"], 8)).
+	lines:ADD("Position at start raw,x,y,z," + vectorToCSV(frame["Position"])).
+	lines:ADD("Velocity at start raw,x,y,z," + vectorToCSV(frame["Velocity"], 6)).
+	lines:ADD("Body radius," + SHIP:BODY:RADIUS + ",m,Body mu," + SHIP:BODY:MU + ",m^3/s^2").
+	lines:ADD("UT,tBurn,nodeETA,throttle,availThrust,maxThrust,mass,dvThrustEst,stage," +
+		"rX,rY,rZ,vX,vY,vZ,faceX,faceY,faceZ,dvX,dvY,dvZ," +
+		"rP,rN,rR,vP,vN,vR,faceP,faceN,faceR,dvP,dvN,dvR,dvMag," +
+		"nodePrograde,nodeNormal,nodeRadial," +
+		"pointErr,steerAngleErr,steerRollErr,angVel," +
+		"inc,LAN,ecc,SMA,trueAnom,alt," +
+		"planeTilt,dInc,dLAN,dAop,dEcc,dSMA,crossing").
+	lines:ADD("units,s,s,s,0-1,kN,kN,kg,m/s,," +
+		"m,m,m,m/s,m/s,m/s,,,,m/s,m/s,m/s," +
+		"m,m,m,m/s,m/s,m/s,,,,m/s,m/s,m/s,m/s," +
+		"m/s,m/s,m/s," +
+		"deg,deg,deg,rad/s," +
+		"deg,deg,,m,deg,m," +
+		"deg,deg,deg,deg,,m,deg").
+	RETURN lines.
+}
+
+// Burn Log Sample
+// Builds one line of the burn log, describing the motion of the ship at this instant.
+// The raw columns (r, v, face, dv) are in kOS's raw inertial coordinates, and the P/N/R columns are the same vectors
+// projected on the fixed frame of burnFrame.
+// Passed the following
+//			burn frame (lexicon, from burnFrame)
+//			maneuver node (node)
+//			throttle setting (scalar, 0 to 1)
+//			delta V integrated from the thrust and mass of the ship, as a rough check of the node's delta V (scalar, m/s)
+//			snapshot from before the burn (lexicon, from nodeOrbitSnapshot)
+// The last columns are the error of the orbit that the ship is in at this instant (the osculating orbit, which is where the
+// ship would coast if the engines were cut now) against the orbit that the node predicted: the angle between the orbit planes
+// (planeTilt), the differences in inclination, LAN and argument of periapsis (deg), eccentricity and semi-major axis (m), and
+// where the new plane crosses the old one, from the node (crossing, see planeCrossingAngle). They go to zero as the burn finishes.
+// Returns a string
+FUNCTION burnLogSample {
+	PARAMETER frame.
+	PARAMETER maneuverNode.
+	PARAMETER throttleSetting.
+	PARAMETER dvThrustEst.
+	PARAMETER snapshot.
+
+	LOCAL pos IS -SHIP:BODY:POSITION.
+	LOCAL vel IS SHIP:VELOCITY:ORBIT.
+	LOCAL face IS SHIP:FACING:VECTOR.
+	LOCAL dv IS maneuverNode:DELTAV.
+	LOCAL pHat IS frame["P"].
+	LOCAL nHat IS frame["N"].
+	LOCAL rHat IS frame["R"].
+
+	LOCAL steerAngleError IS 0.
+	LOCAL steerRollError IS 0.
+	IF STEERINGMANAGER:ENABLED {
+		SET steerAngleError TO STEERINGMANAGER:ANGLEERROR.
+		SET steerRollError TO STEERINGMANAGER:ROLLERROR.
+	}
+
+	LOCAL elements IS orbitElementsLexicon(SHIP:ORBIT).
+	LOCAL predicted IS snapshot["Predicted"].
+	LOCAL actualNormal IS VCRS(pos, vel):NORMALIZED.			// from the state, not from inc and LAN (see nodeOrbitSnapshot)
+
+	RETURN ROUND(TIME:SECONDS, 3) + "," + ROUND(TIME:SECONDS - frame["UT"], 3) + "," + ROUND(maneuverNode:ETA, 3) + "," +
+		ROUND(throttleSetting, 4) + "," + ROUND(AVAILABLETHRUST, 4) + "," + ROUND(MAXTHRUST, 4) + "," + ROUND(SHIP:MASS * 1000, 3) + "," +
+		ROUND(dvThrustEst, 5) + "," + STAGE:NUMBER + "," +
+		vectorToCSV(pos, 3) + vectorToCSV(vel, 6) + vectorToCSV(face, 6) + vectorToCSV(dv, 6) +
+		ROUND(VDOT(pos, pHat), 3) + "," + ROUND(VDOT(pos, nHat), 3) + "," + ROUND(VDOT(pos, rHat), 3) + "," +
+		ROUND(VDOT(vel, pHat), 6) + "," + ROUND(VDOT(vel, nHat), 6) + "," + ROUND(VDOT(vel, rHat), 6) + "," +
+		ROUND(VDOT(face, pHat), 6) + "," + ROUND(VDOT(face, nHat), 6) + "," + ROUND(VDOT(face, rHat), 6) + "," +
+		ROUND(VDOT(dv, pHat), 6) + "," + ROUND(VDOT(dv, nHat), 6) + "," + ROUND(VDOT(dv, rHat), 6) + "," + ROUND(dv:MAG, 6) + "," +
+		ROUND(maneuverNode:PROGRADE, 6) + "," + ROUND(maneuverNode:NORMAL, 6) + "," + ROUND(maneuverNode:RADIALOUT, 6) + "," +
+		ROUND(VANG(face, dv), 4) + "," + ROUND(steerAngleError, 4) + "," + ROUND(steerRollError, 4) + "," + ROUND(SHIP:ANGULARVEL:MAG, 6) + "," +
+		ROUND(SHIP:ORBIT:INCLINATION, 6) + "," + ROUND(SHIP:ORBIT:LAN, 6) + "," + ROUND(SHIP:ORBIT:ECCENTRICITY, 8) + "," +
+		ROUND(SHIP:ORBIT:SEMIMAJORAXIS, 2) + "," + ROUND(SHIP:ORBIT:TRUEANOMALY, 5) + "," + ROUND(SHIP:ALTITUDE, 2) + "," +
+		ROUND(VANG(actualNormal, snapshot["PredictedNormal"]), 5) + "," + ROUND(elements["inc"] - predicted["inc"], 5) + "," +
+		ROUND(normalizeAngle180(elements["lan"] - predicted["lan"]), 5) + "," + ROUND(normalizeAngle180(elements["aop"] - predicted["aop"]), 5) + "," +
+		ROUND(elements["ecc"] - predicted["ecc"], 8) + "," + ROUND(elements["sma"] - predicted["sma"], 2) + "," +
+		ROUND(planeCrossingAngle(snapshot["OldNormal"], actualNormal, snapshot["NodePosition"], snapshot["NodeVelocity"]), 5).
+}
+
+// Burn Log Flush
+// Writes the lines buffered by burnLogSample to the burn log and empties the buffer, if the archive can be reached.
+// If it cannot, the lines are kept (up to 3000, after which the oldest are dropped).
+// Passed the following
+//			file name (string)
+//			buffered lines (list of strings)
+//			write regardless of how many lines are buffered (boolean, default FALSE, otherwise it writes at 10 lines)
+// The buffered lines are written with one LOG, because each LOG takes a noticeable amount of game time.
+FUNCTION burnLogFlush {
+	PARAMETER fileName.
+	PARAMETER buffer.
+	PARAMETER force IS FALSE.
+
+	IF buffer:LENGTH >= 10 OR (force AND buffer:LENGTH > 0) {
+		IF connectionToKSC() {
+			LOCAL text IS buffer[0].
+			FOR eachIndex IN RANGE(1, buffer:LENGTH) SET text TO text + CHAR(10) + buffer[eachIndex].
+			LOG text TO fileName.
+			buffer:CLEAR().
+		} ELSE {
+			UNTIL buffer:LENGTH <= 3000 buffer:REMOVE(0).
+		}
+	}
 }
 
 // Calculate Engine Stats for RCS engines
@@ -3129,6 +2740,303 @@ FUNCTION warpToValuePhysics
 	RETURN TIME:SECONDS - startTime.
 }
 
+// Abort
+// A manual abort for long scripts. A script calls resetAbort() when it starts, and then asks abortKeyPressed() wherever it waits or loops
+// (WAIT UNTIL condition OR abortKeyPressed(), the loop of a burn, warpToTime and the solvers, which take it as a delegate: abortKeyPressed@).
+// Nothing runs in the background, so the key is only noticed where the script asks.
+// The key is the End key (abortKey), not Enter, which runs scripts from the loop terminal. It is not Escape: a terminal that has focus
+// captures it (the game does not pause), but kOS does not deliver it as a character (testAbort.ks showed that). All the keys that were typed since the last call are read and thrown
+// away, so that they do not run commands in the loop terminal after the script ends.
+// abortRequested is TRUE once the key was pressed and stays TRUE until the next resetAbort(), so every later check agrees, and a script
+// that ran this one can look at it after it returns.
+GLOBAL abortRequested IS FALSE.
+GLOBAL abortKey IS TERMINAL:INPUT:ENDCURSOR.
+
+// Clears the abort request.
+FUNCTION resetAbort {
+	SET abortRequested TO FALSE.
+}
+
+// Returns TRUE if the abort key has been pressed (see above), FALSE if not. It is generic: it knows nothing about what the script that
+// calls it is doing, so any script can use it. A script that has other reasons to stop sets abortRequested itself (as Exec does when
+// its maneuver node is gone) and then every later check agrees.
+FUNCTION abortKeyPressed {
+	UNTIL NOT TERMINAL:INPUT:HASCHAR {
+		IF TERMINAL:INPUT:GETCHAR() = abortKey SET abortRequested TO TRUE.
+	}
+	RETURN abortRequested.
+}
+
+// Maneuver-node execution helpers (Exec.ks). They are here and not in Exec.ks because kOS keeps the code of a script that was run, and a
+// FUNCTION or LOCK defined in a script that is loaded a second time (ExecRCS runs Exec under another name) is a label that already exists,
+// which freezes the game. Exec.ks therefore defines no named labels of its own.
+// The kind of burn: TRUE for an RCS burn, where the thrust is the forward translation control of the ship and the main throttle stays 0.
+GLOBAL burnWithRCS IS FALSE.
+GLOBAL burnLevel IS 0.												// the level that setBurnThrottle last set (0 to 1), for the logs
+
+// Sets the level of the burn (0 to 1): the throttle of the main engines, or, for an RCS burn, the forward translation control.
+FUNCTION setBurnThrottle {
+	PARAMETER level.
+	SET burnLevel TO level.
+	IF burnWithRCS SET SHIP:CONTROL:FORE TO level.
+	ELSE SET globalThrottle TO level.
+}
+
+// Whether a maneuver-node script has to stop now: the abort key was pressed (abortKeyPressed, which knows nothing about nodes), or the
+// maneuver node is gone. A missing node sets the shared abort request, so that everything that is skipped after the abort key is skipped
+// for it too, and stopReason says which it was.
+FUNCTION executeStop {
+	IF NOT HASNODE SET abortRequested TO TRUE.
+	RETURN abortKeyPressed().
+}
+
+// What a stop was for (string)
+FUNCTION stopReason {
+	IF NOT HASNODE RETURN "the maneuver node was removed".
+	RETURN "aborted by the operator".
+}
+
+// For the solver, which takes a function that returns whether to stop: also takes a sample of the rotation if one is due
+FUNCTION executeStopOrSample {
+	sampleRotation().
+	RETURN executeStop().
+}
+
+// Safe Node Reads
+// NEXTNODE:ETA and NEXTNODE:DELTAV fail when there is no maneuver node, with an error that kOS cannot catch, and the script stops with
+// whatever it was doing (the throttle where it was). A script that waits for a node or burns it reads the node all the time, and the node
+// can be deleted in the meantime. These read it only if it is there, and give the fallback if it is not. Nothing is remembered about the
+// node: it is read from the game each time, so a node that was moved or edited is not noticed, and what is read is what it is now.
+// The script decides what the fallback must be (for a time: a time that never comes, so that nothing waits for it to arrive and then
+// acts as if the node had; for the delta V: zero, so that a burn finds that nothing is left) and checks HASNODE where it matters.
+// Passed the following:
+//			fallback (scalar, s, the default 1E9; or vector, the default V(0, 0, 0))
+// Returns the time to the next node (s), or the delta V that is left of it (vector, raw), or the fallback
+FUNCTION nodeETA {
+	PARAMETER fallback IS 1E9.
+	IF HASNODE RETURN NEXTNODE:ETA.
+	RETURN fallback.
+}
+
+FUNCTION nodeDeltaV {
+	PARAMETER fallback IS V(0, 0, 0).
+	IF HASNODE RETURN NEXTNODE:DELTAV.
+	RETURN fallback.
+}
+// Ullage Fuel Check
+// Whether the RCS can fire forward for the ullage of the burn: a thruster that can, and enough propellant for it, which is the thrust
+// over the Isp and g0, for the ullage time, with a margin of 50%. The propellant and the Isp are the current stage's (shipInfo, from
+// updateShipInfo), the thrust is that of every enabled RCS thruster that fires forward (getRCSThrusts). Not tested in flight.
+// Passed the following:
+//			ullage time (scalar, s)
+// Returns a lexicon of "Message" ("None" if the ullage can be done, otherwise what is wrong, a string), "Thrust" (N, forward),
+//		"Needed" (kg, with the margin) and "Have" (kg)
+FUNCTION ullageFuelCheck {
+	PARAMETER ullageTime.
+	LOCAL foreThrust IS getRCSThrusts():X.
+	LOCAL rcsIsp IS shipInfo["CurrentStage"]["IspRCS"].
+	LOCAL fuelHave IS shipInfo["CurrentStage"]["fuelRCSMass"].
+	LOCAL fuelNeeded IS 0.
+	IF foreThrust > 0 AND rcsIsp > 0 SET fuelNeeded TO 1.5 * foreThrust / (rcsIsp * 9.80665) * ullageTime.
+	LOCAL message IS "None".
+	IF foreThrust <= 0 SET message TO "no RCS thruster can fire forward for the ullage".
+	ELSE IF rcsIsp <= 0 SET message TO "the RCS has no propellant data for the ullage".
+	ELSE IF fuelHave < fuelNeeded SET message TO "the RCS has " + ROUND(fuelHave, 2) + " kg of propellant and the ullage needs about " + ROUND(fuelNeeded, 2) + " kg".
+	RETURN LEXICON("Message", message, "Thrust", foreThrust, "Needed", fuelNeeded, "Have", fuelHave).
+}
+
+// RCS Burn Stage
+// The plan of a burn with the RCS thrusters instead of the main engines (Exec with its useRCSforThrust parameter): one stage in the form
+// that Exec's planner and the burn solver read (the keys of a shipInfo stage that they use). The thrusters are the enabled ones that fire
+// forward, their thrust and mass flow are those of engineStatsRCS for them (the thrust is each thruster's own, not its component along the
+// ship's axis, so a ring of angled thrusters is overstated), the mass is the ship's, and the propellant is the current stage's RCS
+// propellant (shipInfo, from updateShipInfo). The delta V it can deliver is Isp * g0 * ln(mass / mass without that propellant).
+// Not tested in flight.
+// Passed the following:
+//			delta V required (scalar, m/s; 0 to skip the check of the delta V)
+// Returns a lexicon of "Stage" (a lexicon of "Isp" (s), "Thrust" (N), "mDot" (kg/s), "CurrentMass" (kg), "FuelMass" (kg), "DeltaV" (m/s),
+//		"DeltaVPrev" (0), "Number" (0), "Throttleable" (TRUE), "HighestMinThrottle" (0), "Engines" (the thrusters) and "EngineData" (empty))
+//		and "Error" ("None" if the burn can be done, otherwise the reason, a string; the delta V needs a margin of 5%)
+FUNCTION rcsBurnStage {
+	PARAMETER deltaVRequired IS 0.
+	LOCAL allRCS IS LIST().
+	LIST RCS IN allRCS.
+	LOCAL foreRCS IS LIST().
+	FOR eachRCS IN allRCS {
+		IF eachRCS:ENABLED AND eachRCS:FOREENABLED foreRCS:ADD(eachRCS).
+	}
+	LOCAL stats IS engineStatsRCS(foreRCS).
+	LOCAL massNow IS SHIP:MASS * 1000.
+	LOCAL fuelMass IS shipInfo["CurrentStage"]["fuelRCSMass"].
+	LOCAL dryMass IS massNow - fuelMass.
+	LOCAL deltaVAvailable IS 0.
+	IF stats["Isp"] > 0 AND dryMass > 0 AND fuelMass > 0 SET deltaVAvailable TO stats["Isp"] * 9.80665 * LN(massNow / dryMass).
+	LOCAL message IS "None".
+	IF foreRCS:LENGTH = 0 SET message TO "Ship has no RCS thrusters that fire forward!".
+	ELSE IF stats["thrustMax"] <= 0 SET message TO "The RCS thrust forward is zero!".
+	ELSE IF stats["Isp"] <= 0 SET message TO "RCS Isp is zero!".
+	ELSE IF fuelMass <= 0 SET message TO "The ship has no RCS propellant!".
+	ELSE IF deltaVAvailable < 1.05 * deltaVRequired SET message TO "Not enough RCS delta V! Need " + ROUND(deltaVRequired, 1) + " m/s (with a margin of 5%) and the RCS has " + ROUND(deltaVAvailable, 1) + " m/s.".
+	LOCAL burnStage IS LEXICON("Isp", stats["Isp"], "Thrust", stats["thrustMax"], "mDot", stats["mDotMax"], "CurrentMass", massNow, "FuelMass", fuelMass,
+								"DeltaV", deltaVAvailable, "DeltaVPrev", 0, "Number", 0, "Throttleable", TRUE, "HighestMinThrottle", 0,
+								"Engines", foreRCS, "EngineData", LIST()).
+	RETURN LEXICON("Stage", burnStage, "Error", message).
+}
+
+// The delegate for functions that can be aborted when the caller does not want that. It always returns FALSE.
+FUNCTION neverAbort {
+	RETURN FALSE.
+}
+
+// Rotation Monitor
+// Watches how the ship rotates while a script waits for it to point at a target direction, and says whether it has settled. It keeps a history
+// of the pointing error and of the pitch and yaw rate, and can write a log (a line every logInterval s) to see why a ship does not settle.
+// sampleRotation does the work, and takes a sample only when one is due, so it can be called as often as the caller likes: every pass of a
+// wait loop, and from the solver (abortOrSample is a delegate for the solver that does both), which blocks the script for a minute.
+// The rotation rate that matters for pointing is the pitch and yaw rate, the rotation with the part about the facing axis removed. A roll about
+// that axis does not move the facing direction, and a flown ship rolled steadily at 0.003 rad/s that the steering never removed (the steering
+// lets the roll follow when it is given a vector), which made the total rate useless as a test for being settled.
+// A ship with little control authority oscillates slowly about the target (a flown one: 0.5 degrees either side with a period of 18 s), and its
+// rate is zero twice per cycle, so one reading says nothing: rotationSettled looks at the highest rate and the largest error over a window.
+GLOBAL rotationMonitor IS LEXICON("On", FALSE).
+
+// Starts the monitor. Passed the following:
+//			target vector (vector, the direction to point at, raw; the burn vector does not move, so one reading of it is enough)
+//			node UT (scalar, UT in s, for the time to the node in the log)
+//			turn start UT (scalar, UT in s, when the turn started, for the log)
+//			log file (string, "" for no log file)
+//			aligned error (scalar, deg, the pointing error that counts as aligned, for the time that the ship was first aligned)
+//			log interval (scalar, s) and history interval (scalar, s, between the samples of the history; 0.5 s)
+FUNCTION startRotationMonitor {
+	PARAMETER targetVector.
+	PARAMETER nodeUT.
+	PARAMETER turnStartUT.
+	PARAMETER logFileName IS "".
+	PARAMETER alignedError IS 1.
+	PARAMETER logInterval IS 2.
+	PARAMETER historyInterval IS 0.5.
+
+	SET rotationMonitor TO LEXICON("On", TRUE, "Target", targetVector, "NodeUT", nodeUT, "TurnStart", turnStartUT, "File", logFileName,
+		"AlignedError", alignedError, "LogInterval", logInterval, "HistoryInterval", historyInterval, "LastLog", -1E9, "LastHistory", -1E9,
+		"FirstAligned", -1, "Times", LIST(), "Errors", LIST(), "Rates", LIST(), "Buffer", LIST(), "KeepTime", 60, "CheckedAt", -1, "Result", FALSE).
+	IF logFileName <> "" {
+		LOCAL buffer IS rotationMonitor["Buffer"].
+		buffer:ADD("Alignment log," + SHIP:NAME).
+		buffer:ADD("UT,since turn start,ETA,pointing error,steering angle error,steering roll error,rotation rate,roll rate,pitch and yaw rate,stopping time,warp rate,warp mode").
+		buffer:ADD("s,s,s,deg,deg,deg,rad/s,rad/s,rad/s,s,,").
+	}
+}
+
+// Takes a sample of the ship's rotation if one is due (see above). Passed: force (boolean, TRUE to take a log line now)
+FUNCTION sampleRotation {
+	PARAMETER force IS FALSE.
+	IF NOT rotationMonitor["On"] RETURN.
+	LOCAL nowUT IS TIME:SECONDS.
+	LOCAL historyDue IS nowUT - rotationMonitor["LastHistory"] >= rotationMonitor["HistoryInterval"].
+	LOCAL logDue IS rotationMonitor["File"] <> "" AND (force OR nowUT - rotationMonitor["LastLog"] >= rotationMonitor["LogInterval"]).
+	IF NOT (historyDue OR logDue) RETURN.
+
+	LOCAL pointError IS VANG(SHIP:FACING:VECTOR, rotationMonitor["Target"]).
+	LOCAL turnRate IS VXCL(SHIP:FACING:FOREVECTOR, SHIP:ANGULARVEL):MAG.
+	IF historyDue {
+		rotationMonitor["Times"]:ADD(nowUT).
+		rotationMonitor["Errors"]:ADD(pointError).
+		rotationMonitor["Rates"]:ADD(turnRate).
+		SET rotationMonitor["LastHistory"] TO nowUT.
+		UNTIL rotationMonitor["Times"]:LENGTH < 2 OR rotationMonitor["Times"][0] >= nowUT - rotationMonitor["KeepTime"] {
+			rotationMonitor["Times"]:REMOVE(0).
+			rotationMonitor["Errors"]:REMOVE(0).
+			rotationMonitor["Rates"]:REMOVE(0).
+		}
+		IF pointError < rotationMonitor["AlignedError"] AND rotationMonitor["FirstAligned"] < 0 SET rotationMonitor["FirstAligned"] TO nowUT.
+	}
+	IF logDue {
+		LOCAL steerAngleError IS 0.
+		LOCAL steerRollError IS 0.
+		IF STEERINGMANAGER:ENABLED {
+			SET steerAngleError TO STEERINGMANAGER:ANGLEERROR.
+			SET steerRollError TO STEERINGMANAGER:ROLLERROR.
+		}
+		rotationMonitor["Buffer"]:ADD(ROUND(nowUT, 2) + "," + ROUND(nowUT - rotationMonitor["TurnStart"], 2) + "," + ROUND(rotationMonitor["NodeUT"] - nowUT, 2) + "," +
+			ROUND(pointError, 4) + "," + ROUND(steerAngleError, 4) + "," + ROUND(steerRollError, 4) + "," + ROUND(SHIP:ANGULARVEL:MAG, 6) + "," +
+			ROUND(VDOT(SHIP:ANGULARVEL, SHIP:FACING:FOREVECTOR), 6) + "," + ROUND(turnRate, 6) + "," + ROUND(STEERINGMANAGER:MAXSTOPPINGTIME, 2) + "," +
+			KUNIVERSE:TIMEWARP:RATE + "," + KUNIVERSE:TIMEWARP:MODE).
+		SET rotationMonitor["LastLog"] TO nowUT.
+		burnLogFlush(rotationMonitor["File"], rotationMonitor["Buffer"]).
+	}
+}
+
+// Whether the ship has been settled for a whole window: for the last window seconds, every sample of the history has a pitch and yaw rate
+// of at most rateLimit and a pointing error of at most errorLimit. FALSE until the history covers the window (it is kept for 60 s).
+// Passed the following:
+//			window (scalar, s), rate limit (scalar, rad/s), error limit (scalar, deg)
+FUNCTION rotationSettled {
+	PARAMETER window.
+	PARAMETER rateLimit.
+	PARAMETER errorLimit.
+	IF NOT rotationMonitor["On"] RETURN FALSE.
+	IF rotationMonitor["CheckedAt"] = rotationMonitor["LastHistory"] RETURN rotationMonitor["Result"].		// nothing new since the last answer
+	SET rotationMonitor["CheckedAt"] TO rotationMonitor["LastHistory"].
+	SET rotationMonitor["Result"] TO FALSE.
+
+	LOCAL times IS rotationMonitor["Times"].
+	LOCAL errors IS rotationMonitor["Errors"].
+	LOCAL rates IS rotationMonitor["Rates"].
+	IF times:LENGTH < 2 RETURN FALSE.
+	LOCAL lastTime IS times[times:LENGTH - 1].
+	IF times[0] > lastTime - window + rotationMonitor["HistoryInterval"] RETURN FALSE.						// the history does not cover the window yet
+	LOCAL settled IS TRUE.
+	LOCAL index IS times:LENGTH - 1.
+	UNTIL index < 0 {
+		IF times[index] < lastTime - window BREAK.
+		IF rates[index] > rateLimit OR errors[index] > errorLimit {
+			SET settled TO FALSE.
+			BREAK.
+		}
+		SET index TO index - 1.
+	}
+	SET rotationMonitor["Result"] TO settled.
+	RETURN settled.
+}
+
+// Ends the monitor, after writing what is left of the log. Passed: nothing
+FUNCTION stopRotationMonitor {
+	IF NOT rotationMonitor["On"] RETURN.
+	sampleRotation(TRUE).
+	IF rotationMonitor["File"] <> "" burnLogFlush(rotationMonitor["File"], rotationMonitor["Buffer"], TRUE).
+	SET rotationMonitor["On"] TO FALSE.
+}
+
+// For functions that take an abort delegate (the solver): takes a sample of the rotation if one is due, and returns whether the abort key
+// was pressed, as abortKeyPressed does.
+FUNCTION abortOrSample {
+	sampleRotation().
+	RETURN abortKeyPressed().
+}
+
+// Stop Warp Before
+// Stops time warp early enough that the game is back at normal speed when a time arrives, such as an ignition. A script that is
+// waiting for that time calls it every pass of its loop, so that a warp that was started by hand is ended by the script, not by the person.
+// The warp on rails does not stop at once: the game keeps running at the warp rate while the rate comes down (50x took about a second to come
+// down), so the lead is 15 s plus 0.6 s for each unit of the warp rate. Physics warp stops at once, and its lead is a parameter (10 s: a
+// physics warp makes every pass of the script's loops longer, and a precise time needs short ones).
+// Passed the following:
+//			time left (scalar, s, until the time that the warp has to be over)
+//			physics warp lead (scalar, s, default 10)
+// Returns the following:
+//			TRUE if it set the warp to 0 on this call
+FUNCTION stopWarpBefore {
+	PARAMETER timeLeft.
+	PARAMETER physicsLead IS 10.
+	IF KUNIVERSE:TIMEWARP:RATE > 1 {
+		IF (KUNIVERSE:TIMEWARP:MODE = "RAILS" AND timeLeft <= 15 + 0.6 * KUNIVERSE:TIMEWARP:RATE) OR (KUNIVERSE:TIMEWARP:MODE = "PHYSICS" AND timeLeft <= physicsLead) {
+			SET KUNIVERSE:TIMEWARP:WARP TO 0.
+			RETURN TRUE.
+		}
+	}
+	RETURN FALSE.
+}
+
 // Warp To Time
 // This function timewarps until the system time is the targetTime.
 // If there is an SOI change before the target time, the function will slow down for the SOI change.
@@ -3136,14 +3044,18 @@ FUNCTION warpToValuePhysics
 // 10 seconds or less of realtime remaining for each warp speed.
 // Passed the following:
 //			target time (scalar, seconds from universe creation)
+//			abort check (delegate, returns TRUE to stop warping now, such as abortKeyPressed@; the default never aborts)
+//			recursion level (scalar, only used by the function itself)
 // Returns the following:
 //			in-game time that was warped through (scalar, seconds)
 FUNCTION warpToTime
 {
 	PARAMETER targetTime.
+	PARAMETER abortCheck IS neverAbort@.
 	PARAMETER recursionLevel IS 0.
 
 	IF recursionLevel > 5 RETURN 0.
+	IF abortCheck:CALL() RETURN 0.
 
 	LOCAL startTime IS TIME:SECONDS.
 	LOCAL timeLeft IS (targetTime - TIME:SECONDS) / KUNIVERSE:TIMEWARP:RATE.
@@ -3155,9 +3067,9 @@ FUNCTION warpToTime
 	// if there is an SOI change before the target time, jump to the SOI change.
 	IF (SHIP:ORBIT:HASNEXTPATCH) AND ((targetTime - TIME:SECONDS) > ETA:TRANSITION) {
 		LOCAL oldBody IS SHIP:BODY:NAME.
-		warpToTime(TIME:SECONDS + SHIP:ORBIT:NEXTPATCHETA - 10, recursionLevel + 1).
-		WAIT UNTIL SHIP:BODY:NAME <> oldBody.
-		warpToTime(targetTime, recursionLevel + 1).
+		warpToTime(TIME:SECONDS + SHIP:ORBIT:NEXTPATCHETA - 10, abortCheck, recursionLevel + 1).
+		WAIT UNTIL SHIP:BODY:NAME <> oldBody OR abortCheck:CALL().
+		IF NOT abortCheck:CALL() warpToTime(targetTime, abortCheck, recursionLevel + 1).
 	}
 	// if the target doesn't have any interruptions, warp to it.
 	ELSE {
@@ -3169,7 +3081,7 @@ FUNCTION warpToTime
 		}
 		LOCAL currentPower IS 1.
 		// continue waiting until there is five seconds or less of real time remaining
-		UNTIL (timeLeft < 0.5) AND (KUNIVERSE:TIMEWARP:RATE = 1) {
+		UNTIL ((timeLeft < 0.5) AND (KUNIVERSE:TIMEWARP:RATE = 1)) OR abortCheck:CALL() {
 			LIST RESOURCES IN RESLIST.
 			FOR RES IN RESLIST {
 				IF RES:NAME = "ElectricCharge" SET currentPower TO RES:AMOUNT/RES:CAPACITY.
@@ -3313,6 +3225,7 @@ FUNCTION greatCircleDistance
 //   UT Time (seconds)
 // Returns a lexicon of prograde vector, radial vector, normal vector, position,
 //   velocity
+// Only valid while the orbitable is in the sphere of influence that it is in now at that time.
 FUNCTION getOrbitDirectionsAt {
 	PARAMETER orbitable IS SHIP.
   PARAMETER UTTime IS 0.
@@ -3523,101 +3436,6 @@ FUNCTION processScalarParameter {
 		RETURN returnNumber.
 	}
 	RETURN errorValueScalar.
-}
-
-// Using the Secant method, iterate until the function returns the chosen value
-//   within tolerance, or the maximum iteration number is reached.
-FUNCTION findZeroSecant {
-  PARAMETER delegate.
-  PARAMETER X1.
-  PARAMETER X2.
-  PARAMETER tolerance.
-  PARAMETER iteration IS 0.
-
-  IF ((iteration = 10) OR (delegate:TYPENAME <> "UserDelegate")) RETURN X1.
-
-  LOCAL F1 IS delegate(X1).
-  LOCAL F2 IS delegate(X2).
-  IF F1 = F2 RETURN X1.
-  LOCAL X3 IS 0.
-  IF (F1 <> 0) OR (F2 <> 0) SET X3 TO (X2 * F1 - X1 * F2) / (F1 - F2).
-  LOCAL F3 IS delegate(X3).
-
-  IF ABS(F3) < tolerance RETURN X3.
-  RETURN  findZeroSecant(delegate, X2, X3, tolerance, iteration + 1).
-}
-
-// Using the Newton method, iterate until the function returns the chosen value
-//   within tolerance, or the maximum iteration number is reached.
-FUNCTION findZeroNewton {
-	PARAMETER delegateFunction.
-	PARAMETER delegateSlope.
-	PARAMETER initialGuess.
-	PARAMETER tolerance.
-	PARAMETER desiredValue IS 0.
-	PARAMETER iteration IS 0.
-	PARAMETER maxIteration IS 100.
-
-	IF ((iteration >= maxIteration) OR (NOT delegateFunction:ISTYPE("UserDelegate")) OR (NOT delegateSlope:ISTYPE("UserDelegate"))) RETURN initialGuess.
-
-	LOCAL slope IS delegateSlope(initialGuess).
-	LOCAL X2 IS initialGuess.
-	IF slope <> 0 SET X2 TO initialGuess - (delegateFunction(initialGuess) - desiredValue)/slope.
-	IF ABS(delegateFunction(X2) - desiredValue) < tolerance RETURN X2.
-	RETURN findZeroNewton(delegateFunction, delegateSlope, X2, tolerance, desiredValue, iteration + 1, maxIteration).
-}
-
-// given the mean anomaly (in degrees), returns true anomaly (in degrees)
-FUNCTION meanToTrueAnomaly {
-  PARAMETER meanAnomaly.
-  PARAMETER eccentricity IS SHIP:ORBIT:ECCENTRICITY.
-
-  // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return mean anomaly.
-  IF eccentricity = 0 RETURN meanAnomaly.
-
-  // Convert to radians for calculations.
-  SET meanAnomaly TO CONSTANT:DegToRad * meanAnomaly.
-
-  // Note that this function requires angles to be in radians
-  LOCAL functionDelegate IS {PARAMETER E. RETURN E - eccentricity*SIN(CONSTANT:RadToDeg * E) - meanAnomaly.}.
-
-  LOCAL eccentricAnomaly IS findZeroSecant(functionDelegate, meanAnomaly, meanAnomaly + CONSTANT:PI/32, 0.0000001).
-  LOCAL trueAnomaly IS ARCTAN2(SQRT(1-eccentricity*eccentricity)*SIN(CONSTANT:RadToDeg * eccentricAnomaly), COS(CONSTANT:RadToDeg * eccentricAnomaly) - eccentricity).
-  UNTIL trueAnomaly >= 0 {
-    SET trueAnomaly TO trueAnomaly + 360.0.
-  }
-
-  RETURN normalizeAngle360(trueAnomaly).
-}
-
-// given the true anomaly (in degrees), returns mean anomaly (in degrees)
-FUNCTION trueToMeanAnomaly {
-  PARAMETER trueAnomaly.
-  PARAMETER eccentricity IS SHIP:ORBIT:ECCENTRICITY.
-
-  // If eccentricity is 0, mean, true and eccentric anomaly are all the same thing, so return true anomaly.
-  IF eccentricity = 0 RETURN trueAnomaly.
-
-	IF eccentricity < 1 { // elliptical case
-		// note that eccentric anomaly is in radians
-		LOCAL eccentricAnomaly IS CONSTANT:DegToRad * 2 * ARCTAN(TAN(trueAnomaly / 2) / SQRT((1 + eccentricity) / (1 - eccentricity))).
-		//PRINT "eccentric anomaly: " + (eccentricAnomaly * CONSTANT:RadToDeg).
-
-	//  This method also calculates eccentric anomaly equally well, but it is much more processor intensive than the other one.
-	//	LOCAL cosE IS (eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly)).
-	//	LOCAL sinE IS SQRT(1 - eccentricity^2) * SIN(trueAnomaly)/(1 + eccentricity * COS(trueAnomaly)).
-	//  LOCAL eccentricAnomaly IS CONSTANT:DegToRad * ARCTAN2(sinE, cosE).
-		LOCAL meanAnomaly IS CONSTANT:RadToDeg * (eccentricAnomaly - eccentricity * SIN(eccentricAnomaly * CONSTANT:RadToDeg)).
-		RETURN normalizeAngle360(meanAnomaly).
-	} ELSE { // hyperbolic case
-		// Note: equations taken from https://en.wikipedia.org/wiki/Hyperbolic_trajectory, section "Equations of Motion"
-		// Hyperbolic Eccentric Anomaly
-		LOCAL bigE IS ACOSH((eccentricity + COS(trueAnomaly))/(1 + eccentricity * COS(trueAnomaly))).
-		IF trueAnomaly < 0 SET bigE TO -bigE.
-
-		LOCAL meanAnomaly IS eccentricity * SINH(bigE) - bigE.
-		RETURN CONSTANT:RadToDeg * meanAnomaly.
-	}
 }
 
 // Calculate Flight Path Angle
@@ -3834,22 +3652,6 @@ FUNCTION absoluteVelocity {
   RETURN finalVelocity.
 }
 
-// Find Quadratic Roots
-// Given the three values A, B and C, return the solutions to the quadratic Ax^2 + Bx + C = 0
-// Returns a LEXICON with up to three entries.
-//    Roots will be the number of solutions, scalar with value 0, 1 or 2.
-//    Positive will be the positive solution, if it exists (or the only solution, if there is only one)
-//		Negative will be the negative solution, if it exists.
-FUNCTION solveQuadratic {
-	PARAMETER A.
-	PARAMETER B.
-	PARAMETER C.
-  LOCAL discriminant IS B*B-4*A*C.
-  IF discriminant < 0 RETURN LEXICON("Roots", 0).
-  IF discriminant = 0 RETURN LEXICON("Roots", 1, "Positive", -B/(2*A)).
-  RETURN LEXICON("Roots", 2, "Positive", (-B+SQRT(discriminant))/(2*A), "Negative", (-B-SQRT(discriminant))/(2*A)).
-}
-
 // Gets the normal vector of an Orbitable object.
 // The vector is normalized.
 FUNCTION getNormalVector {
@@ -3923,9 +3725,12 @@ FUNCTION firstCommonBody {
 	PARAMETER objectOne.
 	PARAMETER objectTwo.
 	LOCAL object1Bodies IS LIST().
-	UNTIL NOT objectOne:HASBODY {object1Bodies:ADD(objectOne:NAME). SET objectOne TO objectOne:BODY.}
+	UNTIL NOT objectOne:HASBODY {
+		IF objectOne:ISTYPE("Body") object1Bodies:ADD(objectOne:NAME).
+		SET objectOne TO objectOne:BODY.
+	}
 	UNTIL NOT objectTwo:HASBODY {
-		IF object1Bodies:CONTAINS(objectTwo:NAME) RETURN BODY(objectTwo:NAME).
+		IF objectTwo:ISTYPE("Body") AND object1Bodies:CONTAINS(objectTwo:NAME) RETURN objectTwo.
 		SET objectTwo TO objectTwo:BODY.
 	}
 	RETURN objectTwo.
@@ -4047,139 +3852,6 @@ FUNCTION VESSELEXISTS {
 	RETURN FALSE.
 }
 
-
-// Given a single-argument delegate f(x) and a starting guess, searches
-// outward from the guess in both directions (doubling the step each attempt,
-// clamped to [domainLow, domainHigh]) until it finds two x-values where f
-// changes sign - suitable as a bracket for findZeroBrent.
-FUNCTION bracketAroundGuess {
-	PARAMETER residualDelegate.
-	PARAMETER guess.
-	PARAMETER domainLow.
-	PARAMETER domainHigh.
-	PARAMETER initialStep.
-	PARAMETER maxDoublings IS 40.
-
-	LOCAL clampedGuess IS MAX(domainLow, MIN(domainHigh, guess)).
-	LOCAL guessResidual IS residualDelegate(clampedGuess).
-	LOCAL step IS initialStep.
-	LOCAL attempt IS 0.
-
-	UNTIL attempt >= maxDoublings {
-		LOCAL highCandidate IS MIN(clampedGuess + step, domainHigh).
-		IF residualDelegate(highCandidate) * guessResidual <= 0 RETURN LEXICON("low", clampedGuess, "high", highCandidate).
-
-		LOCAL lowCandidate IS MAX(clampedGuess - step, domainLow).
-		IF residualDelegate(lowCandidate) * guessResidual <= 0 RETURN LEXICON("low", lowCandidate, "high", clampedGuess).
-
-		IF (highCandidate = domainHigh) AND (lowCandidate = domainLow) BREAK.
-
-		SET step TO step * 2.
-		SET attempt TO attempt + 1.
-	}
-
-	// No bracket in the domain: return a degenerate one, which findZeroBrent handles.
-	RETURN LEXICON("low", clampedGuess, "high", clampedGuess).
-}
-
-// Brent's method: a bracketed, derivative-free root finder (bisection with secant and inverse quadratic
-// steps). X1 and X2 should bracket a root; if they do not, bracketAroundGuess looks for a bracket, up to
-// recursionLevel times.
-FUNCTION findZeroBrent {
-	PARAMETER delegate.
-	PARAMETER X1.
-	PARAMETER X2.
-	PARAMETER tolerance.
-	PARAMETER maxIterations IS 100.
-	PARAMETER recursionLevel IS 10.
-
-	LOCAL a IS X1.
-	LOCAL b IS X2.
-	LOCAL fa IS delegate(a).
-	LOCAL fb IS delegate(b).
-
-	// If we have reached the limit of recursion, return whichever input
-	// results in the smallest function value.
-	IF recursionLevel <= 0 {
-		IF ABS(fa) < ABS(fb) RETURN a.
-		RETURN b.
-	}
-
-	// Not actually bracketed - Brent's method can't guarantee anything here, so
-	// use the bracketAroundGuess function to generate a bracket and try again.
-	IF fa * fb > 0 {
-		LOCAL results IS 0.
-		IF ABS(fa) < ABS(fb) SET results TO bracketAroundGuess(delegate, a, -1e12, 1e12, MAX(ABS(a), ABS(b)) * 0.5 + 1).
-		ELSE SET results TO bracketAroundGuess(delegate, b, -1e12, 1e12, MAX(ABS(a), ABS(b)) * 0.5 + 1).
-		return findZeroBrent(delegate, results["low"], results["high"], tolerance, maxIterations, recursionLevel - 1).
-	}
-
-	// Keep b as the current best estimate: |f(b)| <= |f(a)| is an invariant
-	// maintained by re-checking and re-swapping after every update below.
-	IF ABS(fa) < ABS(fb) {
-		LOCAL swapValue IS a. SET a TO b. SET b TO swapValue.
-		SET swapValue TO fa. SET fa TO fb. SET fb TO swapValue.
-	}
-
-	LOCAL c IS a.
-	LOCAL fc IS fa.
-	LOCAL useBisection IS TRUE.
-	LOCAL d IS a. // unused until useBisection is cleared for the first time
-	LOCAL s IS b.
-	LOCAL fs IS fb.
-	LOCAL iteration IS 0.
-
-	UNTIL (fb = 0) OR (fs = 0) OR (ABS(b - a) < tolerance) OR (iteration >= maxIterations) {
-		IF (fa <> fc) AND (fb <> fc) {
-			// inverse quadratic interpolation
-			SET s TO a * fb * fc / ((fa - fb) * (fa - fc))
-				+ b * fa * fc / ((fb - fa) * (fb - fc))
-				+ c * fa * fb / ((fc - fa) * (fc - fb)).
-		} ELSE {
-			// secant method
-			SET s TO b - fb * (b - a) / (fb - fa).
-		}
-
-		// Reject an interpolated step that lands outside the bracket or shrinks it too slowly.
-		LOCAL lowBound IS MIN((3 * a + b) / 4, b).
-		LOCAL highBound IS MAX((3 * a + b) / 4, b).
-		LOCAL fallBackToBisection IS FALSE.
-		IF (s < lowBound) OR (s > highBound) SET fallBackToBisection TO TRUE.
-		IF useBisection AND (ABS(s - b) >= ABS(b - c) / 2) SET fallBackToBisection TO TRUE.
-		IF (NOT useBisection) AND (ABS(s - b) >= ABS(c - d) / 2) SET fallBackToBisection TO TRUE.
-		IF useBisection AND (ABS(b - c) < tolerance) SET fallBackToBisection TO TRUE.
-		IF (NOT useBisection) AND (ABS(c - d) < tolerance) SET fallBackToBisection TO TRUE.
-
-		IF fallBackToBisection {
-			SET s TO (a + b) / 2.
-			SET useBisection TO TRUE.
-		} ELSE {
-			SET useBisection TO FALSE.
-		}
-
-		SET fs TO delegate(s).
-		SET d TO c.
-		SET c TO b.
-		SET fc TO fb.
-
-		IF fa * fs < 0 {
-			SET b TO s.
-			SET fb TO fs.
-		} ELSE {
-			SET a TO s.
-			SET fa TO fs.
-		}
-
-		IF ABS(fa) < ABS(fb) {
-			LOCAL swapValue2 IS a. SET a TO b. SET b TO swapValue2.
-			SET swapValue2 TO fa. SET fa TO fb. SET fb TO swapValue2.
-		}
-
-		SET iteration TO iteration + 1.
-	}
-
-	RETURN b.
-}
 
 // Stages if it is time to, and returns the reason. It is time to stage when the engines are producing no thrust, when an
 // engine has flamed out, or when the tanks of the current stage are empty. Below the top of the atmosphere the long wait

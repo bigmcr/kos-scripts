@@ -7,7 +7,7 @@ LOCAL lastStock IS FALSE.
 // The scripts that must be on the local drive for loop to run (without their file extensions).
 // The boot file is always required as well. These are also the files that loop loads when it starts, so it is
 // global for loop.ks to use: loop refuses to run them again from the terminal.
-GLOBAL criticalFileNames IS LIST("library", "libraryTransfer", "libraryPID", "loop", "loopCommands", "loopTerminal").
+GLOBAL criticalFileNames IS LIST("library", "libraryTransfer", "libraryPID", "librarySolvers", "loop", "loopCommands", "loopTerminal").
 
 // How scripts get from the archive to a ship
 // -------------------------------------------

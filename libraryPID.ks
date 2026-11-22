@@ -520,38 +520,6 @@ FUNCTION computeAxisTuningRelay {
     RETURN LEXICON("Ku", Ku, "Pu", Pu, "kp", kp, "ki", kp / ti, "kd", kp * td).
 }
 
-// linearRegression
-// Inputs:
-//   samples (List of Lexicon("t","pos"), both Scalar) - data points to
-//        fit; needs at least 2 elements for a non-degenerate result.
-// Outputs:
-//   Lexicon with "slope" (Scalar) and "intercept" (Scalar) of the
-//   least-squares line pos = slope*t + intercept. Both 0 if samples has
-//   fewer than 2 elements or all "t" values are identical.
-// Side Effects:
-//   None.
-FUNCTION linearRegression {
-    PARAMETER samples.
-
-    LOCAL n IS samples:LENGTH.
-    IF n < 2 { RETURN LEXICON("slope", 0, "intercept", 0). }
-
-    LOCAL sumT IS 0. LOCAL sumPos IS 0. LOCAL sumTT IS 0. LOCAL sumTPos IS 0.
-    FOR s IN samples {
-        SET sumT TO sumT + s["t"].
-        SET sumPos TO sumPos + s["pos"].
-        SET sumTT TO sumTT + s["t"]^2.
-        SET sumTPos TO sumTPos + s["t"] * s["pos"].
-    }
-
-    LOCAL denom IS n * sumTT - sumT^2.
-    IF denom = 0 { RETURN LEXICON("slope", 0, "intercept", sumPos / n). }
-
-    LOCAL slope IS (n * sumTPos - sumT * sumPos) / denom.
-    LOCAL intercept IS (sumPos - slope * sumT) / n.
-    RETURN LEXICON("slope", slope, "intercept", intercept).
-}
-
 // computeAxisIntegratingTuning
 // Inputs:
 //   samples (List of Lexicon("t","pos"), both Scalar) - process-value

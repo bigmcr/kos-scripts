@@ -712,28 +712,6 @@ FUNCTION orbitStateAt {
 // Hyperbolic departure at one point
 // ----------------------------------------------------------------------------
 
-// Time (s) to fly a hyperbola from true anomaly startAnomaly to endAnomaly (degrees).
-//   vInfinity - hyperbolic excess speed (m/s); eccentricity - of the hyperbola.
-FUNCTION hyperbolaTransitTime {
-	PARAMETER mu.
-	PARAMETER vInfinity.
-	PARAMETER eccentricity.
-	PARAMETER startAnomaly.
-	PARAMETER endAnomaly.
-
-	// (Rounding can put a near-parabolic eccentricity a hair below 1; that is a parabola, not an error.)
-	LOCAL sqrtTerm IS SQRT(MAX(0, eccentricity ^ 2 - 1)).
-	LOCAL semiMajorAbs IS mu / vInfinity ^ 2.
-	LOCAL meanMotion IS SQRT(mu / semiMajorAbs ^ 3).
-
-	// sinh of the hyperbolic anomaly at each end, then the hyperbolic mean anomaly.
-	LOCAL startSinh IS sqrtTerm * SIN(startAnomaly) / (1 + eccentricity * COS(startAnomaly)).
-	LOCAL endSinh IS sqrtTerm * SIN(endAnomaly) / (1 + eccentricity * COS(endAnomaly)).
-	LOCAL startMean IS eccentricity * startSinh - ASINH(startSinh).
-	LOCAL endMean IS eccentricity * endSinh - ASINH(endSinh).
-	RETURN (endMean - startMean) / meanMotion.
-}
-
 // The burn from one point that leaves the body's SOI with a given velocity.
 //   burnPosition - relative to the body
 //   vExit        - velocity (relative to the body) wanted AT the SOI edge

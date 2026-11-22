@@ -21,6 +21,7 @@ LIST BODIES IN bodList.
 RUNPATH("library").
 RUNPATH("libraryTransfer").
 RUNPATH("libraryPID").
+RUNPATH("librarySolvers").
 RUNPATH("loopCommands").
 RUNPATH("loopTerminal").
 
@@ -211,6 +212,7 @@ FUNCTION endScript {
 	SET SHIP:CONTROL:MAINTHROTTLE TO 0.
 	CLEARVECDRAWS().
 	SET KUNIVERSE:TIMEWARP:WARP TO 0.
+	resetAbort().													// clear the abort request
 	SET forceScreenUpdate TO TRUE.
 }
 
