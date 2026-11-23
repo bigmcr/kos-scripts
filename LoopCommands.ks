@@ -113,23 +113,23 @@ FUNCTION createCommandList {
 		})).
 	rawArgumentCommands:ADD("SAS").
 	possibleCommands:ADD("stopTime", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
+		// no argument: show the Max Stopping Time. A number: set it. "reset": re-measure how fast the ship can turn and set the
+		// Max Stopping Time from it (the default if landed). The controls are moved for several seconds, so don't reset during a burn.
 		PARAMETER newTime IS "".
 		IF newTime = "" RETURN "Max Stopping time is " + STEERINGMANAGER:MAXSTOPPINGTIME.
+		IF newTime:ISTYPE("String") AND newTime = "reset" {
+			IF THROTTLE > 0 RETURN "stopTime reset - not while the engines are firing".
+			updateStoppingTime(TRUE).
+			LOCAL rcsText IS "off".
+			IF shipInfo["Rotation"]["RCS"] SET rcsText TO "on".
+			IF shipInfo["Rotation"]["Measured"] RETURN "Measured turn rate " + ROUND(shipInfo["Rotation"]["Accel"] * CONSTANT:RADTODEG, 3) + " deg/s^2 with RCS " + rcsText + ", Max Stopping time is " + ROUND(STEERINGMANAGER:MAXSTOPPINGTIME, 2).
+			IF SHIP:STATUS = "LANDED" OR SHIP:STATUS = "PRELAUNCH" RETURN "Landed, Max Stopping time set to " + STEERINGMANAGER:MAXSTOPPINGTIME.
+			RETURN "stopTime reset - ship did not turn, Max Stopping time left at " + STEERINGMANAGER:MAXSTOPPINGTIME.
+		}
 		IF NOT newTime:ISTYPE("Scalar") RETURN "stopTime - invalid argument".
 		IF newTime <= 0 RETURN "stopTime - invalid argument".
 		SET STEERINGMANAGER:MAXSTOPPINGTIME TO newTime.
 		RETURN "Changed Max Stopping time to " + STEERINGMANAGER:MAXSTOPPINGTIME.
-		})).
-	possibleCommands:ADD("stopTimeUpdate", LEXICON("PossibleArgs", 0, "RequiredArgs", 0, "Delegate", {
-		// Re-measure how fast the ship can turn and set the Max Stopping Time from it (1 s if landed).
-		// The controls are moved for several seconds, so don't use this during a burn.
-		IF THROTTLE > 0 RETURN "stopTimeUpdate - not while the engines are firing".
-		updateStoppingTime(TRUE).
-		LOCAL rcsText IS "off".
-		IF shipInfo["Rotation"]["RCS"] SET rcsText TO "on".
-		IF shipInfo["Rotation"]["Measured"] RETURN "Measured turn rate " + ROUND(shipInfo["Rotation"]["Accel"] * CONSTANT:RADTODEG, 3) + " deg/s^2 with RCS " + rcsText + ", Max Stopping time is " + ROUND(STEERINGMANAGER:MAXSTOPPINGTIME, 2).
-		IF SHIP:STATUS = "LANDED" OR SHIP:STATUS = "PRELAUNCH" RETURN "Landed, Max Stopping time set to " + STEERINGMANAGER:MAXSTOPPINGTIME.
-		RETURN "stopTimeUpdate - ship did not turn, Max Stopping time left at " + STEERINGMANAGER:MAXSTOPPINGTIME.
 		})).
 	possibleCommands:ADD("warp", LEXICON("PossibleArgs", 1, "RequiredArgs", 0, "Delegate", {
 		PARAMETER newPermission IS "".
