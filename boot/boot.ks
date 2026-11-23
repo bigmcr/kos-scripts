@@ -9,6 +9,13 @@ LOCAL lastStock IS FALSE.
 // global for loop.ks to use: loop refuses to run them again from the terminal.
 GLOBAL criticalFileNames IS LIST("library", "libraryTransfer", "libraryPID", "librarySolvers", "loop", "loopCommands", "loopTerminal").
 
+// The priority of the other scripts, for when the local drive does not have room for all of them. After the critical
+// files, the scripts of the high tier are installed, then the medium tier, and then everything else (the low tier). Each
+// list names the scripts of a tier. The scripts that they run (with RUNPATH, RUNONCEPATH or RUN ONCE) are in the same
+// tier, unless they are in a higher one already. See priorityTiers.
+LOCAL highPriorityScripts IS LIST("Exec").
+LOCAL mediumPriorityScripts IS LIST("Inc", "docking", "GravTurnLaunch", "transferCalc").
+
 // How scripts get from the archive to a ship
 // -------------------------------------------
 // The scripts on the archive are compiled once, by the build command (buildArchive below), into the folder
@@ -420,12 +427,39 @@ FUNCTION installScript {
 	RETURN TRUE.
 }
 
+// Priority Tiers
+// Works out which scripts are in the high and the medium priority tiers: the scripts named in highPriorityScripts and
+// mediumPriorityScripts, and the scripts that they run, and the scripts that those run, and so on. A script that is in
+// both tiers is in the high one. The critical files are not in a tier, because they are installed first anyway. The
+// source of each script is read (see scriptsCalledBy), which needs the archive.
+// Returns the following:
+//			a lexicon of script name to its tier, 1 (high) or 2 (medium). Scripts that are not in it are in the low tier.
+FUNCTION priorityTiers {
+	LOCAL tiers IS LEXICON().
+	LOCAL tierRoots IS LIST(highPriorityScripts, mediumPriorityScripts).
+	FROM {LOCAL tierIndex IS 0.} UNTIL tierIndex >= tierRoots:LENGTH STEP {SET tierIndex TO tierIndex + 1.} DO {
+		LOCAL toVisit IS tierRoots[tierIndex]:COPY.
+		UNTIL toVisit:LENGTH = 0 {
+			LOCAL current IS toVisit[0].
+			toVisit:REMOVE(0).
+			IF NOT (isCriticalFile(current) OR tiers:HASKEY(current)) {
+				SET tiers[current] TO tierIndex + 1.
+				FOR eachChild IN scriptsCalledBy(current) {
+					toVisit:ADD(eachChild).
+				}
+			}
+		}
+	}
+	RETURN tiers.
+}
+
 // Install Order
 // Passed the following:
 //			names (list of script names), buildFiles (lexicon, the build record's files)
 // Returns the following:
-//			the names in the order to install them: boot, the critical files, and then the others, smallest first so
-//			that the most of them fit if there is not room for all (list)
+//			the names in the order to install them: boot, the critical files, the scripts of the high priority tier, the
+//			medium tier, and then the others. Within a tier the smallest are first, so that the most of them fit if
+//			there is not room for all (list)
 FUNCTION installOrder {
 	PARAMETER names, buildFiles.
 	LOCAL ordered IS LIST().
@@ -433,21 +467,35 @@ FUNCTION installOrder {
 	FOR eachName IN criticalFileNames {
 		IF names:CONTAINS(eachName) ordered:ADD(eachName).
 	}
-	LOCAL others IS LIST().
+	// the tiers need the sources to be read, so they are only worked out if there is a script that is not critical
+	LOCAL tiers IS LEXICON().
 	FOR eachName IN names {
 		IF NOT isCriticalFile(eachName) {
-			LOCAL insertAt IS others:LENGTH.
-			FROM {LOCAL index IS 0.} UNTIL index >= others:LENGTH STEP {SET index TO index + 1.} DO {
-				IF buildFiles[eachName]["size"] < buildFiles[others[index]]["size"] {
+			SET tiers TO priorityTiers().
+			BREAK.
+		}
+	}
+	// one list for each tier: high, medium and low
+	LOCAL tierLists IS LIST(LIST(), LIST(), LIST()).
+	FOR eachName IN names {
+		IF NOT isCriticalFile(eachName) {
+			LOCAL tierIndex IS 2.
+			IF tiers:HASKEY(eachName) SET tierIndex TO tiers[eachName] - 1.
+			LOCAL tierList IS tierLists[tierIndex].
+			LOCAL insertAt IS tierList:LENGTH.
+			FROM {LOCAL index IS 0.} UNTIL index >= tierList:LENGTH STEP {SET index TO index + 1.} DO {
+				IF buildFiles[eachName]["size"] < buildFiles[tierList[index]]["size"] {
 					SET insertAt TO index.
 					BREAK.
 				}
 			}
-			others:INSERT(insertAt, eachName).
+			tierList:INSERT(insertAt, eachName).
 		}
 	}
-	FOR eachName IN others {
-		ordered:ADD(eachName).
+	FOR eachTier IN tierLists {
+		FOR eachName IN eachTier {
+			ordered:ADD(eachName).
+		}
 	}
 	RETURN ordered.
 }

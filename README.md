@@ -77,4 +77,6 @@ The ship runs its own local copies of the scripts, so editing a file on the arch
 - `update` copies changed and new scripts from that build to the ship (`update, T` copies everything again). A script that was already loaded needs a `reboot` before the new version is used.
 - `reinstall` deletes the ship's local scripts and installs them all again from the archive on the next boot. It also deletes saved `.json` data, but keeps the command history. `reinstall,T` deletes everything on the local drive, the history included.
 
+If the ship's drive is too small for every script, they are installed in priority order: `boot` and the critical files first (all of them or none), then `Exec`, then `Inc`, `docking`, `GravTurnLaunch` and `transferCalc` with the scripts they run, and then everything else, smallest first. The lists are at the top of `boot.ks` (`highPriorityScripts` and `mediumPriorityScripts`).
+
 `reboot` restarts the kOS processor, which runs `boot.ks` again.
