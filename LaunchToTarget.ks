@@ -9,6 +9,11 @@ IF SHIP:BODY:ATM:EXISTS SET finalAltitude TO SHIP:BODY:ATM:HEIGHT - 5000.
 
 CLEARSCREEN.
 
+// The End key aborts the script (see abortKeyPressed in library.ks). It is looked at in every wait and warp, up to the moment that
+// GravTurnLaunch starts. Nothing needs to be pressed for the launch to go ahead.
+resetAbort().
+PRINT "Press End to abort".
+
 // If the name resolves to an orbitable, that is the target. The ship itself does not count.
 IF targetName <> "Default" {
 	LOCAL namedTarget IS resolveOrbitable("" + targetName).
@@ -26,30 +31,32 @@ IF NOT HASTARGET {
 	PRINT "One or the other must be true:".
 	PRINT "    It must be in the current SOI".
 	PRINT "    It must be on an intercept course with the current SOI.".
-	UNTIL HASTARGET {WAIT 0.}
+	UNTIL HASTARGET OR abortKeyPressed() {WAIT 0.}
 	WAIT 0.5.
 }
 
-// Find the list of all orbits the target will have over time.
-LOCAL orbits IS LIST().
-LOCAL targetOrbit IS TARGET:ORBIT.
-UNTIL NOT targetOrbit:HASNEXTPATCH {
-	orbits:ADD(targetOrbit).
-	SET targetOrbit TO targetOrbit:NEXTPATCH.
-}
-orbits:ADD(targetOrbit).
-
-// Scroll through the orbits and determine which orbits intersect the current SOI.
-// If there are more than one, stop at the first.
+// Find the list of all orbits the target will have over time. There is no target if the wait for one was aborted.
 LOCAL finalTargetOrbit IS "None".
 LOCAL previousTargetOrbit IS 0.
-FOR eachOrbit IN orbits {
-	IF eachOrbit:HASNEXTPATCH AND eachOrbit:NEXTPATCH:BODY:NAME = SHIP:BODY:NAME {
-		SET previousTargetOrbit TO eachOrbit.
+IF HASTARGET {
+	LOCAL orbits IS LIST().
+	LOCAL targetOrbit IS TARGET:ORBIT.
+	UNTIL NOT targetOrbit:HASNEXTPATCH {
+		orbits:ADD(targetOrbit).
+		SET targetOrbit TO targetOrbit:NEXTPATCH.
 	}
-	IF eachOrbit:BODY:NAME = SHIP:BODY:NAME {
-		SET finalTargetOrbit TO eachOrbit.
-		BREAK.
+	orbits:ADD(targetOrbit).
+
+	// Scroll through the orbits and determine which orbits intersect the current SOI.
+	// If there are more than one, stop at the first.
+	FOR eachOrbit IN orbits {
+		IF eachOrbit:HASNEXTPATCH AND eachOrbit:NEXTPATCH:BODY:NAME = SHIP:BODY:NAME {
+			SET previousTargetOrbit TO eachOrbit.
+		}
+		IF eachOrbit:BODY:NAME = SHIP:BODY:NAME {
+			SET finalTargetOrbit TO eachOrbit.
+			BREAK.
+		}
 	}
 }
 
@@ -85,8 +92,11 @@ LOCAL launchLAN IS 0.
 // a rotation plus the ascent, so that the ship is in orbit before the burn however long the plane wait turns out to be.
 LOCAL planLeadTime IS SHIP:BODY:ROTATIONPERIOD + 20 * 60.
 
-LOCAL tempChar IS "".
-IF finalTargetOrbit = "None" {
+// Whether there is anything to launch into: the target's orbit in this SOI, or a saved plan for a target outside of it.
+LOCAL canLaunch IS FALSE.
+IF abortRequested {
+	// aborted while waiting for a target, so there is no target to look at
+} ELSE IF finalTargetOrbit = "None" {
 	IF EXISTS(planPath) SET plan TO READJSON(planPath).
 	LOCAL planProblem IS savedPlanProblem(planPath, plan).
 	IF planProblem = "None" {
@@ -96,14 +106,8 @@ IF finalTargetOrbit = "None" {
 		PRINT "LAN:              " + ROUND(plan["lan"], 3) + " deg".
 		PRINT "Ejection burn at: " + plan["burnClock"] + " (" + plan["burnCalendar"] + "), in " + timeToString(plan["burnUT"] - TIME:SECONDS).
 		PRINT "The ship will warp until " + timeToString(planLeadTime) + " before the burn, then wait for the launch site to pass through the plane.".
-		PRINT "Press ENTER to continue or BACKSPACE to abort launch".
-		UNTIL (tempChar = TERMINAL:INPUT:ENTER OR tempChar = TERMINAL:INPUT:BACKSPACE) {
-			IF TERMINAL:INPUT:HASCHAR {
-				SET tempChar TO TERMINAL:INPUT:GETCHAR().
-			}
-			WAIT 0.
-		}
-		SET usePlan TO (tempChar = TERMINAL:INPUT:ENTER).
+		SET usePlan TO TRUE.
+		SET canLaunch TO TRUE.
 		// The plan overrides the plane that would have come from the target's orbit.
 		SET launchInclination TO plan["inclination"].
 		SET launchLAN TO plan["lan"].
@@ -113,20 +117,13 @@ IF finalTargetOrbit = "None" {
 	}
 } ELSE {
 	IF previousTargetOrbit = 0 {
-		SET tempChar TO TERMINAL:INPUT:ENTER.
 		PRINT "Target is already within the current SOI.".
 	} ELSE {
 		PRINT "Target enters the current SOI in " + timeToString(previousTargetOrbit:NEXTPATCHETA).
 	}
-	PRINT "Press ENTER to continue or BACKSPACE to abort launch".
-	UNTIL (tempChar = TERMINAL:INPUT:ENTER OR tempChar = TERMINAL:INPUT:BACKSPACE) {
-		IF TERMINAL:INPUT:HASCHAR {
-			SET tempChar TO TERMINAL:INPUT:GETCHAR().
-		}
-		WAIT 0.
-	}
+	SET canLaunch TO TRUE.
 }
-IF tempChar = TERMINAL:INPUT:ENTER {
+IF canLaunch {
 	// With a saved plan there is no orbit of the target in this SOI to time the launch against, so the SOI timing is skipped.
 	IF NOT usePlan {
 		// Figure out how long the target will remain within this SOI, and compare
@@ -160,13 +157,13 @@ IF tempChar = TERMINAL:INPUT:ENTER {
 			LOCAL waitTime IS entryETA - transferTime.
 			IF waitTime > 0 {
 				PRINT "SOI window has plenty of margin - waiting " + timeToString(waitTime) + " so launch happens one transfer time before the target arrives.".
-				warpToTime(TIME:SECONDS + waitTime).
+				warpToTime(TIME:SECONDS + waitTime, abortKeyPressed@).
 				WAIT 0.
-				UNTIL KUNIVERSE:TIMEWARP:ISSETTLED AND KUNIVERSE:TIMEWARP:RATE = 1 {WAIT 0.}
+				UNTIL (KUNIVERSE:TIMEWARP:ISSETTLED AND KUNIVERSE:TIMEWARP:RATE = 1) OR abortKeyPressed() {WAIT 0.}
 
 				LOCAL oldVelocity IS SHIP:VELOCITY:ORBIT.
 				WAIT 0.1.
-				UNTIL (SHIP:VELOCITY:ORBIT - oldVelocity):MAG < 0.05 {
+				UNTIL (SHIP:VELOCITY:ORBIT - oldVelocity):MAG < 0.05 OR abortKeyPressed() {
 					SET oldVelocity TO SHIP:VELOCITY:ORBIT.
 					WAIT 0.1.
 				}
@@ -182,16 +179,23 @@ IF tempChar = TERMINAL:INPUT:ENTER {
 		LOCAL waitTime IS plan["burnUT"] - TIME:SECONDS - planLeadTime.
 		IF waitTime > 0 {
 			PRINT "Waiting " + timeToString(waitTime) + " so launch happens " + timeToString(planLeadTime) + " before the ejection burn.".
-			warpToTime(TIME:SECONDS + waitTime).
+			warpToTime(TIME:SECONDS + waitTime, abortKeyPressed@).
 			WAIT 0.
-			UNTIL KUNIVERSE:TIMEWARP:ISSETTLED AND KUNIVERSE:TIMEWARP:RATE = 1 {WAIT 0.}
+			UNTIL (KUNIVERSE:TIMEWARP:ISSETTLED AND KUNIVERSE:TIMEWARP:RATE = 1) OR abortKeyPressed() {WAIT 0.}
 		} ELSE {
 			PRINT "The ejection burn is less than " + timeToString(planLeadTime) + " away - launching immediately.".
 		}
 	}
 
-	WAIT 5.
+	// A last few seconds to abort before the launch starts.
+	IF NOT abortRequested {
+		PRINT "Launching in 5 seconds. Press End to abort".
+		LOCAL launchStartTime IS TIME:SECONDS.
+		WAIT UNTIL TIME:SECONDS >= launchStartTime + 5 OR abortKeyPressed().
+	}
+}
 
+IF canLaunch AND NOT abortRequested {
 	// The plan has been used, so remove it from the ship's disk. The values are already in launchInclination and launchLAN.
 	IF usePlan DELETEPATH(planPath).
 
