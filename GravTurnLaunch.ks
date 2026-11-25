@@ -469,3 +469,15 @@ UNTIL mode > 6 {
 SET dontKillAfterScript TO NOT isStock().
 SET loopMessage TO endMessage.
 activateOmniAntennae().
+
+// Measure how fast the ship can turn now that the launch is over, and set the steering manager's stopping time from it.
+// This is only done in stock: the ship is only measured with the engines off, and outside of stock the engine is left lit,
+// because it may only be able to ignite once. On the ground (an aborted launch) nothing is measured.
+IF isStock() {
+	SET globalThrottle TO 0.
+	SET KUNIVERSE:TIMEWARP:WARP TO 0.
+	WAIT UNTIL KUNIVERSE:TIMEWARP:ISSETTLED AND THROTTLE = 0.
+	WAIT 1.		// let the thrust die away
+	CLEARSCREEN.
+	updateStoppingTime(TRUE, TRUE).
+}
