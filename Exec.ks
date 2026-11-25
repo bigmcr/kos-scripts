@@ -53,6 +53,55 @@ IF burnWithRCS {
 // Check that the burn can be done at all (enough delta V, engines that can ignite, engines facing forward) before anything starts
 IF errorCode = "None" AND NOT burnWithRCS SET errorCode TO burnFeasibilityError(usedStages, NEXTNODE:DELTAV:MAG).
 
+// Thrust limiters (engine burns). The limiters of the engines of every used stage are first set to 100 % for the highest, with the others in
+// the same ratio, each on a multiple of 0.5 % (normalizeThrustLimits, library.ks). A burn that is short at full thrust is then stretched by
+// lowering the limiters of the engines that fire first, to take limitedBurnTime: a burn of a few seconds is a burn that is a few tenths of a
+// second off at the end, and a small delta V is delivered more precisely over a longer time. That is only done when the whole burn is in one
+// stage. The limiters are put back to 100 % when the script ends (limitFraction is the highest limit that was used, as a fraction).
+LOCAL limitedBurnTime IS 10.												// s, the duration that a short burn is stretched to
+LOCAL limitFraction IS 1.
+IF errorCode = "None" AND NOT burnWithRCS AND usedStages:LENGTH > 0 {
+	LOCAL burnScale IS 1.
+	LOCAL highestLimit IS 0.
+	FOR eng IN usedStages[0]["Engines"] {
+		IF eng:THRUSTLIMIT > highestLimit SET highestLimit TO eng:THRUSTLIMIT.
+	}
+	IF highestLimit > 0 AND usedStages[0]["mDot"] > 0 {
+		LOCAL firstExhaustVelocity IS usedStages[0]["Isp"] * g_0.
+		LOCAL firstMassWet IS usedStages[0]["CurrentMass"].
+		LOCAL firstMassDry IS firstMassWet - usedStages[0]["FuelMass"].
+		LOCAL nodeDv IS NEXTNODE:DELTAV:MAG.
+		IF nodeDv <= firstExhaustVelocity * LN(firstMassWet / firstMassDry) {
+			// the burn time at the limiters' normalized setting (100 % for the highest)
+			LOCAL fullBurnTime IS firstMassWet * (1 - CONSTANT:E^(-nodeDv / firstExhaustVelocity)) / (usedStages[0]["mDot"] * 100 / highestLimit).
+			IF fullBurnTime < limitedBurnTime SET burnScale TO fullBurnTime / limitedBurnTime.
+		}
+	}
+	LOCAL limitsChanged IS FALSE.
+	// the first stage is last, so that engines that it shares with a later stage keep its limits
+	FOR stageIndex IN RANGE(usedStages:LENGTH - 1, -1) {
+		LOCAL stageScale IS 1.
+		IF stageIndex = 0 SET stageScale TO burnScale.
+		IF normalizeThrustLimits(usedStages[stageIndex]["Engines"], stageScale) SET limitsChanged TO TRUE.
+	}
+	IF limitsChanged {
+		// the thrust, the mass flow and the rest of what shipInfo holds come from the limits
+		updateShipInfo().
+		usedStages:CLEAR().
+		FOR stageNumber IN RANGE(shipInfo["NumberOfStages"] - 1, -1) {
+			IF shipInfo["Stage " + stageNumber]["Isp"] <> 0 usedStages:ADD(shipInfo["Stage " + stageNumber]).
+		}
+	}
+	IF burnScale < 1 {
+		SET highestLimit TO 0.
+		FOR eng IN usedStages[0]["Engines"] {
+			IF eng:THRUSTLIMIT > highestLimit SET highestLimit TO eng:THRUSTLIMIT.
+		}
+		SET limitFraction TO highestLimit / 100.
+		// (reported with the other statuses below)
+	}
+}
+
 // only run the script if there is a node to execute
 IF errorCode = "None" {
 	updateShipInfoCurrent(FALSE).
@@ -70,12 +119,28 @@ IF errorCode = "None" {
 	// and in the burn loop, and once it is pressed everything after it that waits or burns is skipped. The burn is cut at once.
 	resetAbort().
 	IF NOT suppressPrinting PRINT "Press End to abort".
+	// Every run prints the same status lines, in the same order (when printing is not suppressed): the limiters, the stages, the node's
+	// sphere of influence, the ullage, the turn, the burn solver, the burn altitude check, the alignment, the ignition, and the end of the
+	// burn. A step that is not done in this run prints a line that says so (the solver and the altitude check share one line), and
+	// warnings and the debug detail come in addition to them.
+	IF NOT suppressPrinting {
+		IF burnWithRCS PRINT "Thrust limiters: not used (RCS burn)".
+		ELSE IF limitFraction < 1 PRINT "Thrust limiters: short burn, at " + ROUND(limitFraction * 100, 1) + " %".
+		ELSE PRINT "Thrust limiters: 100 % (not a short burn)".
+	}
 
 	// The node is read through the safe accessors nodeETA() and nodeDeltaV() (library.ks), which give a fallback instead of the error that
 	// kOS cannot catch when the node has been deleted while the script waits or burns, and executeStop() (library.ks) makes a missing node a
 	// stop. NEXTNODE itself is only used where the node is known to be there. Nothing is remembered about the node, so a node that was moved or
 	// edited is not noticed: the script goes on with what it reads from it now.
 	LOCAL dV_req TO nodeDeltaV():MAG.
+
+	// Physics warp (the level that library.ks allows, physicsWarpPerm) changes the direction and sometimes the size of the node a little,
+	// which matters for a small burn, so there is no physics warp at all (not for the turns, the waits or the burn) when the node's delta V
+	// is under physicsWarpMinDv. Time warp on rails is not affected.
+	LOCAL physicsWarpMinDv IS 2.												// m/s
+	LOCAL physicsWarpLevel IS physicsWarpPerm.
+	IF dV_req < physicsWarpMinDv SET physicsWarpLevel TO 0.
 
 	LOCAL ullageStatus IS "not needed".
 
@@ -99,10 +164,7 @@ IF errorCode = "None" {
 	LOCAL a_i IS 0.															// initial acceleration at the start of the burn (m/s^2)
 	LOCAL a_f IS 0.															// final acceleration at the end of the burn (m/s^2)
 
-	IF NOT suppressPrinting {
-		IF usedStages:LENGTH <> 0 AND debug PRINT "There are a total of " + usedStages:LENGTH + " stages that can be used".
-		ELSE PRINT "There are a total of " + usedStages:LENGTH + " stage that can be used".
-	}
+	IF NOT suppressPrinting PRINT "Stages that can be used: " + usedStages:LENGTH.
 
 	LOCAL Isp IS 0.
 	LOCAL T IS 0.
@@ -181,6 +243,15 @@ IF errorCode = "None" {
 	// Chosen so that the taper does not run
 	// on for a second or more for thrust that is smaller than the burn's own error. The solver's simulation uses the same value.
 	LOCAL finishDv IS 0.25.														// the burn is finished when less than this is left (m/s)
+	// With the thrust limiters lowered (a short burn that is stretched, see limitFraction) the burn is finished on a smaller remaining delta
+	// V, in proportion to the thrust (not below finishDvFloor, which is about what the thrust delivers in a few iterations), and the taper
+	// takes longer. The end of the burn is off by about finishDv * (the delay of the delta V reading) / taperTime, so a longer taper is a
+	// smaller error. (The taper's own length in delta V already follows the thrust: it is taperTime seconds of the thrust that is there.)
+	LOCAL finishDvFloor IS 0.001.												// m/s
+	IF limitFraction < 1 {
+		SET finishDv TO MAX(finishDv * limitFraction, finishDvFloor).
+		SET taperTime TO 1.
+	}
 
 	SET a_i TO usedStages[lowestUsedStage]["Thrust"] / usedStages[lowestUsedStage]["CurrentMass"].
 	SET a_f TO usedStages[highestUsedStage]["Thrust"]/(usedStages[highestUsedStage]["CurrentMass"]*e^(-dV_req_stage_stg[highestUsedStage]/v_e_stg[highestUsedStage])).
@@ -203,6 +274,10 @@ IF errorCode = "None" {
 		warpToTime(nodePatchInfo["Start"] + 20, executeStop@).
 		SET laterPatchWarps TO laterPatchWarps + 1.
 	}
+	IF NOT suppressPrinting {
+		IF laterPatchWarps = 0 PRINT "Node sphere of influence: the ship's own".
+		ELSE PRINT "Node sphere of influence: reached".
+	}
 
 	// The orbits before the burn and where the node is, taken once, now. It is where the burn solver starts from, and it is compared with the
 	// orbit that the burn made. It is the same orbit whenever it is taken, and taking it here means that the node does not have to be read
@@ -220,8 +295,12 @@ IF errorCode = "None" {
 		IF ullageCheck["Message"] = "None" SET ullageStatus TO "ok".
 		ELSE {
 			SET ullageStatus TO "WARNING: " + ullageCheck["Message"].
-			IF NOT suppressPrinting PRINT "WARNING: " + ullageCheck["Message"] + "; an engine that needs the ullage may not ignite".
 		}
+	}
+	IF NOT suppressPrinting {
+		IF ullageStatus = "not needed" PRINT "Ullage: not needed".
+		ELSE IF ullageStatus = "ok" PRINT "Ullage: the RCS can fire for " + ullage + " s".
+		ELSE PRINT ullageStatus + "; an engine that needs the ullage may not ignite".
 	}
 
 	// The turn to the burn direction. A ship with little control authority can take a very long time to turn, so the
@@ -293,9 +372,10 @@ IF errorCode = "None" {
 	startRotationMonitor(turnVector, TIME:SECONDS + nodeETA(), turnStartUT, "", pointingError).
 	IF NOT suppressPrinting {
 		IF turnKnown {
-			IF debug PRINT "Turning " + ROUND(turnAngle, 1) + " deg: ideal " + timeToString(turnIdealTime, 1) + ", planned " + timeToString(turnPlannedTime, 1) + ", " + timeToString(MAX(nodeETA() - t_ign, 0), 1) + " before the ignition".
-			IF turnPlannedTime > nodeETA() - t_ign PRINT "WARNING: the turn of " + ROUND(turnAngle, 1) + " deg is planned to take " + timeToString(turnPlannedTime, 1) + " but the ignition is " + timeToString(MAX(nodeETA() - t_ign, 0), 1) + " away".
-		} ELSE IF debug PRINT "Turning " + ROUND(turnAngle, 1) + " deg: the ship's turn rate is not known".
+			PRINT "Turn: " + ROUND(turnAngle, 1) + " deg, planned " + timeToString(turnPlannedTime, 1) + ", " + timeToString(MAX(nodeETA() - t_ign, 0), 1) + " before the ignition".
+			IF debug PRINT "Turn: ideal time " + timeToString(turnIdealTime, 1).
+			IF turnPlannedTime > nodeETA() - t_ign PRINT "WARNING: the turn is planned to take longer than the time before the ignition".
+		} ELSE PRINT "Turn: " + ROUND(turnAngle, 1) + " deg, the ship's turn rate is not known".
 	}
 
 	// The burn solver (librarySolvers.ks, loaded by loop) simulates the burn and finds the ignition shift (later than the delta V centered
@@ -323,7 +403,13 @@ IF errorCode = "None" {
 	LOCAL solverSnapshot IS LEXICON().
 	LOCAL solverSpec IS LEXICON().
 	LOCAL solverSkip IS "None".
-	IF useBurnSolver AND t_total >= solverMinBurn AND nodeETA() - t_ign > solverMinTime AND NOT abortRequested {
+	LOCAL solverReport IS LIST().												// lines for Maneuver.csv about what the solver predicted for the end of the burn
+	LOCAL solverUsed IS FALSE.													// whether the solver's shift and tilts are used for the burn
+	IF NOT useBurnSolver SET solverSkip TO "it is turned off".
+	ELSE IF abortRequested SET solverSkip TO "the script was stopped".
+	ELSE IF t_total < solverMinBurn SET solverSkip TO "the burn is " + ROUND(t_total, 1) + " s, under " + solverMinBurn + " s".
+	ELSE IF nodeETA() - t_ign <= solverMinTime SET solverSkip TO "only " + ROUND(nodeETA() - t_ign) + " s before the ignition, under " + solverMinTime + " s".
+	ELSE {
 		SET solverSnapshot TO orbitSnapshot.
 		SET solverSkip TO burnSnapshotError(solverSnapshot, t_ign, t_total).
 		IF solverSkip = "None" {
@@ -332,16 +418,60 @@ IF errorCode = "None" {
 			LOCAL solverTime IS solverTimeEstimate(solverSpec).
 			IF nodeETA() - t_ign < 1.5 * solverTime SET solverSkip TO "it needs about " + ROUND(solverTime) + " s and the ignition is " + ROUND(nodeETA() - t_ign) + " s away".
 		}
-		IF solverSkip <> "None" AND NOT suppressPrinting PRINT "Burn solver skipped: " + solverSkip.
 	}
+	IF solverSkip <> "None" AND NOT suppressPrinting PRINT "Burn solver and burn altitude check skipped: " + solverSkip.
 	IF solverSpec:LENGTH > 0 AND solverSkip = "None" {
+		IF NOT suppressPrinting PRINT "Burn solver running".
 		LOCAL solution IS solveBurnCorrection(solverSpec, TIME:SECONDS + nodeETA() - t_ign).
 		// an aborted solver has results that mean nothing
 		IF NOT abortRequested {
 			// and so can a result that did not finish the burn, did not get close to the node's orbit, or has numbers that a burn does not need.
 			// The shift and tilts are then left at 0, as they are when the solver does not run.
 			LOCAL solverRejection IS solverResultError(solution, solverSpec, t_total).
+			// What the solver's simulated burn ends with, compared with the node's orbit, to check it against the orbit that the burn really
+			// made (the same comparison, "actual minus predicted", is at the end of BurnLog.csv): the semi-major axis and eccentricity of the
+			// orbit from the simulated end state, and its position and velocity errors against the node's state at the evaluation time.
+			LOCAL simBurn IS solution["burn"].
+			LOCAL simPosition IS simBurn["position"].
+			LOCAL simVelocity IS simBurn["velocity"].
+			LOCAL simMu IS solverSpec["mu"].
+			LOCAL simSMA IS 1 / (2 / simPosition:MAG - simVelocity:SQRMAGNITUDE / simMu).
+			LOCAL simEccentricity IS ((simPosition * (simVelocity:SQRMAGNITUDE - simMu / simPosition:MAG) - simVelocity * VDOT(simPosition, simVelocity)) / simMu):MAG.
+			LOCAL simNodeState IS solverSpec["predicted"].
+			solverReport:ADD("solver result used," + (solverRejection = "None") + "," + solverRejection).
+			solverReport:ADD("solver simulated end SMA minus node orbit SMA," + (simSMA - orbitSnapshot["Predicted"]["sma"]) + ",m").
+			solverReport:ADD("solver simulated end eccentricity minus node orbit," + (simEccentricity - orbitSnapshot["Predicted"]["ecc"])).
+			solverReport:ADD("solver simulated end position error and velocity error," + (simPosition - simNodeState[0]):MAG + "," + (simVelocity - simNodeState[1]):MAG + ",m and m/s").
+			solverReport:ADD("solver miss (position + 1000 x velocity) and at the guess," + solution["miss"] + "," + solution["startMiss"] + ",m").
+			solverReport:ADD("solver iterations, converged, time," + solution["iterations"] + "," + solution["converged"] + "," + ROUND(solution["seconds"], 1) + ",s").
+			solverReport:ADD("solver simulated burn time and end reason," + simBurn["burnTime"] + "," + simBurn["endReason"] + ",s").
+			// The guard: where the simulated burn goes lowest. This is a check of the plan, made before the ignition (the stop is the same as the
+			// abort key before the burn: the burn is skipped), not an abort of a burn that is under way. A burn that is a large part of an orbit and
+			// is held at a fixed direction pushes the ship down early in the burn, and should be split into passes (the burn planner). It does not
+			// apply to a ship whose orbit already goes into the atmosphere (or the surface) before the node, which is a deliberate burn (a landing
+			// or an aerobraking burn). Only the burn itself is simulated, not the orbit after it.
+			LOCAL guardBody IS solverSnapshot["Body"].
+			LOCAL lowestAltitude IS simBurn["lowestRadius"] - guardBody:RADIUS.
+			LOCAL guardHeight IS 0.
+			IF guardBody:ATM:EXISTS SET guardHeight TO guardBody:ATM:HEIGHT.
+			LOCAL oldPeriapsisAltitude IS solverSnapshot["Old"]["sma"] * (1 - solverSnapshot["Old"]["ecc"]) - guardBody:RADIUS.
+			solverReport:ADD("solver simulated lowest altitude during the burn and the atmosphere height," + lowestAltitude + "," + guardHeight + ",m").
+			IF lowestAltitude < guardHeight AND oldPeriapsisAltitude >= guardHeight {
+				LOCAL guardText IS "the burn is predicted to go down to " + ROUND(lowestAltitude / 1000, 1) + " km altitude (inside the " + ROUND(guardHeight / 1000, 1) + " km atmosphere)".
+				IF lowestAltitude < 0 SET guardText TO "the burn is predicted to hit the surface of " + guardBody:NAME.
+				ELSE IF guardHeight <= 0 SET guardText TO "the burn is predicted to go below the surface of " + guardBody:NAME.
+				SET abortNote TO guardText + "; split it into passes".
+				SET abortRequested TO TRUE.
+				solverReport:ADD("burn not started," + abortNote).
+				IF NOT suppressPrinting PRINT "Burn not started: " + abortNote.
+			}
+			IF NOT abortRequested AND NOT suppressPrinting {
+				IF lowestAltitude < guardHeight PRINT "Burn altitude check: not applied, the orbit already goes into the atmosphere".
+				ELSE PRINT "Burn altitude check: passed, lowest point " + ROUND(lowestAltitude / 1000, 1) + " km".
+			}
 			IF solverRejection = "None" {
+				IF NOT suppressPrinting PRINT "Burn solver result: used".
+				SET solverUsed TO TRUE.
 				SET ignitionShift TO solution["shift"].
 				SET t_ign TO t_ign - ignitionShift.								// a smaller delay means a later ignition
 				SET steerTilt TO solution["tilt"].
@@ -371,8 +501,14 @@ IF errorCode = "None" {
 		logMe:ADD("ign_after_t_0,").				// 10
 		logMe:ADD("dV_before_t_0,").				// 11
 		logMe:ADD("t_burn_req,").					// 12
+		logMe:ADD("thrust limit (highest engine)," + ROUND(limitFraction * 100, 1) + ",%").
+		logMe:ADD("taperTime," + taperTime + ",s").
+		logMe:ADD("finishDv," + finishDv + ",m/s").
 		logMe:ADD("t_total," + t_total + ",s").
 		logMe:ADD("t_ign," + t_ign + ",s").
+		IF solverSkip <> "None" solverReport:ADD("solver skipped," + solverSkip).
+		ELSE IF solverReport:LENGTH = 0 solverReport:ADD("solver not run").
+		FOR solverLine IN solverReport logMe:ADD(solverLine).
 		logMe:ADD("ignitionShift," + ignitionShift + ",s").
 		logMe:ADD("steerTilt," + steerTilt + ",rad").
 		logMe:ADD("steerTilt2," + steerTilt2 + ",rad").
@@ -407,7 +543,7 @@ IF errorCode = "None" {
 		SET logMe[8] TO logMe[8] + "m/s,".
 		SET logMe[9] TO logMe[9] + "m/s,".
 		SET logMe[11] TO logMe[11] + "m/s,".
-		SET logMe[12] TO logMe[12] + "m/s,".
+		SET logMe[12] TO logMe[12] + "s,".
 		FOR message IN logMe {
 			LOG message TO "0:Maneuver.csv".
 		}
@@ -430,6 +566,7 @@ IF errorCode = "None" {
 			IF useRCSforRotation PRINT "Will use RCS for rotation".
 			ELSE PRINT "Will not use RCS for rotation".
 			IF ullage <> 0 PRINT "Will fire RCS for " + ullage + " seconds for ullage".
+			ELSE PRINT "Will not fire RCS for ullage".
 			IF faceSun PRINT "Will turn to face the Sun".
 			ELSE PRINT "Will not turn to face the Sun".
 			PRINT "Burn duration: " + timeToString(t_total , 2).
@@ -438,9 +575,9 @@ IF errorCode = "None" {
 
 	// if called to face the sun and the node is more than 60 minutes away, turn to face the primary.
 	// turn on physics warp for the rotation if allowed
-	IF physicsWarpPerm {
+	IF physicsWarpLevel {
 		SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
-		SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
+		SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpLevel.
 	}
 	IF turnToSun {
 		LOCAL faceBody IS BODY("Sun").
@@ -496,6 +633,7 @@ IF errorCode = "None" {
 	LOCAL rateAtAlignment IS SHIP:ANGULARVEL:MAG.								// rad/s (all of it, the roll too) when the first wait ended, for Maneuver.csv
 	LOCAL turnRateAtAlignment IS VXCL(SHIP:FACING:FOREVECTOR, SHIP:ANGULARVEL):MAG.	// the same without the roll about the ship's axis
 	IF NOT suppressPrinting {
+		IF alignEnd = "aligned" OR alignEnd = "settled" PRINT "Aligned with the burn direction (" + alignEnd + ")".
 		IF alignEnd = "gave up" PRINT "The rotation (" + ROUND(rateAtAlignment * CONSTANT:RADTODEG, 3) + " deg/s) did not fall under " + ROUND(settledRate * CONSTANT:RADTODEG, 3) + " deg/s in " + ROUND(alignGiveUp) + " s of being aligned, going on".
 		IF alignEnd = "ignition time" PRINT "WARNING: the ship was not aligned and settled by the ignition time (" + ROUND(VANG(SHIP:FACING:VECTOR, globalSteer), 2) + " deg off, " + ROUND(rateAtAlignment * CONSTANT:RADTODEG, 3) + " deg/s)".
 	}
@@ -538,9 +676,9 @@ IF errorCode = "None" {
 		warpToTime(TIME:SECONDS + nodeETA() - MAX(MAX(1.5*t_ign, 30), t_ign + turnLead), executeStop@).
 		IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(nodeETA() - t_ign, 2).
 		IF NOT abortRequested SET globalSteer TO nodeDeltaV().
-		IF physicsWarpPerm {
+		IF physicsWarpLevel {
 			SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
-			SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
+			SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpLevel.
 		}
 		// when turned to face the Sun, the ship now has to turn back to the burn direction before the burn starts
 		// (a warp that was started by hand is ended in time for the ignition, in this wait and the next: stopWarpBefore)
@@ -566,9 +704,9 @@ IF errorCode = "None" {
 			IF NOT abortRequested SET globalSteer TO nodeDeltaV().
 		} ELSE {IF debug AND NOT suppressPrinting PRINT "Aligning with the maneuver node (again). Burn ETA: " + timeToString(nodeETA() - t_ign, 2).}
 
-		IF physicsWarpPerm {
+		IF physicsWarpLevel {
 			SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
-			SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
+			SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpLevel.
 		}
 		//now we need to wait until the burn vector and ship's facing are aligned
 		// (the ullage starts a second earlier than it needs to, and the burn is prepared after this wait, so that the RCS is not started
@@ -631,7 +769,10 @@ IF errorCode = "None" {
 	// can reach the node's value while some delta V still shows as remaining, and burning the rest of it
 	// leaves the orbit too big. So in the last energyPhaseDv of the burn, the burn
 	// ends as soon as the orbit energy crosses the energy of the node's orbit. The side it starts from tells which way to cross.
-	LOCAL energyCutoff IS TRUE.												// FALSE ends the burn on the remaining delta V only
+	// Not when the solver's result is used: the solver simulates the whole burn, phase error included, and its thrust direction and ignition
+	// time already put the orbit on the node's. The orbit energy of a long, low thrust burn swings a long way from the node's value in the
+	// middle of it (a plane change), and crosses it before the burn is done, so the cutoff would end such a burn early.
+	LOCAL energyCutoff IS NOT solverUsed.									// FALSE ends the burn on the remaining delta V only
 	LOCAL energyPhaseDv IS 20.												// the energy test is only used when less than this is left (m/s)
 	LOCAL energyMinError IS 20.												// an energy error smaller than this (J/kg, about 0.01 m/s) is noise
 	LOCAL bodyMu IS SHIP:BODY:MU.
@@ -665,10 +806,10 @@ IF errorCode = "None" {
 		SET burnStartTime TO MISSIONTIME.
 		SET lastTickUT TO TIME:SECONDS.
 		SET lastThrustUT TO TIME:SECONDS.
-		IF debug AND NOT suppressPrinting PRINT "Ignition, " + ROUND(t_ign - nodeETA(), 2) + " s after the planned time".
-		IF physicsWarpPerm AND t_total > 30 {									// only actually use physics warp if the burn duration is greater than 30 seconds
+		IF NOT suppressPrinting PRINT "Ignition, " + ROUND(t_ign - nodeETA(), 2) + " s after the planned time".
+		IF physicsWarpLevel AND t_total > 30 {									// only actually use physics warp if the burn duration is greater than 30 seconds
 			SET KUNIVERSE:TIMEWARP:MODE TO "PHYSICS".
-			SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpPerm.
+			SET KUNIVERSE:TIMEWARP:WARP TO physicsWarpLevel.
 		}
 	}
 
@@ -867,16 +1008,22 @@ IF errorCode = "None" {
 
 	updateShipInfo().													// update the shipInfo structure with current status of the ship
 
+	// The thrust limiters go back to 100 % for the highest (they keep their ratio). Not if the ship staged: the engines may be gone.
+	IF limitFraction < 1 AND executedStages = 0 normalizeThrustLimits(usedStages[0]["Engines"]).
+
 	SET RCS TO oldRCS.													// restore the previous RCS state
 	SET SAS TO oldSAS.													// restore the previous SAS state
 	SET SHIP:CONTROL:NEUTRALIZE TO TRUE.								// release all controls to the pilot
 	IF abortRequested {
 		setBurnThrottle(0).
 		SET KUNIVERSE:TIMEWARP:WARP TO 0.
-		SET loopMessage TO "Burn stopped (" + stopReason() + ").".
-		IF HASNODE SET loopMessage TO loopMessage + " " + distanceToString(nodeDeltaV():MAG, 1) + "/s left.".		// (a node that is gone has none left to report)
+		IF HASNODE SET loopMessage TO "Aborted, " + distanceToString(nodeDeltaV():MAG, 1) + "/s left.".
+		ELSE SET loopMessage TO "Node removed.".											// (a node that is gone has none left to report)
 		IF NOT suppressPrinting PRINT "Burn stopped: " + stopReason().
-	} ELSE SET loopMessage TO "Node executed correctly! " + distanceToString(nodeDeltaV():MAG, 1) + "/s left.".
+	} ELSE IF endReason = "orbit energy reached" {
+		SET loopMessage TO "Orbit energy reached, " + distanceToString(nodeDeltaV():MAG, 1) + "/s left.".
+	} ELSE SET loopMessage TO "Done, " + distanceToString(nodeDeltaV():MAG, 1) + "/s left.".
+	IF NOT abortRequested AND NOT suppressPrinting PRINT "Burn ended (" + endReason + "): " + loopMessage.
 } ELSE {
 	SET loopMessage TO errorCode.
 	PRINT errorCode.

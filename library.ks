@@ -1364,7 +1364,7 @@ FUNCTION engineStats {
 	IF NOT engineList:EMPTY {
 		FOR eng IN engineList {
 			SET mDot_cur TO mDot_cur + eng:MASSFLOW    * 1000.
-			SET mDot_max TO mDot_max + eng:MAXMASSFLOW * 1000.
+			SET mDot_max TO mDot_max + eng:MAXMASSFLOW * 1000 * eng:THRUSTLIMIT / 100.		// MAXMASSFLOW ignores the thrust limiter, POSSIBLETHRUST does not
 			SET F_cur 	 TO F_cur + eng:THRUST         * 1000.
 			SET F_max 	 TO F_max + eng:POSSIBLETHRUST * 1000.
 		}
@@ -2751,10 +2751,12 @@ FUNCTION warpToValuePhysics
 // that ran this one can look at it after it returns.
 GLOBAL abortRequested IS FALSE.
 GLOBAL abortKey IS TERMINAL:INPUT:ENDCURSOR.
+GLOBAL abortNote IS "".												// why a script set abortRequested itself, for stopReason ("" if it did not)
 
 // Clears the abort request.
 FUNCTION resetAbort {
 	SET abortRequested TO FALSE.
+	SET abortNote TO "".
 }
 
 // Returns TRUE if the abort key has been pressed (see above), FALSE if not. It is generic: it knows nothing about what the script that
@@ -2792,6 +2794,7 @@ FUNCTION executeStop {
 
 // What a stop was for (string)
 FUNCTION stopReason {
+	IF abortNote <> "" RETURN abortNote.
 	IF NOT HASNODE RETURN "the maneuver node was removed".
 	RETURN "aborted by the operator".
 }
