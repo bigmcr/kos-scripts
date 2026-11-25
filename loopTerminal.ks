@@ -617,8 +617,31 @@ FUNCTION enginesCells {
 
 // ---- Scripts mode -----------------------------------------------------------------------------------
 // One row for each script that is in the archive's build, in the manifest, or on the local drive, with whether the
-// local copy is up to date, and some information about the files. The scripts that need attention come first. There
-// is only room for some of them on the screen, so a page number can be added to the mode: "Scripts 2".
+// local copy is up to date, and some information about the files. There is also one row for each other file on the
+// local drive (saved .json data, the manifest and so on). The scripts are in the order that they are installed (see
+// installOrder in boot.ks), then any that are not in the build, then the other files. There is only room for some of
+// them on the screen, so a page number can be added to the mode: "Scripts 2".
+
+// Local File Sizes
+// Returns every file on the local drive, including the ones in folders (lexicon). The key is the path from the root of
+// the drive, such as "history.json" or "boot/boot.ks", and the value is the size in bytes.
+FUNCTION localFileSizes {
+	LOCAL fileSizes IS LEXICON().
+	LOCAL toVisit IS LIST(LEXICON("prefix", "", "contents", CORE:VOLUME:FILES:VALUES)).
+	UNTIL toVisit:LENGTH = 0 {
+		LOCAL folder IS toVisit[0].
+		toVisit:REMOVE(0).
+		FOR eachItem IN folder["contents"] {
+			LOCAL itemPath IS folder["prefix"] + eachItem:NAME.
+			IF eachItem:ISFILE {
+				SET fileSizes[itemPath] TO eachItem:SIZE.
+			} ELSE {
+				toVisit:ADD(LEXICON("prefix", itemPath + "/", "contents", eachItem)).
+			}
+		}
+	}
+	RETURN fileSizes.
+}
 
 // Scripts Page
 // Returns the page number at the end of loopMode, such as 2 for "Scripts 2", or 1 if there is none (scalar).
@@ -650,6 +673,7 @@ FUNCTION scriptLine {
 	PARAMETER marker, scriptName, statusText, form, localSize, archiveSize, loadedText.
 	LOCAL shownName IS scriptName.
 	IF shownName:LENGTH > 23 SET shownName TO shownName:SUBSTRING(0, 23).
+	IF form:LENGTH > 5 SET form TO form:SUBSTRING(0, 5).
 	RETURN marker + shownName:PADRIGHT(23) + " " + statusText:PADRIGHT(10) + " " + form:PADRIGHT(5) + " " +
 	       localSize:PADLEFT(7) + " " + archiveSize:PADLEFT(8) + " " + loadedText.
 }
@@ -666,7 +690,8 @@ FUNCTION scriptsCells {
 	LOCAL kosChanged IS FALSE.
 	IF state["hasBuild"] AND manifest:ISTYPE("Lexicon") SET kosChanged TO manifest["kos"] <> state["build"]["kos"].
 
-	// every script that is in the build, in the manifest, or on the local drive
+	// every script that is in the build, in the manifest, or on the local drive, and every other file on the local drive
+	LOCAL localSizes IS localFileSizes().
 	LOCAL names IS LIST().
 	FOR eachName IN buildFiles:KEYS {
 		names:ADD(eachName).
@@ -674,21 +699,22 @@ FUNCTION scriptsCells {
 	FOR eachName IN manifestFiles:KEYS {
 		IF NOT names:CONTAINS(eachName) names:ADD(eachName).
 	}
-	FOR eachFile IN CORE:VOLUME:FILES:KEYS {
-		IF eachFile:ENDSWITH(".ks") OR eachFile:ENDSWITH(".ksm") {
-			IF NOT names:CONTAINS(baseName(eachFile)) names:ADD(baseName(eachFile)).
-		}
+	FOR eachPath IN localSizes:KEYS {
+		// the .ks and .ksm files in the root of the drive are scripts, which are listed without their extensions
+		IF eachPath:FIND("/") = -1 AND (eachPath:ENDSWITH(".ks") OR eachPath:ENDSWITH(".ksm")) {
+			IF NOT names:CONTAINS(baseName(eachPath)) names:ADD(baseName(eachPath)).
+		} ELSE IF NOT names:CONTAINS(eachPath) names:ADD(eachPath).
 	}
 
-	// how each one compares to the build
-	LOCAL groups IS LIST("CHANGED", "NEW", "REMOVED", "local only", "installed", "current").
+	// how each one compares to the build. "file" is a file that is not a script from the archive.
 	LOCAL counts IS LEXICON().
-	FOR eachGroup IN groups {
-		SET counts[eachGroup] TO 0.
+	FOR eachStatus IN LIST("CHANGED", "NEW", "REMOVED", "file", "local only", "installed", "current") {
+		SET counts[eachStatus] TO 0.
 	}
 	LOCAL statusOf IS LEXICON().
 	FOR eachName IN names {
 		LOCAL statusText IS "local only".
+		IF localSizes:HASKEY(eachName) SET statusText TO "file".
 		IF NOT state["hasBuild"] {
 			// without the build (not connected, or it has not been made) there is nothing to compare to
 			IF manifestFiles:HASKEY(eachName) SET statusText TO "installed".
@@ -706,12 +732,37 @@ FUNCTION scriptsCells {
 		SET statusOf[eachName] TO statusText.
 		SET counts[statusText] TO counts[statusText] + 1.
 	}
-	// the ones that need attention first, and otherwise in the order that they are on the archive
-	LOCAL ordered IS LIST().
-	FOR eachGroup IN groups {
-		FOR eachName IN names {
-			IF statusOf[eachName] = eachGroup ordered:ADD(eachName).
+	// The scripts in the order that they are installed, then any that are not in the build (they are not installed), then
+	// the other files. Without the build, every script is sorted, by the size of its local copy.
+	LOCAL toSort IS LIST().
+	LOCAL sortEntries IS LEXICON().
+	LOCAL notInBuild IS LIST().
+	LOCAL otherFiles IS LIST().
+	FOR eachName IN names {
+		IF statusOf[eachName] = "file" {
+			otherFiles:ADD(eachName).
+		} ELSE IF buildFiles:HASKEY(eachName) {
+			toSort:ADD(eachName).
+			SET sortEntries[eachName] TO buildFiles[eachName].
+		} ELSE IF state["hasBuild"] {
+			notInBuild:ADD(eachName).
+		} ELSE {
+			LOCAL totalSize IS 0.
+			FOR eachFile IN installedFiles(eachName) {
+				SET totalSize TO totalSize + OPEN(eachFile):SIZE.
+			}
+			toSort:ADD(eachName).
+			SET sortEntries[eachName] TO LEXICON("size", totalSize).
 		}
+	}
+	// without the archive, only the scripts that a .ks file on the local drive runs can be found for a tier
+	LOCAL tiers IS priorityTiers().
+	LOCAL ordered IS installOrder(toSort, sortEntries, tiers).
+	FOR eachName IN notInBuild {
+		ordered:ADD(eachName).
+	}
+	FOR eachName IN otherFiles {
+		ordered:ADD(eachName).
 	}
 
 	// the part of the list that is on this page
@@ -729,8 +780,9 @@ FUNCTION scriptsCells {
 		ELSE SET buildText TO state["buildStale"].
 	}
 	cells:ADD(screenCell(0, 0, "Archive: " + archiveText + "   Build: " + buildText + "   kOS " + kosVersionText)).
-	cells:ADD(screenCell(0, 1, "Scripts: " + ordered:LENGTH + "   changed " + counts["CHANGED"] + "   new " + counts["NEW"] +
-	                           "   removed " + counts["REMOVED"] + "   reboot pending " + rebootPending:LENGTH)).
+	cells:ADD(screenCell(0, 1, "Scripts: " + (ordered:LENGTH - counts["file"]) + "  files " + counts["file"] +
+	                           "  changed " + counts["CHANGED"] + "  new " + counts["NEW"] +
+	                           "  removed " + counts["REMOVED"] + "  reboot pending " + rebootPending:LENGTH)).
 	cells:ADD(screenCell(0, 2, "Local drive: ", {RETURN CORE:VOLUME:FREESPACE + " of " + CORE:VOLUME:CAPACITY + " bytes free".}, 31)).
 	cells:ADD(screenCell(46, 2, "Page " + page + " of " + pageCount + "  (mode,Scripts 2)")).
 	cells:ADD(screenCell(0, 3, scriptLine(" ", "Name", "Status", "Form", "Local", "Archive", "Loaded"))).
@@ -742,7 +794,12 @@ FUNCTION scriptsCells {
 		LOCAL localFiles IS installedFiles(eachName).
 		LOCAL localSize IS "-".
 		LOCAL form IS "-".
-		IF localFiles:LENGTH > 0 {
+		IF localSizes:HASKEY(eachName) {
+			SET localSize TO localSizes[eachName]:TOSTRING.
+			// the extension, if there is one after the last folder in the path
+			LOCAL dotIndex IS eachName:FINDLAST(".").
+			IF dotIndex > eachName:FINDLAST("/") SET form TO eachName:SUBSTRING(dotIndex, eachName:LENGTH - dotIndex).
+		} ELSE IF localFiles:LENGTH > 0 {
 			LOCAL totalSize IS 0.
 			FOR eachFile IN localFiles {
 				SET totalSize TO totalSize + OPEN(eachFile):SIZE.
@@ -757,22 +814,33 @@ FUNCTION scriptsCells {
 		LOCAL loadedText IS "".
 		IF rebootPending:CONTAINS(eachName) SET loadedText TO "REBOOT".
 		ELSE IF loadedVersions:HASKEY(eachName) SET loadedText TO "loaded".
+		// the priority of a script: * critical, > high, + medium, - normal. Other files have none.
 		LOCAL marker IS " ".
-		IF isCriticalFile(eachName) SET marker TO "*".
+		IF statusOf[eachName] <> "file" {
+			SET marker TO "-".
+			IF isCriticalFile(eachName) {
+				SET marker TO "*".
+			} ELSE IF tiers:HASKEY(eachName) {
+				IF tiers[eachName] = 1 SET marker TO ">".
+				ELSE SET marker TO "+".
+			}
+		}
 		cells:ADD(screenCell(0, rowNumber, scriptLine(marker, eachName, statusOf[eachName], form, localSize, archiveSize, loadedText))).
 		SET rowNumber TO rowNumber + 1.
 	}
-	cells:ADD(screenCell(0, rowNumber, "* critical file    loaded = in memory    REBOOT = updated since it was loaded")).
+	cells:ADD(screenCell(0, rowNumber, "* critical  > high  + medium  - normal   loaded = in memory   REBOOT = updated")).
 	RETURN cells.
 }
 
 // Scripts Signature
-// Returns a string that changes when something that this mode shows changes, other than the free space.
+// Returns a string that changes when something that this mode shows changes. The free space is included so that the
+// list is made again when a file on the local drive is added, removed or changes size.
 FUNCTION scriptsSignature {
 	LOCAL manifest IS readManifest().
 	LOCAL manifestCount IS 0.
 	IF manifest:ISTYPE("Lexicon") SET manifestCount TO manifest["files"]:LENGTH.
-	RETURN loopMode + "|" + rebootPending:LENGTH + "|" + loadedVersions:LENGTH + "|" + manifestCount + "|" + connectionToKSC().
+	RETURN loopMode + "|" + rebootPending:LENGTH + "|" + loadedVersions:LENGTH + "|" + manifestCount + "|" + connectionToKSC() +
+	       "|" + CORE:VOLUME:FREESPACE.
 }
 // ---- Universe and Info modes ------------------------------------------------------------------------
 // Information about the universe and rocket part types that kOS has loaded.
