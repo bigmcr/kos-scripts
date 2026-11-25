@@ -354,7 +354,8 @@ FUNCTION stagedBurnTimes {
 //			parameters (list of numbers, given to the delegates)
 // Returns a lexicon of "position" and "velocity" (at the end of the flight, relative to the body), "clock" (s, the clock at the end),
 //		"mass" (kg), "endTime" (s, the clock when the control finished or the event happened), "burnTime" (s from the first thrust to
-//		endTime, including the time with no thrust while staging), "endReason", "steps" and "stagesBurned" (how many stages thrusted)
+//		endTime, including the time with no thrust while staging), "endReason", "steps", "stagesBurned" (how many stages thrusted)
+//		and "lowestRadius" (m, the smallest distance from the body's center at the end of any step)
 FUNCTION simulateTrajectory {
 	PARAMETER model.
 	PARAMETER parameters.
@@ -385,6 +386,7 @@ FUNCTION simulateTrajectory {
 	LOCAL thrustStart IS initial[3].
 	LOCAL shipMass IS stageList[0]["wetMass"].
 	LOCAL level IS 0.															// the thrust now, as a fraction of full thrust
+	LOCAL lowestRadius IS shipPosition:MAG.										// the smallest distance from the body's center that the flight reaches
 
 	LOCAL ending IS FALSE.
 	LOCAL endReason IS "step limit".
@@ -490,6 +492,8 @@ FUNCTION simulateTrajectory {
 		SET clock TO clock + stepSize.
 		SET level TO newLevel.
 		SET steps TO steps + 1.
+		LOCAL stepRadius IS shipPosition:MAG.
+		IF stepRadius < lowestRadius SET lowestRadius TO stepRadius.
 
 		IF hasEvent {
 			SET state["position"] TO shipPosition.
@@ -509,7 +513,8 @@ FUNCTION simulateTrajectory {
 	IF NOT ending SET endTime TO clock.
 
 	RETURN LEXICON("position", shipPosition, "velocity", shipVelocity, "clock", clock, "mass", shipMass, "endTime", endTime,
-					"burnTime", endTime - thrustStart, "endReason", endReason, "steps", steps, "stagesBurned", stageIndex + 1).
+					"burnTime", endTime - thrustStart, "endReason", endReason, "steps", steps, "stagesBurned", stageIndex + 1,
+					"lowestRadius", lowestRadius).
 }
 
 // The node burn model, part 1: where the flight starts. The parameters are LIST(shift, tilt1, tilt2). The ship is on the orbit
@@ -607,8 +612,8 @@ FUNCTION nodeBurnResidual {
 //			shift (scalar, s, later ignition than Exec's own)
 //			tilt1, tilt2 (scalars, radians, see burnSteering)
 // Returns a lexicon of "position" and "velocity" (at the evaluation time), "endTime" (s after the node that the
-//		burn ended), "burnTime" (s of the burn, including the time with no thrust while staging), "endReason", "steps" and
-//		"stagesBurned" (how many stages thrusted)
+//		burn ended), "burnTime" (s of the burn, including the time with no thrust while staging), "endReason", "steps",
+//		"stagesBurned" (how many stages thrusted) and "lowestRadius" (m from the body's center, during the burn)
 FUNCTION simulateBurn {
 	PARAMETER spec.
 	PARAMETER shift.
@@ -618,7 +623,7 @@ FUNCTION simulateBurn {
 	LOCAL raw IS simulateTrajectory(spec, LIST(shift, tilt1, tilt2)).
 	LOCAL final IS keplerPropagate(raw["position"], raw["velocity"], spec["evaluationTime"] - raw["clock"], spec["mu"]).
 	RETURN LEXICON("position", final[0], "velocity", final[1], "endTime", raw["endTime"], "burnTime", raw["burnTime"],
-					"endReason", raw["endReason"], "steps", raw["steps"], "stagesBurned", raw["stagesBurned"]).
+					"endReason", raw["endReason"], "steps", raw["steps"], "stagesBurned", raw["stagesBurned"], "lowestRadius", raw["lowestRadius"]).
 }
 
 // The residual of a simulated node burn (see nodeBurnResidual), with the parameters as separate numbers
