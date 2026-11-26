@@ -14,7 +14,8 @@ GLOBAL criticalFileNames IS LIST("library", "libraryTransfer", "libraryPID", "li
 // list names the scripts of a tier. The scripts that they run (with RUNPATH, RUNONCEPATH or RUN ONCE) are in the same
 // tier, unless they are in a higher one already. See priorityTiers.
 LOCAL highPriorityScripts IS LIST("Exec").
-LOCAL mediumPriorityScripts IS LIST("Inc", "docking", "GravTurnLaunch", "transferCalc").
+LOCAL mediumPriorityScripts IS LIST("Inc", "docking", "GravTurnLaunch", "transferCalc", "multiPassBurn").
+
 // Room that the low priority scripts leave free on the local drive, for the .json files that scripts save there (the
 // command history, tuning, plans and so on). The .json files already on the drive count toward it. The critical files
 // and the high and medium priority scripts may use this room.
@@ -476,12 +477,13 @@ FUNCTION priorityTiers {
 // Install Order
 // Passed the following:
 //			names (list of script names), buildFiles (lexicon, the build record's files)
+//			knownTiers (lexicon from priorityTiers, or FALSE to have them worked out here)
 // Returns the following:
 //			the names in the order to install them: boot, the critical files, the scripts of the high priority tier, the
 //			medium tier, and then the others. Within a tier the smallest are first, so that the most of them fit if
 //			there is not room for all (list)
 FUNCTION installOrder {
-	PARAMETER names, buildFiles.
+	PARAMETER names, buildFiles, knownTiers IS FALSE.
 	LOCAL ordered IS LIST().
 	IF names:CONTAINS("boot") ordered:ADD("boot").
 	FOR eachName IN criticalFileNames {
@@ -489,10 +491,14 @@ FUNCTION installOrder {
 	}
 	// the tiers need the sources to be read, so they are only worked out if there is a script that is not critical
 	LOCAL tiers IS LEXICON().
-	FOR eachName IN names {
-		IF NOT isCriticalFile(eachName) {
-			SET tiers TO priorityTiers().
-			BREAK.
+	IF knownTiers:ISTYPE("Lexicon") {
+		SET tiers TO knownTiers.
+	} ELSE {
+		FOR eachName IN names {
+			IF NOT isCriticalFile(eachName) {
+				SET tiers TO priorityTiers().
+				BREAK.
+			}
 		}
 	}
 	// one list for each tier: high, medium and low
@@ -783,7 +789,9 @@ FUNCTION syncScripts {
 			toInstall:ADD(eachName).
 		}
 	}
-	SET toInstall TO installOrder(toInstall, buildFiles).
+	LOCAL tiers IS LEXICON().
+	IF toInstall:LENGTH > 0 SET tiers TO priorityTiers().
+	SET toInstall TO installOrder(toInstall, buildFiles, tiers).
 
 	// the critical files fit together, or nothing is changed
 	LOCAL shortBytes IS criticalShortage(toInstall, buildFiles).

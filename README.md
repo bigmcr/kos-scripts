@@ -24,6 +24,8 @@ Type a script name (without the file extension) and press Enter. Arguments follo
 Exec                  run Exec.ks, which executes the next maneuver node
 Circ, Apo             run Circ.ks with the argument "Apo"
 Hohmann, target       run Hohmann.ks with the argument "target"
+multiPassBurn, 120, 0, 0, 1, T   list the ways to split the last node into burns, one per orbit (see BurnPlannerPlan.md)
+multiPassBurn                    run again after a pass has been flown: it finds the saved plan and re-solves the passes that are left
 ```
 
 Arguments are converted for you: `true`/`T` and `false`/`F` become booleans, numbers become numbers, and anything else stays text. Many scripts take optional parameters. Check the `PARAMETER` lines at the top of each script to see what it accepts.
@@ -67,6 +69,8 @@ Use `mode, <name>` to choose what is shown below the main area:
 | Universe | `Universe`, `World`, `settings` |
 | Help | `info`, `help` |
 
+The Scripts mode lists the scripts, with whether each local copy is up to date, and every other file on the local drive (such as saved `.json` data), with its size. Scripts are listed in the order they are installed (see [Keeping scripts up to date](#keeping-scripts-up-to-date)), marked `*` critical, `>` high priority, `+` medium priority and `-` normal. Scripts that are not in the archive's build come after them, and the other files are last.
+
 `mode, Default` goes back to the default display.
 
 ## Keeping scripts up to date
@@ -77,6 +81,8 @@ The ship runs its own local copies of the scripts, so editing a file on the arch
 - `update` copies changed and new scripts from that build to the ship (`update, T` copies everything again). A script that was already loaded needs a `reboot` before the new version is used.
 - `reinstall` deletes the ship's local scripts and installs them all again from the archive on the next boot. It also deletes saved `.json` data, but keeps the command history. `reinstall,T` deletes everything on the local drive, the history included.
 
-If the ship's drive is too small for every script, they are installed in priority order: `boot` and the critical files first (all of them or none), then `Exec`, then `Inc`, `docking`, `GravTurnLaunch` and `transferCalc` with the scripts they run, and then everything else, smallest first. The lists are at the top of `boot.ks` (`highPriorityScripts` and `mediumPriorityScripts`).
+If the ship's drive is too small for every script, they are installed in priority order: `boot` and the critical files first (all of them or none), then `Exec`, then `Inc`, `docking`, `GravTurnLaunch`, `transferCalc` and `multiPassBurn` with the scripts they run, and then everything else, smallest first. The lists are at the top of `boot.ks` (`highPriorityScripts` and `mediumPriorityScripts`).
+
+The normal priority scripts (the last group) also leave 40,000 bytes of the drive for the `.json` files that scripts save, such as the command history, docking tuning and burn plans. Data files already on the drive count toward that room, and about 2,000 bytes more are left for the manifest. A script that is already installed is still updated if the new version is no larger. The amount is `dataBufferBytes` in `boot.ks`.
 
 `reboot` restarts the kOS processor, which runs `boot.ks` again.

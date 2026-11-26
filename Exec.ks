@@ -286,6 +286,7 @@ IF errorCode = "None" {
 	// as a stopped script, since executeStop has made the missing node a stop.)
 	LOCAL orbitSnapshot IS emptyOrbitSnapshot().
 	IF HASNODE SET orbitSnapshot TO nodeOrbitSnapshot(NEXTNODE).
+	LOCAL burnNodeUT IS TIME:SECONDS + nodeETA().									// when the node is, for the hook at the end (finishMultiPassPlan)
 
 	// The ullage (RealFuels, see the parameter ullage) needs the RCS to fire forward, with propellant for it: it is checked now, while there is
 	// time to do something about it. A burn does not have to be stopped for it, since not every engine needs the ullage, but one that
@@ -1024,6 +1025,10 @@ IF errorCode = "None" {
 		SET loopMessage TO "Orbit energy reached, " + distanceToString(nodeDeltaV():MAG, 1) + "/s left.".
 	} ELSE SET loopMessage TO "Done, " + distanceToString(nodeDeltaV():MAG, 1) + "/s left.".
 	IF NOT abortRequested AND NOT suppressPrinting PRINT "Burn ended (" + endReason + "): " + loopMessage.
+	// a saved multiPassBurn plan is finished when its last pass has been flown (library.ks)
+	IF NOT abortRequested AND finishMultiPassPlan(burnNodeUT) {
+		IF NOT suppressPrinting PRINT "That was the last pass of the multi-pass plan: the saved plan is deleted".
+	}
 } ELSE {
 	SET loopMessage TO errorCode.
 	PRINT errorCode.

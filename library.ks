@@ -25,6 +25,7 @@ GLOBAL shipInfo IS Lexicon().
 GLOBAL rotationLastAccel IS 0.				// Last measured angular acceleration (rad/s²), the lower of pitch and yaw. 0 if never measured.
 GLOBAL rotationLastMass IS 1.				// SHIP:MASS (t) when rotationLastAccel was measured. Used to rescale it after staging.
 GLOBAL rotationLastRCS IS FALSE.			// Whether RCS was on when rotationLastAccel was measured (the RCS thrusters add to the torque). Recorded only; the measurement does not change it.
+GLOBAL multiPassPlanPath IS "1:multiPassBurn.json".	// The plan that multiPassBurn.ks saves on the local drive (see finishMultiPassPlan)
 GLOBAL rotationFile IS "1:rotation.json".	// On the local drive, so a reboot can skip the measurement. See saveRotationData and loadRotationData.
 
 LOCAL partListTree IS LEXICON().
@@ -1382,6 +1383,38 @@ FUNCTION engineStats {
 								 "mDot", mDot_cur,
 								 "thrustMax", F_max,
 								 "mDotMax", mDot_max).
+}
+
+// Normalize Thrust Limits
+// Sets the thrust limiters of a list of engines so that the highest is 100 % times scaleFactor and the others keep their ratio to it, each
+// rounded to the nearest 0.5 % (the part menu rounds a limit that way whenever it is viewed, which would change the limit by itself).
+// An engine with a limit above 0 is never set below 0.5 %. An engine whose limit is 0 is left alone.
+// Passed the following
+//			list of engines (list containing type "engine", unitless)
+//			scale factor (scalar, 0 to 1, optional, 1)
+// Returns TRUE if any limit was changed.
+FUNCTION normalizeThrustLimits {
+	PARAMETER engineList.
+	PARAMETER scaleFactor IS 1.
+
+	LOCAL highestLimit IS 0.
+	FOR eng IN engineList {
+		IF eng:THRUSTLIMIT > highestLimit SET highestLimit TO eng:THRUSTLIMIT.
+	}
+	LOCAL anyChanged IS FALSE.
+	IF highestLimit > 0 {
+		FOR eng IN engineList {
+			LOCAL oldLimit IS eng:THRUSTLIMIT.
+			IF oldLimit > 0 {
+				LOCAL newLimit IS MAX(ROUND(oldLimit / highestLimit * 100 * scaleFactor * 2) / 2, 0.5).
+				IF ABS(newLimit - oldLimit) > 0.0001 {
+					SET eng:THRUSTLIMIT TO newLimit.
+					SET anyChanged TO TRUE.
+				}
+			}
+		}
+	}
+	RETURN anyChanged.
 }
 
 // Calculate Engine Capabilities
@@ -2775,6 +2808,25 @@ FUNCTION abortKeyPressed {
 // The kind of burn: TRUE for an RCS burn, where the thrust is the forward translation control of the ship and the main throttle stays 0.
 GLOBAL burnWithRCS IS FALSE.
 GLOBAL burnLevel IS 0.												// the level that setBurnThrottle last set (0 to 1), for the logs
+
+// The hook that Exec calls when a burn has finished: if multiPassBurn.ks has a saved plan (multiPassPlanPath) and the burn was the last
+// pass of it, the plan is done and the file is deleted, so that the next run of multiPassBurn plans from a node again.
+// Passed the following
+//			UT of the node that was burned (s)
+// Returns TRUE if the file was deleted
+FUNCTION finishMultiPassPlan {
+	PARAMETER burnNodeUT.
+	IF NOT EXISTS(multiPassPlanPath) RETURN FALSE.
+	LOCAL savedData IS READJSON(multiPassPlanPath).
+	IF NOT savedData:ISTYPE("Lexicon") RETURN FALSE.
+	IF NOT savedData:HASKEY("passes") RETURN FALSE.
+	IF savedData["passes"]:LENGTH = 0 RETURN FALSE.
+	LOCAL lastPassTime IS savedData["passes"][savedData["passes"]:LENGTH - 1]["time"].
+	// a pass is flown within a few seconds of its node (a replan may move the last one up to 30 s from the final time)
+	IF ABS(burnNodeUT - lastPassTime) > 60 RETURN FALSE.
+	DELETEPATH(multiPassPlanPath).
+	RETURN TRUE.
+}
 
 // Sets the level of the burn (0 to 1): the throttle of the main engines, or, for an RCS burn, the forward translation control.
 FUNCTION setBurnThrottle {
