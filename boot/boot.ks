@@ -15,6 +15,12 @@ GLOBAL criticalFileNames IS LIST("library", "libraryTransfer", "libraryPID", "li
 // tier, unless they are in a higher one already. See priorityTiers.
 LOCAL highPriorityScripts IS LIST("Exec").
 LOCAL mediumPriorityScripts IS LIST("Inc", "docking", "GravTurnLaunch", "transferCalc").
+// Room that the low priority scripts leave free on the local drive, for the .json files that scripts save there (the
+// command history, tuning, plans and so on). The .json files already on the drive count toward it. The critical files
+// and the high and medium priority scripts may use this room.
+LOCAL dataBufferBytes IS 40000.
+// Left free along with it, because the manifest is written after the scripts are installed.
+LOCAL manifestRoomBytes IS 2000.
 
 // How scripts get from the archive to a ship
 // -------------------------------------------
@@ -394,21 +400,35 @@ FUNCTION installedFiles {
 	RETURN found.
 }
 
+// Data File Bytes
+// Returns the total size of the .json files on the local drive (scalar).
+FUNCTION dataFileBytes {
+	LOCAL total IS 0.
+	FOR item IN CORE:VOLUME:FILES:VALUES {
+		IF item:ISFILE {
+			IF item:EXTENSION = "json" SET total TO total + item:SIZE.
+		}
+	}
+	RETURN total.
+}
+
 // Install Script
 // Puts one script from the archive's build onto the local drive, replacing any old version. If there is room, the new
 // file is copied next to the old one first, so that an interruption leaves a complete file, and then swapped in.
 // Passed the following:
 //			scriptName (string), entry (lexicon, the build record's entry for it)
+//			keepFree (scalar, bytes to leave free afterward). A new version that is no larger than the old one is
+//			installed even if that much is not free, because it takes no more room.
 // Returns the following:
 //			whether or not the script was installed. It is not if there is not enough room for it (bool)
 FUNCTION installScript {
-	PARAMETER scriptName, entry.
+	PARAMETER scriptName, entry, keepFree IS 0.
 	LOCAL oldFiles IS installedFiles(scriptName).
 	LOCAL oldSize IS 0.
 	FOR eachFile IN oldFiles {
 		SET oldSize TO oldSize + OPEN(eachFile):SIZE.
 	}
-	IF entry["size"] > CORE:VOLUME:FREESPACE + oldSize RETURN FALSE.
+	IF entry["size"] > CORE:VOLUME:FREESPACE + oldSize - keepFree AND (keepFree = 0 OR entry["size"] > oldSize) RETURN FALSE.
 	LOCAL finalPath IS "1:" + entry["name"].
 	IF entry["size"] <= CORE:VOLUME:FREESPACE {
 		LOCAL temporaryPath IS finalPath + ".new".
@@ -791,7 +811,12 @@ FUNCTION syncScripts {
 	FOR eachName IN toInstall {
 		SET position TO position + 1.
 		IF forceAll PRINT "Installing " + position + " of " + toInstall:LENGTH + ": " + eachName:PADRIGHT(30) AT (0, 3).
-		IF installScript(eachName, buildFiles[eachName]) {
+		// the low priority scripts leave room for the data files
+		LOCAL keepFree IS 0.
+		IF NOT (isCriticalFile(eachName) OR tiers:HASKEY(eachName)) {
+			SET keepFree TO MAX(0, dataBufferBytes - dataFileBytes()) + manifestRoomBytes.
+		}
+		IF installScript(eachName, buildFiles[eachName], keepFree) {
 			SET installed[eachName] TO buildFiles[eachName]["fingerprint"].
 			IF hadBefore:HASKEY(eachName) SET updatedCount TO updatedCount + 1.
 			ELSE SET newCount TO newCount + 1.

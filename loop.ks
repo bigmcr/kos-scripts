@@ -134,10 +134,11 @@ LOCAL historyLoadingPath IS "1:history.loading".
 //			nothing
 FUNCTION saveHistory {
 	IF EXISTS(historyPath) DELETEPATH(historyPath).
-	// the JSON file is larger than the text in it, so this is a generous estimate of its size
-	LOCAL estimatedSize IS 300.
+	// The JSON file is much larger than the text in it (about 106 bytes more for each command), so this is a
+	// generous estimate of its size. The text is counted twice, for characters that are written as two.
+	LOCAL estimatedSize IS 200.
 	FOR eachCommand IN previousCommands {
-		SET estimatedSize TO estimatedSize + eachCommand:LENGTH * 2 + 50.
+		SET estimatedSize TO estimatedSize + eachCommand:LENGTH * 2 + 110.
 	}
 	IF estimatedSize < CORE:VOLUME:FREESPACE WRITEJSON(previousCommands, historyPath).
 }

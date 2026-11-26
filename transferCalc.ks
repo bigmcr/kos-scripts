@@ -623,10 +623,11 @@ IF errorCode = "None" {
 			IF debug debugLogValues("Launch plan", launchPlan).
 
 			LOCAL planFile IS "1:transferPlan.json".
-			IF VOLUME(1):FREESPACE < 4000 {
+			// the old plan is removed first, so that its room counts. The file is about 5.3 kB.
+			IF EXISTS(planFile) DELETEPATH(planFile).
+			IF VOLUME(1):FREESPACE < 6000 {
 				PRINT "Local disk full: plan not saved.".
 			} ELSE {
-				IF EXISTS(planFile) DELETEPATH(planFile).
 				WRITEJSON(launchPlan, planFile).
 				PRINT "Saved launch plan: " + planFile.
 			}

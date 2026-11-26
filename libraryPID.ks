@@ -328,9 +328,9 @@ FUNCTION PIDAxesGetGains {
 //        there is replaced.
 //   context (Lexicon, default empty) - anything the caller wants stored with the tuning, to check when it is read back (for
 //        example a description of the ship). It must be made only of numbers, strings, Booleans, Lists and Lexicons.
-//   minFreeSpace (Scalar, bytes, default 3000) - the least free space left on the local volume, after removing the old file,
+//   minFreeSpace (Scalar, bytes, default 9000) - the least free space left on the local volume, after removing the old file,
 //        for which the file is written at all. kOS stops the script if a write does not fit, so this is checked first. The file
-//        is about 3 kB, because kOS writes JSON with a lot of overhead for every List and Lexicon.
+//        is about 8.4 kB for three axes, because kOS writes JSON with a lot of overhead for every value, List and Lexicon.
 // Outputs:
 //   Boolean - TRUE if the file was written, FALSE if there was not enough free space or it does not exist afterwards.
 // Side Effects:
@@ -340,7 +340,7 @@ FUNCTION PIDAxesSaveTuning {
     PARAMETER axes.
     PARAMETER filePath.
     PARAMETER context IS LEXICON().
-    PARAMETER minFreeSpace IS 3000.
+    PARAMETER minFreeSpace IS 9000.
 
     LOCAL kus IS LIST().
     LOCAL pus IS LIST().

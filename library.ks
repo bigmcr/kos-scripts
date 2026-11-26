@@ -259,12 +259,12 @@ FUNCTION turnTimeFor {
 	RETURN 2 * SQRT(turnRadians / accel).																// never reaches the limit
 }
 
-// Saves the last turn-rate measurement to the local drive (about 80 bytes), along with the ship's name and part count so that
+// Saves the last turn-rate measurement to the local drive (about 1.2 kB as JSON), along with the ship's name and part count so that
 // loadRotationData can tell when it no longer describes this ship. Skipped if the drive is too full.
 FUNCTION saveRotationData {
 	IF rotationLastAccel <= 0 RETURN.
 	IF EXISTS(rotationFile) DELETEPATH(rotationFile).
-	IF CORE:VOLUME:FREESPACE < 300 RETURN.
+	IF CORE:VOLUME:FREESPACE < 1500 RETURN.
 	WRITEJSON(LEXICON("Accel", rotationLastAccel, "Mass", rotationLastMass, "RCS", rotationLastRCS, "Name", SHIP:NAME, "Parts", SHIP:PARTS:LENGTH), rotationFile).
 }
 
