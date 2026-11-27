@@ -114,15 +114,6 @@ IF NOT isStock() {
 	RCS OFF.
 }
 
-// Engine staging - this should drop any used stage
-WHEN MAXTHRUST = 0 THEN {
-	PRINT "Staging from max thrust".
-	stageFunction().
-}
-
-// Note that staging on resources is intentionally not implemented.
-// Often, the landing legs are on the external tanks which run dry, so we shouldn't jetison the landing legs
-
 FUNCTION advanceMode {
 	SET mode TO mode + 1.
 }
@@ -144,12 +135,9 @@ IF connectionToKSC() {
 
 UNTIL mode > 4 {
 	updateShipInfoCurrent(FALSE).
-	// This drops any empty fuel tanks
-	IF (shipInfo["CurrentStage"]["ResourceMass"] < 1.0 ) {
-		PRINT "Staging from resources".
-		IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
-		ELSE stageFunction().
-	}
+	// Engine staging: drops spent engines and empty tanks (stageIfNeeded, library.ks)
+	LOCAL stageReason IS stageIfNeeded().
+	IF stageReason <> "None" PRINT "Staging from " + stageReason.
 
 	PRINT "Mode " + mode AT (40, 3).
 	SET aboveGround TO heightAboveGround().

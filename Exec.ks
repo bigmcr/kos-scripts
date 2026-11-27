@@ -764,6 +764,8 @@ IF errorCode = "None" {
 	LOCAL lastThrustUT IS TIME:SECONDS.										// the last time that the engines were seen thrusting
 	LOCAL stageGapStart IS -1.												// when the thrust stopped for the staging in progress, -1 if none
 	LOCAL stageGaps IS LIST().												// the measured time with no thrust at each staging (s)
+	LOCAL noThrustStart IS -1.												// when the burn was found to have no thrust and nothing to stage, -1 if not
+	LOCAL noThrustLimit IS 5.												// s with no thrust and nothing to stage that ends the burn
 
 	// Energy cutoff. The remaining delta V that the node reports is a velocity difference at the node time, so it also contains the
 	// position (phase) error of the finite burn and does not go to zero when the orbit is right. The orbit energy
@@ -871,6 +873,14 @@ IF errorCode = "None" {
 				IF stageGapStart < 0 SET stageGapStart TO lastThrustUT.				// a second STAGE command in a row belongs to the same gap
 				PRINT "Staging from " + stageReason.
 			}
+			// out of thrust with nothing that staging would help with (stageIfNeeded sets shipEnginesThrusting)
+			IF burnLevel > 0 AND stageReason = "None" AND NOT shipEnginesThrusting AND NOT done {
+				IF noThrustStart < 0 SET noThrustStart TO nowUT.
+				ELSE IF nowUT - noThrustStart > noThrustLimit {
+					SET done TO TRUE.
+					SET endReason TO "no thrust and nothing to stage".
+				}
+			} ELSE SET noThrustStart TO -1.
 		}
 
 		// the staging above can take a while, so the remaining delta V is read again

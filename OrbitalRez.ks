@@ -474,9 +474,9 @@ IF (mode <> "Done") {
 					IF MAXTHRUST > 0 {
 						SET everThrust TO TRUE.
 						SET engineLit TO TRUE.
-						SET noThrustSince TO -1.
 					}
 					LOCAL stageReason IS stageIfNeeded(everThrust, NOT needUllage).
+					IF shipEnginesThrusting SET noThrustSince TO -1.
 					IF stageReason <> "None" AND needUllage {
 						SET stageUllageStart TO TIME:SECONDS.
 						RCS ON.
@@ -487,7 +487,7 @@ IF (mode <> "Done") {
 						// the engines of the new stage have to be seen working before the next stage can be dropped
 						SET everThrust TO FALSE.
 						SET noThrustSince TO -1.
-					} ELSE IF MAXTHRUST = 0 AND NOT everThrust {
+					} ELSE IF NOT shipEnginesThrusting {
 						IF noThrustSince < 0 SET noThrustSince TO TIME:SECONDS.
 						ELSE IF TIME:SECONDS - noThrustSince > 5 {
 							SET mode TO "Done".

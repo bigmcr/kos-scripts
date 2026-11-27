@@ -84,8 +84,8 @@ setLockedSteering(TRUE).
 
 // Engine staging - this should drop any used stage
 WHEN MAXTHRUST = 0 THEN {
-	PRINT "Staging from max thrust".
-	stageFunction().
+	LOCAL stageReason IS stageIfNeeded(TRUE, TRUE, FALSE).
+	IF stageReason <> "None" PRINT "Staging from " + stageReason.
 }
 
 IF connectionToKSC() LOG "Time,Horizontal Distance,Altitude,Height Above Ground,Mode,Vertical Speed,Horizontal Speed,TWR,Engine Burn Time,Pitch,Thrust,Mass" TO "0:altitude.csv".

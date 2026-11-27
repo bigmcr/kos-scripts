@@ -46,7 +46,6 @@ LOCAL PITCH_PID IS PIDLOOP(2.0, 0.25, 2.0, -5, 5).	// PID loop to control pitch
 LOCAL gravTurnStart TO 1000.						// The altitude of the start of the gravity turn
 LOCAL gravTurnExponent TO 0.740740741.	// The exponent used in the calculation of the gravity turn
 LOCAL endMessage IS "Blank".						// Used to determine the reason for exiting the loop
-LOCAL engineList IS LIST().							// Used to list all of the engines for staging
 LOCAL pitchValue IS 0.									// Used for calculating the desired pitch of the craft
 
 // Maximum number of G's that the ship should go under for passenger comfort and safety
@@ -356,32 +355,9 @@ UNTIL mode > 6 {
 		} ELSE SET globalThrottle TO 1.0.
 		SET globalThrottle TO MIN( MAX( globalThrottle, 0.05), 1.0).
 
-		// Engine staging
-		// this should drop any LF main stage and allow the final orbiter to take off
-		IF (MAXTHRUST = 0) {
-			PRINT "Staging from max thrust".
-			IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
-			ELSE stageFunction().
-		}
-
-		// this should drop any spent boosters
-		SET engineList TO LIST().
-		LIST ENGINES IN engineList.
-		FOR eng IN engineList {
-			IF eng:FLAMEOUT AND eng:IGNITION {
-				PRINT "Staging from flameout".
-				IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
-				ELSE stageFunction().
-				BREAK.
-			}
-		}
-
-		// This drops any empty fuel tanks
-		IF (shipInfo["CurrentStage"]["ResourceMass"] < 1.0 ) {
-			PRINT "Staging from resources".
-			IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
-			ELSE stageFunction().
-		}
+		// Engine staging: drops spent boosters, stages and empty drop tanks (stageIfNeeded, library.ks)
+		LOCAL stageReason IS stageIfNeeded().
+		IF stageReason <> "None" PRINT "Staging from " + stageReason.
 
 		IF useYawPID {
 			SET yawSpeed_PID:SETPOINT TO yawPos_PID:UPDATE(TIME:SECONDS, targetPlaneDistance).

@@ -141,30 +141,12 @@ UNTIL mode > 3 {
 
 		logPhysics("0:" + SHIP:NAME + " VacLaunch Physics.csv").
 
-		// Engine staging
-		// this should drop any LF main stage and allow the final orbiter to take off
-		IF (MAXTHRUST = 0) {
-			PRINT "Staging from max thrust".
-			IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
-			ELSE stageFunction().
-		}
-		
-		// this should drop any boosters
-		LOCAL myVariable TO LIST().
-		LIST ENGINES IN myVariable.
-		FOR eng IN myVariable {
-			IF eng:FLAMEOUT AND eng:IGNITION {
-				PRINT "Staging from flameout".
-				IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
-				ELSE stageFunction().
-				BREAK.
-			}
-		}
-		
-		IF (shipInfo["CurrentStage"]["ResourceMass"] < 1.0 ) {
-			PRINT "Staging from resources".
-			stageFunction().
-		}
+		// logPhysics only updates shipInfo when there is a connection, and the staging check needs the resources
+		IF NOT connectionToKSC() updateShipInfoCurrent(FALSE).
+
+		// Engine staging: drops spent boosters, stages and empty drop tanks (stageIfNeeded, library.ks)
+		LOCAL stageReason IS stageIfNeeded().
+		IF stageReason <> "None" PRINT "Staging from " + stageReason.
 
 		// Horizontal flight
 		IF mode = 2 {

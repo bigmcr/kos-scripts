@@ -28,8 +28,7 @@ GLOBAL rotationLastRCS IS FALSE.			// Whether RCS was on when rotationLastAccel 
 GLOBAL multiPassPlanPath IS "1:multiPassBurn.json".	// The plan that multiPassBurn.ks saves on the local drive (see finishMultiPassPlan)
 GLOBAL rotationFile IS "1:rotation.json".	// On the local drive, so a reboot can skip the measurement. See saveRotationData and loadRotationData.
 
-LOCAL partListTree IS LEXICON().
-LOCAL decouplerList IS LIST().
+GLOBAL shipEnginesThrusting IS TRUE.			// Whether any engine that can push the ship was lit and not flamed out when stageIfNeeded last looked.
 
 updateShipInfo().
 
@@ -53,133 +52,169 @@ FUNCTION updateFacingVectors {
 	SET guidanceVectorFace:SHOW TO NOT MAPVIEW AND STEERINGMANAGER:ENABLED.
 }
 
-FUNCTION isDecoupler {
+// Marks a part and every part above it in the part tree.
+// Passed the following
+//			part (part)
+//			marks (lexicon, part UIDs as keys), which is added to
+FUNCTION markBranch {
+	PARAMETER startPart.
+	PARAMETER marks.
+	LOCAL markedPart IS startPart.
+	UNTIL marks:HASKEY(markedPart:UID) {
+		marks:ADD(markedPart:UID, TRUE).
+		IF markedPart:HASPARENT SET markedPart TO markedPart:PARENT.
+	}
+}
+
+// Whether a decoupler or separator drops away from the ship when it fires. kOS reports every one as staying with its parent (its
+// DECOUPLEDIN is that of its parent), but it separates from what is attached to its explosive node:
+//		an omni decoupler (stack separators and heat shields) separates on both sides, so it drops away
+//		a stack decoupler whose explosive node faces its parent drops away with what is below it
+//		a stack decoupler (or an engine plate) whose explosive node faces away from its parent stays
+//		a radial decoupler, whose explosive node is the surface that is attached to the parent, drops away
+// The settings are read from the part module's hidden fields. A decoupler whose node cannot be read is taken to drop away.
+// Passed the following
+//			part (part, with ModuleDecouple or ModuleAnchoredDecoupler, and a parent)
+FUNCTION decouplerDrops {
 	PARAMETER examinePart.
-	LOCAL returnValue IS examinePart:MODULES:CONTAINS("ModuleDecouple") OR examinePart:MODULES:CONTAINS("ModuleAnchoredDecoupler").
-	FOR eachResource IN examinePart:RESOURCES {
-		IF (eachResource:NAME = "Ablator") SET returnValue TO FALSE.
+	LOCAL moduleName IS "ModuleDecouple".
+	IF NOT examinePart:HASMODULE(moduleName) SET moduleName TO "ModuleAnchoredDecoupler".
+	LOCAL decoupleModule IS examinePart:GETMODULE(moduleName).
+	IF decoupleModule:HASHIDDENFIELD("isOmniDecoupler") {
+		IF ("" + decoupleModule:GETHIDDENFIELD("isOmniDecoupler")) = "True" RETURN TRUE.
 	}
-	RETURN returnValue.
+	LOCAL nodeName IS "".
+	IF decoupleModule:HASHIDDENFIELD("explosiveNodeID") SET nodeName TO "" + decoupleModule:GETHIDDENFIELD("explosiveNodeID").
+	IF nodeName <> "top" AND nodeName <> "bottom" RETURN TRUE.
+	// a part's own up axis, which its top node is on, is the forward vector of its FACING
+	LOCAL nodeDirection IS examinePart:FACING:FOREVECTOR.
+	IF nodeName = "bottom" SET nodeDirection TO -nodeDirection.
+	RETURN VDOT(examinePart:PARENT:POSITION - examinePart:POSITION, nodeDirection) > 0.
 }
 
-FUNCTION mergeLists {
-	PARAMETER list1.
-	PARAMETER list2.
-	LOCAL returnList IS LIST().
-
-	FOR eachIndex IN RANGE(0, list1:LENGTH) returnList:ADD(list1[eachIndex]).
-	FOR eachIndex IN RANGE(0, list2:LENGTH) returnList:ADD(list2[eachIndex]).
-
-	RETURN returnList.
-}
-
-FUNCTION swap {
-	PARAMETER list1.
-	PARAMETER index1.
-	PARAMETER index2.
-	LOCAL temporary IS list1[index1].
-	SET list1[index1] TO list1[index2].
-	SET list1[index2] TO temporary.
-	RETURN list1.
-}
-
-FUNCTION insertionSort {
-	PARAMETER sortMeParam.
-	PARAMETER GRTFunction.
-	LOCAL sortMe IS sortMeParam:COPY().
-	LOCAL i IS 1.
-	LOCAL j IS 0.
-	UNTIL NOT (i < sortMe:LENGTH) {
-		SET j TO i.
-		UNTIL NOT ((j > 0) AND (GRTFunction(sortMe[j - 1], sortMe[j]))) {
-			swap(sortMe, j, j - 1).
-			SET j TO j - 1.
+// The stage number in which a part leaves the ship, -1 for never. That is PART:DECOUPLEDIN, except for a decoupler that has not fired
+// yet and drops away itself when it does (see decouplerDrops): it leaves in its own STAGE.
+// Passed the following
+//			part (part)
+FUNCTION partDropStage {
+	PARAMETER examinePart.
+	LOCAL dropStage IS examinePart:DECOUPLEDIN.
+	IF examinePart:STAGE > dropStage AND examinePart:STAGE < STAGE:NUMBER AND examinePart:HASPARENT {
+		IF examinePart:HASMODULE("ModuleDecouple") OR examinePart:HASMODULE("ModuleAnchoredDecoupler") {
+			IF decouplerDrops(examinePart) SET dropStage TO examinePart:STAGE.
 		}
-		SET i TO i + 1.
 	}
-	RETURN sortMe.
+	RETURN dropStage.
 }
 
-FUNCTION listArrayGRT {
-	PARAMETER list1.
-	PARAMETER list2.
-	RETURN (list1[0]:STAGE > list2[0]:STAGE).
-}
-
-FUNCTION listParts {
-	LOCAL decouplerPartList IS LIST().
-	SET decouplerList TO LIST().
-
-	SET partListTree TO LEXICON().
-	decouplerPartList:ADD(SHIP:PARTS[0]).
-	FOR eachPart IN SHIP:PARTS {
-		IF isDecoupler(eachPart) {
-			decouplerPartList:ADD(eachPart).
+// Group Ship Parts
+// Sorts the parts of the ship into stages by the stage number in which they leave the ship (see partDropStage). Stage 0 holds the parts
+// that never leave it (-1), and the highest stage holds the parts that are dropped first.
+// Cargo is a payload that this ship carries and never uses, such as a satellite with its own engines. It is
+//		a branch of the part tree that starts where the drop stage differs from the parent's, that has a command module (a probe core or a
+//		pod) and no engine that can push this ship, or
+//		a part with the name tag "cargo" (to mark a payload that is only held by docking ports, or that has no command module),
+// and everything below either of those. A cargo part is listed in the stage that carries it, which is the stage of the part that it
+// hangs from, because its mass is carried until then.
+// An engine can push this ship if it lights before the stage that decouples it (STAGE > DECOUPLEDIN). Separation motors, which
+// light in the same stage that drops them, and the engines of payloads cannot.
+// Assumes that the root part is in the part of the ship that is kept.
+// Returns a lexicon of
+//		"Groups" - list, one lexicon for each stage in the order of the stage numbers, of "DecoupledIn" (scalar), "Parts" (all of the
+//				parts carried in this stage), "CargoParts" (those that are cargo) and "FuelParts" (the parts whose resources, engines and
+//				RCS this ship can use, which leaves out cargo and engines that cannot push the ship)
+//		"CargoUIDs" - lexicon, the UID of every cargo part as the key
+FUNCTION groupShipParts {
+	LOCAL allParts IS SHIP:PARTS.
+	LOCAL commandBranches IS LEXICON().			// the parts that have a command module at or below them
+	LOCAL engineBranches IS LEXICON().			// the parts that have an engine that can push the ship at or below them
+	FOR eachPart IN allParts {
+		IF eachPart:MODULES:CONTAINS("ModuleCommand") markBranch(eachPart, commandBranches).
+		IF eachPart:TYPENAME = "Engine" {
+			IF eachPart:STAGE > eachPart:DECOUPLEDIN markBranch(eachPart, engineBranches).
 		}
 	}
 
-	FOR eachIndex IN RANGE(0, decouplerPartList:LENGTH) {
-		decouplerList:ADD(LIST()).
-		IF eachIndex <> 0 decouplerList[eachIndex]:ADD(decouplerPartList[eachIndex]).
-		recursivePartSort(decouplerPartList[eachIndex], eachIndex).
-	}
+	LOCAL cargoHosts IS LEXICON().					// cargo part UID to the drop stage of the stage that carries it
+	LOCAL dropStageOf IS LEXICON().					// part UID to the stage number in which the part leaves the ship
+	LOCAL groupsByDrop IS LEXICON().				// drop stage to the group of parts
+	LOCAL dropStages IS LIST().						// the keys of groupsByDrop, in ascending order
 
-	LOCAL hasDuplicates IS TRUE.
-	UNTIL hasDuplicates = FALSE {
-		FOR eachIndex IN RANGE(0, decouplerList:LENGTH) {
-			FOR eachSubIndex IN RANGE(0, decouplerList:LENGTH) {
-				IF eachSubIndex > eachIndex {
-					IF (decouplerList[eachIndex][0]:STAGE = decouplerList[eachSubIndex][0]:STAGE) {
-						decouplerList:INSERT(eachIndex + 1, mergeLists(decouplerList[eachIndex], decouplerList[eachSubIndex])).
-						decouplerList:REMOVE(eachIndex).
-						decouplerList:REMOVE(eachSubIndex).
-						BREAK.
-					}
-				}
+	// from the root down, so that a part's parent is always sorted before the part
+	LOCAL pendingParts IS LIST(SHIP:ROOTPART).
+	LOCAL pendingIndex IS 0.
+	UNTIL pendingIndex >= pendingParts:LENGTH {
+		LOCAL thisPart IS pendingParts[pendingIndex].
+		LOCAL ownDrop IS partDropStage(thisPart).
+		dropStageOf:ADD(thisPart:UID, ownDrop).
+		LOCAL hostStage IS ownDrop.
+		LOCAL isCargo IS FALSE.
+		IF thisPart:HASPARENT {
+			LOCAL parentPart IS thisPart:PARENT.
+			IF cargoHosts:HASKEY(parentPart:UID) {
+				SET isCargo TO TRUE.
+				SET hostStage TO cargoHosts[parentPart:UID].
+			} ELSE IF thisPart:TAG = "cargo" OR (ownDrop <> dropStageOf[parentPart:UID] AND commandBranches:HASKEY(thisPart:UID) AND NOT engineBranches:HASKEY(thisPart:UID)) {
+				SET isCargo TO TRUE.
+				SET hostStage TO dropStageOf[parentPart:UID].
 			}
 		}
 
-		SET hasDuplicates TO FALSE.
-		FOR eachIndex IN RANGE(0, decouplerList:LENGTH) {
-			FOR eachSubIndex IN RANGE(0, decouplerList:LENGTH) {
-				IF eachSubIndex > eachIndex {
-					LOCAL eachIndexStage IS (decouplerList[eachIndex])[0]:STAGE.
-					LOCAL eachSubIndexStage IS (decouplerList[eachSubIndex])[0]:STAGE.
-					IF eachIndexStage = eachSubIndexStage SET hasDuplicates TO TRUE.
-				}
+		IF NOT groupsByDrop:HASKEY(hostStage) {
+			groupsByDrop:ADD(hostStage, LEXICON("DecoupledIn", hostStage, "Parts", LIST(), "CargoParts", LIST(), "FuelParts", LIST())).
+			LOCAL insertAt IS 0.
+			UNTIL insertAt >= dropStages:LENGTH {
+				IF dropStages[insertAt] > hostStage BREAK.
+				SET insertAt TO insertAt + 1.
 			}
+			dropStages:INSERT(insertAt, hostStage).
 		}
+		LOCAL partGroup IS groupsByDrop[hostStage].
+		partGroup["Parts"]:ADD(thisPart).
+		IF isCargo {
+			cargoHosts:ADD(thisPart:UID, hostStage).
+			partGroup["CargoParts"]:ADD(thisPart).
+		} ELSE {
+			LOCAL usable IS TRUE.
+			IF thisPart:TYPENAME = "Engine" SET usable TO thisPart:STAGE > thisPart:DECOUPLEDIN.
+			IF usable partGroup["FuelParts"]:ADD(thisPart).
+		}
+
+		FOR eachChild IN thisPart:CHILDREN pendingParts:ADD(eachChild).
+		SET pendingIndex TO pendingIndex + 1.
 	}
 
-	LOCAL smallPartList IS LIST().
-	LOCAL addedStages IS 0.
-
-	FOR eachIndex IN RANGE(0, decouplerList:LENGTH) {
-		smallPartList:ADD(decouplerList[eachIndex]).
-	}
-
-	SET smallPartList TO insertionSort(smallPartList, listArrayGRT@).
-
-	FOR eachIndex IN RANGE(0, smallPartList:LENGTH) {
-		partListTree:ADD("Stage " + addedStages, smallPartList[eachIndex]).
-		SET addedStages TO addedStages + 1.
-	}
+	LOCAL sortedGroups IS LIST().
+	FOR eachStage IN dropStages sortedGroups:ADD(groupsByDrop[eachStage]).
+	RETURN LEXICON("Groups", sortedGroups, "CargoUIDs", cargoHosts).
 }
 
-FUNCTION recursivePartSort {
-	PARAMETER examinePart.
-	PARAMETER decouplerListIndex.
-	PARAMETER currentStage IS 0.
-	IF currentStage > 50 {
-		RETURN.
-	}
+// Whether an engine can ever push this ship: it lights before the stage that decouples it, and it is not part of a cargo (see
+// groupShipParts). A lit engine's STAGE is the current stage number, which is above the DECOUPLEDIN of everything still attached.
+// Uses shipInfo["CargoUIDs"], from updateShipInfo.
+FUNCTION isShipEngine {
+	PARAMETER examineEngine.
+	RETURN examineEngine:STAGE > examineEngine:DECOUPLEDIN AND NOT shipInfo["CargoUIDs"]:HASKEY(examineEngine:UID).
+}
 
-	IF NOT isDecoupler(examinePart) decouplerList[decouplerListIndex]:ADD(examinePart).
+// Whether an engine has been lit and has since flamed out. It still reports its full POSSIBLETHRUST, so it has to be left out of
+// any sum of thrust.
+FUNCTION isSpentEngine {
+	PARAMETER examineEngine.
+	RETURN examineEngine:IGNITION AND examineEngine:FLAMEOUT.
+}
 
-	FOR eachKid IN examinePart:CHILDREN {
-		IF NOT isDecoupler(eachKid) recursivePartSort(eachKid, decouplerListIndex, currentStage + 1).
-	}
-	RETURN.
+// Converts the name of a resource as an engine reports it (CONSUMEDRESOURCES) to the name of the resource.
+FUNCTION correctFuelName {
+	PARAMETER fuelName.
+	IF fuelName = "LH2" SET fuelName TO "LqdHydrogen".
+	IF fuelName = "Liquid Fuel" SET fuelName TO "LiquidFuel".
+	IF fuelName = "LOX" SET fuelName TO "LqdOxygen".
+	IF fuelName = "Solid Fuel" SET fuelName TO "SolidFuel".
+	IF fuelName = "Xenon Gas" SET fuelName TO "XenonGas".
+	IF fuelName = "Electric Charge" SET fuelName TO "ElectricCharge".
+	IF fuelName = "Intake Air" SET fuelName TO "IntakeAir".
+	RETURN fuelName.
 }
 
 // Sets one of the ship's control axes ("Pitch", "Yaw" or "Roll") to a value from -1 to 1.
@@ -336,9 +371,21 @@ FUNCTION updateStoppingTime {
 //		NumberOfStages - scalar - number of stages in the current ship
 //		CurrentStage - lexicon - the current stage, following the below format
 //		Rotation - lexicon - how fast the ship can turn and the Max Stopping Time derived from it, see updateStoppingTime
+//		CargoUIDs - lexicon - the UIDs of the parts that are cargo (as keys), see groupShipParts
+//		Propellants - lexicon - the names of the resources (as keys) used by the engines that can push the ship, without IntakeAir
+//		PartCount - scalar - the number of parts on the ship when this was made
+// A stage holds the parts that leave the ship in the same stage number (see groupShipParts), so Stage 0 is never dropped.
 // For each stage, record the following information:
-//		Parts - List - containing PARTs in this stage
-//		Engines - List - ENGINEs in this stage, or in the closest stage if this only has resources
+//		DecoupledIn - scalar - the stage number in which the parts of this stage leave the ship, -1 for never. It is their DECOUPLEDIN,
+//				except for a decoupler that drops away itself (see partDropStage)
+//		Parts - List - containing the PARTs carried in this stage, cargo included
+//		CargoParts - List - the Parts that are cargo
+//		FuelParts - List - the Parts whose resources, engines and RCS count: not cargo, and not engines that cannot push the ship
+//		CargoMass - scalar - mass of the CargoParts, in kg
+//		PropellantCapacity - scalar - mass of the Propellants that the FuelParts can hold, in kg
+//		PropellantMass - scalar - mass of the Propellants in the FuelParts now, in kg
+//		Engines - List - ENGINEs in the FuelParts that have not flamed out, or in the closest stage if this has none. The current stage
+//				instead has the engines of the whole ship that can push it and have not flamed out, and are lit or light first.
 //		EngineData - List - for each of the Engines, a lexicon of "Engine" (the ENGINE), "Ignitions" (scalar, the number of ignitions
 //				remaining, not counting the one that lit the engine if it is running, so it is 0 for a single use engine that is running,
 //				and -1 if it is unlimited), "Throttleable" (boolean, NOT THROTTLELOCK), "CanRestart" (boolean, the engine allows a
@@ -352,12 +399,12 @@ FUNCTION updateStoppingTime {
 //		HighestMinThrottle - scalar - the highest minimum throttle of the Engines, as a fraction (0 if there are none)
 //		EngineData, MinIgnitions, LimitedIgnitions, Throttleable, CanRestart, LowestThrustLimit and HighestMinThrottle are refreshed by
 //		updateShipInfoCurrent for the current stage, because ignitions get used up and the thrust limit can be changed.
-//		RCS - List - RCSs in this stage, or in the closest stage if this only has resources
+//		RCS - List - RCSs in the FuelParts of this stage, or in the closest stage if this has none
 //		Sensors - List - SENSORs in this stage
 //		Isp - scalar - calculated for all engines in this stage
 //		Thrust - scalar - Total thrust of all engines in this stage, in Newtons
 //		mDot - scalar - Total fuel flow of all engines in this stage, in kg/s
-//		Resources - Lexicon - the masses of resources in this stage
+//		Resources - Lexicon - the masses of resources in the FuelParts of this stage
 //		Fuels - List - list of names of fuels used by engines in this stage
 //		fuelsRCS - List - list of names of fuels used by RCS engines in this stage
 //		fuelMass - scalar - the mass of all resources in the list of fuels that are in the appropriate ratio, in kg
@@ -375,32 +422,60 @@ FUNCTION updateShipInfo {
 	SET shipInfo TO LEXICON().
 	LOCAL PreviousMass IS 0.
 	LOCAL highestStageEngine IS 0.
-	LOCAL deltaVList IS "".
 	LOCAL engineListOld IS LIST().
 	LOCAL RCSListOld IS LIST().
 	LOCAL engineStat IS LIST().
 	LOCAL ignitedEngines IS LIST().
 
-	listParts().
+	LOCAL grouping IS groupShipParts().
+	LOCAL stageGroups IS grouping["Groups"].
 	shipInfo:ADD("NumberOfStages", 0).
 	shipInfo:ADD("CurrentStage", LEXICON()).
+	shipInfo:ADD("CargoUIDs", grouping["CargoUIDs"]).		// isShipEngine uses this, so it comes first
+	shipInfo:ADD("PartCount", SHIP:PARTS:LENGTH).
+
+	// the propellants of the engines that can push the ship, and the ones of those engines that have not flamed out
+	LOCAL allEngines IS LIST().
+	LIST ENGINES IN allEngines.
+	LOCAL usableEngines IS LIST().
+	LOCAL propellantNames IS LEXICON().
+	FOR eachEngine IN allEngines {
+		IF isShipEngine(eachEngine) {
+			FOR eachFuel IN eachEngine:CONSUMEDRESOURCES:KEYS {
+				LOCAL fuelName IS correctFuelName(eachFuel).
+				IF fuelName <> "IntakeAir" SET propellantNames[fuelName] TO TRUE.
+			}
+			IF NOT isSpentEngine(eachEngine) {
+				usableEngines:ADD(eachEngine).
+				IF eachEngine:STAGE > highestStageEngine SET highestStageEngine TO eachEngine:STAGE.
+			}
+		}
+	}
+	shipInfo:ADD("Propellants", propellantNames).
 
 	// for each of the stages, determine the parts, engines and sensors
-	FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
+	FOR stageNumber IN RANGE(0, stageGroups:LENGTH) {
 		LOCAL stageInfo IS LEXICON().
 		stageInfo:ADD("Number", stageNumber).
-		stageInfo:ADD("Parts",partListTree["Stage " + stageNumber]).
+		stageInfo:ADD("DecoupledIn", stageGroups[stageNumber]["DecoupledIn"]).
+		stageInfo:ADD("Parts", stageGroups[stageNumber]["Parts"]).
+		stageInfo:ADD("CargoParts", stageGroups[stageNumber]["CargoParts"]).
+		stageInfo:ADD("FuelParts", stageGroups[stageNumber]["FuelParts"]).
 
 		// Add a list of all of the engines in this stage.
 		stageInfo:ADD("Engines",LIST()).
-		FOR eachPart IN stageInfo["Parts"] { IF eachPart:TYPENAME = "Engine" stageInfo["Engines"]:ADD(eachPart).}
+		FOR eachPart IN stageInfo["FuelParts"] {
+			IF eachPart:TYPENAME = "Engine" {
+				IF NOT isSpentEngine(eachPart) stageInfo["Engines"]:ADD(eachPart).
+			}
+		}
 		// If there are no engines in this stage, use the engines from the previous stage
 		IF (stageInfo["Engines"]:LENGTH = 0) SET stageInfo["Engines"] TO engineListOld.
 		// If there are engines in this stage, replace the list of engines from the previous stage
 		ELSE {SET engineListOld TO stageInfo["Engines"].}
 
 		stageInfo:ADD("RCS",LIST()).
-		FOR eachPart IN stageInfo["Parts"] { IF eachPart:TYPENAME = "RCS" stageInfo["RCS"]:ADD(eachPart).}
+		FOR eachPart IN stageInfo["FuelParts"] { IF eachPart:TYPENAME = "RCS" stageInfo["RCS"]:ADD(eachPart).}
 		// If there are no engines in this stage, use the engines from the previous stage
 		IF (stageInfo["RCS"]:LENGTH = 0) SET stageInfo["RCS"] TO RCSListOld.
 		// If there are engines in this stage, replace the list of engines from the previous stage
@@ -431,7 +506,20 @@ FUNCTION updateShipInfo {
 		stageInfo:ADD("HighestMinThrottle", 0).
 
 		// Add the resources from this stage
-		stageInfo:ADD("Resources", resourcesInParts(stageInfo["Parts"])).
+		stageInfo:ADD("Resources", resourcesInParts(stageInfo["FuelParts"])).
+
+		LOCAL capacityMass IS 0.
+		FOR eachPart IN stageInfo["FuelParts"] {
+			FOR eachResource IN eachPart:RESOURCES {
+				IF propellantNames:HASKEY(eachResource:NAME) SET capacityMass TO capacityMass + eachResource:CAPACITY * resourceDensity(eachResource:NAME).
+			}
+		}
+		stageInfo:ADD("PropellantCapacity", capacityMass).
+		stageInfo:ADD("PropellantMass", 0).				// updated by updateShipInfoResources
+
+		LOCAL cargoMass IS 0.
+		FOR eachPart IN stageInfo["CargoParts"] {SET cargoMass TO cargoMass + eachPart:MASS * 1000.}
+		stageInfo:ADD("CargoMass", cargoMass).
 
 		// add the various resource-related values to the lexicon, but they will be filled out by updateShipInfoCurrent
 		stageInfo:ADD("fuelMass", 0).
@@ -458,16 +546,14 @@ FUNCTION updateShipInfo {
 		SET shipInfo["NumberOfStages"] TO shipInfo["NumberOfStages"] + 1.
 	}
 
-	LIST ENGINES IN engineListOld.
-	FOR eachEngine IN engineListOld {IF eachEngine:STAGE > highestStageEngine SET highestStageEngine TO eachEngine:STAGE.}
-	FOR eachEngine IN engineListOld {IF (eachEngine:IGNITION OR eachEngine:STAGE = highestStageEngine) ignitedEngines:ADD(eachEngine).}
+	FOR eachEngine IN usableEngines {IF (eachEngine:IGNITION OR eachEngine:STAGE = highestStageEngine) ignitedEngines:ADD(eachEngine).}
 	// clear out the highest stage's Engines list, then add all of the active engines and engines with the highest stage number
 	SET shipInfo["Stage " + (shipInfo["NumberOfStages"] - 1)]["Engines"] TO ignitedEngines.
 
 	SET shipInfo["CurrentStage"] TO shipInfo["Stage " + (shipInfo["NumberOfStages"] - 1)].
 
 	// for each of the stages, determine the parts, engines and sensors
-	FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
+	FOR stageNumber IN RANGE(0, shipInfo["NumberOfStages"]) {
 		SET engineStat TO engineStats(shipInfo["Stage " + stageNumber]["Engines"]).
 		SET shipInfo["Stage " + stageNumber]["Isp"] TO engineStat["Isp"].
 		SET shipInfo["Stage " + stageNumber]["IspRCS"] TO engineStatsRCS(shipInfo["Stage " + stageNumber]["RCS"])["Isp"].
@@ -485,8 +571,8 @@ FUNCTION updateShipInfo {
 	updateShipInfoCurrent(FALSE).
 
 	LOCAL deltaVPrev IS 0.
-	FOR stageNumber IN RANGE(partListTree:LENGTH - 1, -1) {
-		IF stageNumber <> partListTree:LENGTH - 1 {
+	FOR stageNumber IN RANGE(shipInfo["NumberOfStages"] - 1, -1) {
+		IF stageNumber <> shipInfo["NumberOfStages"] - 1 {
 			SET deltaVPrev TO deltaVPrev + shipInfo["Stage " + (stageNumber + 1)]["DeltaV"].
 		}
 		SET shipInfo["Stage " + stageNumber]["DeltaVPrev"] TO deltaVPrev.
@@ -562,8 +648,11 @@ FUNCTION logShipInfo {
 	LOCAL deltaVLogList IS "".
 	LOCAL deltaVDisplayList IS "".
 	// for each of the stages
-	FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
+	FOR stageNumber IN RANGE(0, shipInfo["NumberOfStages"]) {
 		LOG "Stage " + stageNumber TO fileName.
+		LOG ",Decoupled In Stage," + shipInfo["Stage " + stageNumber]["DecoupledIn"] TO fileName.
+		LOG ",Cargo has " + shipInfo["Stage " + stageNumber]["CargoParts"]:LENGTH + " Items in it," + shipInfo["Stage " + stageNumber]["CargoMass"] + ",kg" TO fileName.
+		FOR p IN shipInfo["Stage " + stageNumber]["CargoParts"] {LOG ",," + p:TITLE:REPLACE(",","") TO fileName.}
 		LOG ",Parts has " + shipInfo["Stage " + stageNumber]["Parts"]:LENGTH + " Items in it,Part Name,Part Wet Mass,Unit,Stage" TO fileName.
 		FOR p IN shipInfo["Stage " + stageNumber]["Parts"] {LOG ",," + p:TITLE:REPLACE(",","") + "," + (p:MASS*1000) + ",kg," + p:STAGE TO fileName.}
 		LOG ",Engines has " + shipInfo["Stage " + stageNumber]["Engines"]:LENGTH + " Items in it" TO fileName.
@@ -613,6 +702,8 @@ FUNCTION logShipInfo {
 		LOG ",RCS Fuel Mass," + shipInfo["Stage " + stageNumber]["fuelRCSMass"] + ",kg" TO fileName.
 		LOG ",RCS Fuel Mass Unused," + shipInfo["Stage " + stageNumber]["fuelRCSMassUnused"] + ",kg" TO fileName.
 		LOG ",Resource Mass," + shipInfo["Stage " + stageNumber]["resourceMass"] + ",kg" TO fileName.
+		LOG ",Propellant Mass," + shipInfo["Stage " + stageNumber]["PropellantMass"] + ",kg" TO fileName.
+		LOG ",Propellant Capacity," + shipInfo["Stage " + stageNumber]["PropellantCapacity"] + ",kg" TO fileName.
 		LOG ",Dry Mass," + shipInfo["Stage " + stageNumber]["DryMass"] + ",kg" TO fileName.
 		LOG ",Previous Mass," + shipInfo["Stage " + stageNumber]["PreviousMass"] + ",kg" TO fileName.
 		LOG ",Current Mass," + shipInfo["Stage " + stageNumber]["CurrentMass"] + ",kg" TO fileName.
@@ -678,7 +769,7 @@ FUNCTION logShipInfo {
 
 	IF includeResources {
 		LOG "Stage,Part Name,Part UID,Resource Name,Resource Amount (L),Resource Capacity (L),Resource Mass (kg),Resource Density (kg/L)" TO fileName.
-		FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
+		FOR stageNumber IN RANGE(0, shipInfo["NumberOfStages"]) {
 			FOR eachPart IN shipInfo["Stage " + stageNumber]["Parts"] {
 				FOR eachResource IN eachPart:RESOURCES {
 					LOG stageNumber + "," +
@@ -812,7 +903,7 @@ FUNCTION updateShipInfoResources {
 	PARAMETER createlogFileName IS FALSE.
 	PARAMETER loggedResources IS LIST("Electricity","Oxygen","Food","Water").
 	LOCAL previousMass IS 0.
-	FOR stageNumber IN RANGE(0, partListTree:LENGTH) {
+	FOR stageNumber IN RANGE(0, shipInfo["NumberOfStages"]) {
 		LOCAL stageInfo IS shipInfo["Stage " + stageNumber].
 		stageInfo:REMOVE("Resources").
 		stageInfo:REMOVE("fuelMass").
@@ -824,7 +915,13 @@ FUNCTION updateShipInfoResources {
 		stageInfo:REMOVE("CurrentMass").
 		stageInfo:REMOVE("DeltaV").
 		stageInfo:REMOVE("DeltaVRCS").
-		stageInfo:ADD("Resources", resourcesInParts(stageInfo["Parts"])).
+		stageInfo:ADD("Resources", resourcesInParts(stageInfo["FuelParts"])).
+
+		LOCAL propellantMass IS 0.
+		FOR eachName IN stageInfo["Resources"]:KEYS {
+			IF shipInfo["Propellants"]:HASKEY(eachName) SET propellantMass TO propellantMass + stageInfo["Resources"][eachName].
+		}
+		SET stageInfo["PropellantMass"] TO propellantMass.
 
 		IF stageInfo["Resources"]:LENGTH = 0 {stageInfo["Resources"]:ADD("Placeholder",0).}
 
@@ -955,8 +1052,11 @@ FUNCTION updateShipInfoCurrent {
 	LOCAL throttleableEngines IS LIST().
 	LOCAL nonThrottleableEngines IS LIST().
 	FOR eachEngine IN shipInfo["CurrentStage"]["Engines"] {
-		IF eachEngine:THROTTLELOCK nonThrottleableEngines:ADD(eachEngine).
-		ELSE throttleableEngines:ADD(eachEngine).
+		// an engine that has flamed out since updateShipInfo gives no thrust
+		IF NOT isSpentEngine(eachEngine) {
+			IF eachEngine:THROTTLELOCK nonThrottleableEngines:ADD(eachEngine).
+			ELSE throttleableEngines:ADD(eachEngine).
+		}
 	}
 	LOCAL engineStatsVariable IS engineStats(throttleableEngines).
 	LOCAL engineStatsConstant IS engineStats(nonThrottleableEngines).
@@ -1031,18 +1131,6 @@ FUNCTION updateShipInfoCurrent {
 FUNCTION getCurrentFuels {
 	PARAMETER engineList.
 	PARAMETER stageNumber.
-
-	FUNCTION correctFuelName {
-		PARAMETER fuelName.
-		IF fuelName = "LH2" SET fuelName TO "LqdHydrogen".
-		IF fuelName = "Liquid Fuel" SET fuelName TO "LiquidFuel".
-		IF fuelName = "LOX" SET fuelName TO "LqdOxygen".
-		IF fuelName = "Solid Fuel" SET fuelName TO "SolidFuel".
-		IF fuelName = "Xenon Gas" SET fuelName TO "XenonGas".
-		IF fuelName = "Electric Charge" SET fuelName TO "ElectricCharge".
-		IF fuelName = "Intake Air" SET fuelName TO "IntakeAir".
-		RETURN fuelName.
-	}
 
 	IF engineList:LENGTH = 0 RETURN LEXICON().
 	LOCAL lexOfFuels IS LEXICON().
@@ -3908,38 +3996,82 @@ FUNCTION VESSELEXISTS {
 }
 
 
-// Stages if it is time to, and returns the reason. It is time to stage when the engines are producing no thrust, when an
-// engine has flamed out, or when the tanks of the current stage are empty. Below the top of the atmosphere the long wait
-// of stageFunction (in loop.ks) is used, so that the spent stage drops clear of the rocket.
-// Assumes that updateShipInfoCurrent has been run recently, for the resources.
+// Stages if it is time to, and returns the reason. Only the engines that can push the ship count (isShipEngine), so separation motors
+// and the engines of cargo are ignored. The next parts to be dropped are those with the highest DECOUPLEDIN that have such an engine
+// or can hold propellant. It is time to stage when
+//		"flameout" - all of the engines among the next parts to be dropped have flamed out, or an engine has flamed out and none is thrusting
+//		"max thrust" - no engine is thrusting
+//		"resources" - the propellant of the next parts to be dropped is gone
+// but only if staging would help: an engine is still to be lit, or an engine that is thrusting stays after the next parts are dropped.
+// That keeps the ship from releasing its cargo when it runs out of propellant. Below the top of the atmosphere the long wait of
+// stageFunction (in loop.ks) is used, so that the spent stage drops clear of the rocket, unless longWait is FALSE.
+// Assumes that updateShipInfoCurrent or updateShipInfoResources has been run recently, for the resources. updateShipInfo is run first
+// if the number of parts has changed. Sets shipEnginesThrusting.
 // Passed the following:
 //   thrustSeen (boolean, whether the engines of the current stage have been seen producing thrust. The no-thrust and
 //               empty-tank checks only apply when it is TRUE, so that a stage that has not started yet is not dropped.)
 //   execute (boolean, FALSE to only report the reason without staging, so that the caller can prepare first, for ullage)
+//   longWait (boolean, optional, TRUE, whether to use the long wait of stageFunction below the top of the atmosphere)
 // Returns the following:
 //   "max thrust", "flameout" or "resources" if the ship was staged (or would be, if execute is FALSE), "None" if it was not
 FUNCTION stageIfNeeded {
 	PARAMETER thrustSeen IS TRUE.
 	PARAMETER execute IS TRUE.
-	LOCAL reason IS "None".
+	PARAMETER longWait IS TRUE.
 
-	IF thrustSeen AND MAXTHRUST = 0 SET reason TO "max thrust".
+	IF shipInfo["PartCount"] <> SHIP:PARTS:LENGTH updateShipInfo().
 
-	IF reason = "None" {
-		LOCAL engineList IS LIST().
-		LIST ENGINES IN engineList.
-		FOR eng IN engineList {
-			IF eng:FLAMEOUT AND eng:IGNITION {
-				SET reason TO "flameout".
-				BREAK.
-			}
+	// the DECOUPLEDIN of the next parts to be dropped, -1 if there are none
+	LOCAL nextDrop IS -1.
+	FOR stageNumber IN RANGE(shipInfo["NumberOfStages"] - 1, -1) {
+		IF shipInfo["Stage " + stageNumber]["PropellantCapacity"] > 0 {
+			SET nextDrop TO shipInfo["Stage " + stageNumber]["DecoupledIn"].
+			BREAK.
+		}
+	}
+	LOCAL allEngines IS LIST().
+	LIST ENGINES IN allEngines.
+	LOCAL pushingEngines IS LIST().
+	FOR eachEngine IN allEngines {
+		IF isShipEngine(eachEngine) {
+			pushingEngines:ADD(eachEngine).
+			IF eachEngine:DECOUPLEDIN > nextDrop SET nextDrop TO eachEngine:DECOUPLEDIN.
 		}
 	}
 
-	IF reason = "None" AND thrustSeen AND shipInfo["CurrentStage"]["ResourceMass"] < 1.0 SET reason TO "resources".
+	LOCAL nextCount IS 0.				// engines among the next parts to be dropped
+	LOCAL nextSpent IS 0.				// those of them that have flamed out
+	LOCAL anyThrusting IS FALSE.
+	LOCAL anySpent IS FALSE.
+	LOCAL stagingHelps IS FALSE.
+	FOR eachEngine IN pushingEngines {
+		LOCAL isNext IS nextDrop >= 0 AND eachEngine:DECOUPLEDIN = nextDrop.
+		IF isNext SET nextCount TO nextCount + 1.
+		IF NOT eachEngine:IGNITION {
+			IF eachEngine:STAGE < STAGE:NUMBER SET stagingHelps TO TRUE.
+		} ELSE IF eachEngine:FLAMEOUT {
+			SET anySpent TO TRUE.
+			IF isNext SET nextSpent TO nextSpent + 1.
+		} ELSE {
+			SET anyThrusting TO TRUE.
+			IF eachEngine:DECOUPLEDIN < nextDrop SET stagingHelps TO TRUE.
+		}
+	}
+	SET shipEnginesThrusting TO anyThrusting.
+
+	LOCAL reason IS "None".
+	IF (nextCount > 0 AND nextSpent = nextCount) OR (anySpent AND NOT anyThrusting) SET reason TO "flameout".
+	ELSE IF thrustSeen AND NOT anyThrusting SET reason TO "max thrust".
+	ELSE IF thrustSeen AND nextDrop >= 0 {
+		FOR stageNumber IN RANGE(0, shipInfo["NumberOfStages"]) {
+			LOCAL stageInfo IS shipInfo["Stage " + stageNumber].
+			IF stageInfo["DecoupledIn"] = nextDrop AND stageInfo["PropellantCapacity"] > 0 AND stageInfo["PropellantMass"] < 1.0 SET reason TO "resources".
+		}
+	}
+	IF NOT stagingHelps SET reason TO "None".
 
 	IF reason <> "None" AND execute {
-		IF ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
+		IF longWait AND ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
 		ELSE stageFunction().
 	}
 	RETURN reason.

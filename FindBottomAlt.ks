@@ -53,8 +53,8 @@ PANELS OFF.
 
 // Engine staging - this should drop any used stage
 WHEN MAXTHRUST = 0 THEN {
-	PRINT "Staging from max thrust".
-	stageFunction().
+	LOCAL stageReason IS stageIfNeeded(TRUE, TRUE, FALSE).
+	IF stageReason <> "None" PRINT "Staging from " + stageReason.
 }
 
 LOCAL pitchValue IS 0.
