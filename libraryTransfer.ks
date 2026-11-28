@@ -165,6 +165,8 @@ FUNCTION bindPorkchopDeltaV {
 //   window     - from buildTransferWindow
 // Cells are computed departure by departure, so the solver's seed (fresh per departure) carries across
 // that departure's flight times. The grid returned has one row per flight time, longest first.
+// The abort key (abortKeyPressed) is looked at before each departure: after it the grid holds only the
+// departures already finished, possibly none.
 // Returns a LEXICON:
 //   "dv"               - LIST of rows (one per "timeOfFlights"), each a LIST of dV per "departureTimes"; failed cells hold invalidDeltaV
 //   "timeOfFlights"    - flight time (s) of each row, descending
@@ -206,6 +208,7 @@ FUNCTION porkchopGrid {
 	}
 
 	FOR departureTime IN window["departureTimes"] {
+		IF abortKeyPressed() BREAK.
 		LOCAL periodsSinceStart IS (departureTime - window["departureStart"]) / window["windowLength"].
 		PRINT "Calculating departure " + ROUND(periodsSinceStart, 3) + " windows in.".
 		departureTimes:ADD(departureTime).

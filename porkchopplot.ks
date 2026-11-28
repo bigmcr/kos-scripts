@@ -54,6 +54,10 @@ SET captureAltitude TO processScalarParameter(captureAltitude, errorValue).
 IF captureAltitude = errorValue SET captureAltitude TO -1.
 
 CLEARSCREEN.
+// The End key aborts (abortKeyPressed in library.ks), looked at between the departures of the grid. An aborted
+// plot is not saved, so the pair's earlier file is kept.
+resetAbort().
+PRINT "Press End to abort".
 
 // The current target is carried as the object, not its name: two vessels can share a name.
 IF destinationName = "Default" {
@@ -138,28 +142,33 @@ IF errorCode = "None" {
 		SET dvDelegate TO bindPorkchopDeltaV(fromOrbitable, toOrbitable, window["sunBody"]).
 	}
 	LOCAL grid IS porkchopGrid(dvDelegate, window).
-	LOCAL minDeltaV IS grid["minDeltaV"].
-
-	LOCAL csvSaved IS writePorkchopCsv(grid, window, plotFile, fromOrbitable, toOrbitable).
-
-	PRINT grid["totalCells"] + " cells in " + realTimeToString(grid["realDuration"]) + ".".
-	PRINT motionTypeSummary(grid, TRUE).
-	FOR reasonLine IN failureReasonLines(grid) {
-		PRINT "Failed - " + reasonLine.
-	}
-	PRINT "Min dV " + distanceToString(minDeltaV["value"]) + "/s.".
-	PRINT "  Depart +" + timeToString(minDeltaV["departureTime"] - startTime) + ", TOF " + timeToString(minDeltaV["timeOfFlight"]) + ".".
-	IF csvSaved {
-		PRINT "  Saved: " + plotFile:SUBSTRING(2, plotFile:LENGTH - 2).
+	IF abortKeyPressed() {
+		PRINT "Aborted: no plot saved.".
+		SET loopMessage TO "Aborted by the operator".
 	} ELSE {
-		PRINT "  Not saved: no archive connection.".
-	}
+		LOCAL minDeltaV IS grid["minDeltaV"].
 
-	PRINT "".
-	PRINT "Complete".
-	PRINT "Run time: " + realTimeToString(KUNIVERSE:REALWORLDTIME - scriptStartRealTime) + ".".
-	WAIT 5.
-	SET loopMessage TO "Min dV: " + distanceToString(minDeltaV["value"]) + "/s at " + durationToUnitString(minDeltaV["departureTime"] - startTime).
+		LOCAL csvSaved IS writePorkchopCsv(grid, window, plotFile, fromOrbitable, toOrbitable).
+
+		PRINT grid["totalCells"] + " cells in " + realTimeToString(grid["realDuration"]) + ".".
+		PRINT motionTypeSummary(grid, TRUE).
+		FOR reasonLine IN failureReasonLines(grid) {
+			PRINT "Failed - " + reasonLine.
+		}
+		PRINT "Min dV " + distanceToString(minDeltaV["value"]) + "/s.".
+		PRINT "  Depart +" + timeToString(minDeltaV["departureTime"] - startTime) + ", TOF " + timeToString(minDeltaV["timeOfFlight"]) + ".".
+		IF csvSaved {
+			PRINT "  Saved: " + plotFile:SUBSTRING(2, plotFile:LENGTH - 2).
+		} ELSE {
+			PRINT "  Not saved: no archive connection.".
+		}
+
+		PRINT "".
+		PRINT "Complete".
+		PRINT "Run time: " + realTimeToString(KUNIVERSE:REALWORLDTIME - scriptStartRealTime) + ".".
+		WAIT 5.
+		SET loopMessage TO "Min dV: " + distanceToString(minDeltaV["value"]) + "/s at " + durationToUnitString(minDeltaV["departureTime"] - startTime).
+	}
 } ELSE {
 	SET loopMessage TO "Error: " + errorCode.
 }

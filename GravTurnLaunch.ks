@@ -88,6 +88,11 @@ setLockedSteering(TRUE).
 
 CLEARSCREEN.
 
+// The End key aborts the launch (see abortKeyPressed in library.ks). It is looked at while waiting for the launch window,
+// during staging and on every pass of the main loop.
+resetAbort().
+PRINT "Press End to abort" AT (0, 0).
+
 SAS OFF.
 RCS OFF.
 IF DEPLOYDRILLS DEPLOYDRILLS OFF.
@@ -125,6 +130,7 @@ ON mode {
 	LOCAL modeX IS 45.
 
 	PRINT "Mode: " + mode AT (modeX, 0).
+	PRINT "Press End to abort" AT (0, 0).
 
 	// Prelaunch - stage the LF engines
 	IF mode = 0 {
@@ -210,18 +216,19 @@ IF mode = 0 {
 	PRINT "Mode 0".
 	GLOBAL abortLaunch IS FALSE.
 	IF finalLAN <> "Current" RUNPATH("waitForLaunchWindow", finalInclination, finalLAN, FALSE).
-	IF abortLaunch {
+	IF abortLaunch OR abortKeyPressed() {
 		SET mode TO 10.
 		SET endMessage TO "Launch aborted".
 	} ELSE {
 		WAIT 1.
-		stageFunction().
+		stageFunction(0.5, SHIP:PARTS:LENGTH > 200, FALSE, abortKeyPressed@).
 		PRINT "Initial Stage!".
 		SET mode TO 1.
 	}
 }
 
 UNTIL mode > 6 {
+	IF abortKeyPressed() BREAK.
 	IF useYawPID AND NOT yawPos_PIDReset AND ABS(yawPos_PID:ERROR) < 1000 {
 		yawPos_PID:RESET().
 		SET yawPos_PIDReset TO TRUE.
@@ -273,7 +280,7 @@ UNTIL mode > 6 {
 		IF isLFFullThrust() {
 			IF GEAR GEAR OFF.
 			SET mode TO 2.
-			stageFunction().
+			stageFunction(0.5, SHIP:PARTS:LENGTH > 200, FALSE, abortKeyPressed@).
 		}
 	}
 
@@ -356,7 +363,8 @@ UNTIL mode > 6 {
 		SET globalThrottle TO MIN( MAX( globalThrottle, 0.05), 1.0).
 
 		// Engine staging: drops spent boosters, stages and empty drop tanks (stageIfNeeded, library.ks)
-		LOCAL stageReason IS stageIfNeeded().
+		LOCAL stageReason IS stageIfNeeded(TRUE, TRUE, TRUE, abortKeyPressed@).
+		IF abortRequested BREAK.		// aborted while staging
 		IF stageReason <> "None" PRINT "Staging from " + stageReason.
 
 		IF useYawPID {
@@ -442,18 +450,29 @@ UNTIL mode > 6 {
 	WAIT 0.
 }
 
-SET dontKillAfterScript TO NOT isStock().
-SET loopMessage TO endMessage.
-activateOmniAntennae().
+IF abortRequested OR abortLaunch {
+	// An abort (the End key, or aborting at the launch window) ends all automatic control of the ship: steering, throttle
+	// and time warp are released (endScript, in loop.ks), which also cuts the throttle. This is the same in every universe.
+	endScript().
+	SET dontKillAfterScript TO FALSE.
+	SET abortRequested TO TRUE.		// endScript clears it, and a script that ran this one has to be able to see it
+	SET loopMessage TO "Launch aborted".
+} ELSE {
+	// Outside of stock the controls are kept after the script ends, so that an engine that may only be able to ignite once
+	// stays lit. In stock, loop releases them, which cuts the throttle.
+	SET dontKillAfterScript TO NOT isStock().
+	SET loopMessage TO endMessage.
+	activateOmniAntennae().
 
-// Measure how fast the ship can turn now that the launch is over, and set the steering manager's stopping time from it.
-// This is only done in stock: the ship is only measured with the engines off, and outside of stock the engine is left lit,
-// because it may only be able to ignite once. On the ground (an aborted launch) nothing is measured.
-IF isStock() {
-	SET globalThrottle TO 0.
-	SET KUNIVERSE:TIMEWARP:WARP TO 0.
-	WAIT UNTIL KUNIVERSE:TIMEWARP:ISSETTLED AND THROTTLE = 0.
-	WAIT 1.		// let the thrust die away
-	CLEARSCREEN.
-	updateStoppingTime(TRUE, TRUE).
+	// Measure how fast the ship can turn now that the launch is over, and set the steering manager's stopping time from it.
+	// This is only done in stock: the ship is only measured with the engines off, and outside of stock the engine is left
+	// lit, because it may only be able to ignite once. On the ground (a launch that never started) nothing is measured.
+	IF isStock() {
+		SET globalThrottle TO 0.
+		SET KUNIVERSE:TIMEWARP:WARP TO 0.
+		WAIT UNTIL KUNIVERSE:TIMEWARP:ISSETTLED AND THROTTLE = 0.
+		WAIT 1.		// let the thrust die away
+		CLEARSCREEN.
+		updateStoppingTime(TRUE, TRUE).
+	}
 }

@@ -278,11 +278,16 @@ IF (targetInclination <> 0) OR (targetLAN <> 0) {
     PRINT "Press 7 to lower the fudge factor by 0.1 degrees.".
     PRINT "Press 8 to set the fudge factor to 0 degrees.".
     PRINT "Press 9 to raise the fudge factor by 0.1 degrees.".
-    PRINT "Press backspace to abort launch".
+    PRINT "Press backspace or End to abort launch".
     PRINT "In " + ROUND(timerStart + delayBeforeAuto - TIME:SECONDS, 0) + " seconds, launch in daylight will be selected".
 
     IF TERMINAL:INPUT:HASCHAR {
   		SET tempChar TO TERMINAL:INPUT:GETCHAR().
+      // the End key (abortKey in library.ks) aborts like backspace does, and also records the abort for the caller
+      IF tempChar = abortKey {
+        SET abortRequested TO TRUE.
+        SET tempChar TO TERMINAL:INPUT:BACKSPACE.
+      }
       IF tempChar = "4" {
         SET extendedView TO NOT extendedView.
         SET tempChar TO "".
@@ -313,7 +318,7 @@ IF (targetInclination <> 0) OR (targetLAN <> 0) {
         SET tempChar TO TERMINAL:INPUT:BACKSPACE.
       }
     }
-    IF TIME:SECONDS > timerStart + delayBeforeAuto {
+    IF TIME:SECONDS > timerStart + delayBeforeAuto AND NOT abortRequested {
       SET tempChar TO TERMINAL:INPUT:ENTER.
     }
     WAIT 0.
@@ -347,11 +352,16 @@ IF (targetInclination <> 0) OR (targetLAN <> 0) {
     PRINT "Now waiting until lined up correctly for launch".
     LOCAL launchTime IS TIME:SECONDS + deltaLAN / 360 * BODY:ROTATIONPERIOD.
     // The reason for the loop is because if the timewarp is interrupted, it should auto-resume.
-    UNTIL TIME:SECONDS >= launchTime {
+    PRINT "Press End to abort".
+    UNTIL TIME:SECONDS >= launchTime OR abortKeyPressed() {
       KUNIVERSE:TIMEWARP:WARPTO(launchTime).
       WAIT 0.20.
-      UNTIL KUNIVERSE:TIMEWARP:ISSETTLED AND KUNIVERSE:TIMEWARP:RATE = 1 {WAIT 0.}
+      UNTIL (KUNIVERSE:TIMEWARP:ISSETTLED AND KUNIVERSE:TIMEWARP:RATE = 1) OR abortKeyPressed() {WAIT 0.}
       WAIT 0.20.
+    }
+    IF abortRequested {
+      KUNIVERSE:TIMEWARP:CANCELWARP().
+      SET abortLaunch TO TRUE.
     }
   } ELSE {
     SET abortLaunch TO TRUE.

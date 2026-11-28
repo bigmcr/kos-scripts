@@ -62,6 +62,11 @@ SET captureAltitude TO processScalarParameter(captureAltitude, errorValue).
 IF captureAltitude = errorValue SET captureAltitude TO -1.
 
 CLEARSCREEN.
+// The End key aborts (abortKeyPressed in library.ks). It is looked at between the stages, and between the
+// departures of the grid, so the stage that is running finishes first; everything after it is skipped.
+resetAbort().
+PRINT "Press End to abort".
+LOCAL abortMessage IS "Aborted by the operator".
 
 // The current target is carried as the object, not its name: two vessels can share a name.
 IF destinationName = "Default" {
@@ -415,12 +420,14 @@ IF errorCode = "None" {
 	}.
 	LOCAL bestOverall IS LEXICON("finalValue", invalidDeltaV).
 	FOR band IN coarseCandidates:KEYS {
+		IF abortKeyPressed() BREAK.
 		PRINT "Refining window " + band + ".".
 		LOCAL seed IS coarseCandidates[band].
 		LOCAL climbed IS hillClimb2D(boundedDelegate,		// already-bound delegate, held to the window
 			seed["departureTime"], seed["flightTime"],		// initial guesses, from the coarse pass - both absolute (seconds)
 			window["departureStep"], window["tofStep"],		// initial step size, in seconds
 			"", 20, hillClimbRatio).						// log, iterationMax, smallestStepRatio
+		IF abortKeyPressed() BREAK.
 		LOCAL refined IS newtonRefine2D(boundedDelegate, climbed["finalGuess1"], climbed["finalGuess2"], climbed["finalValue"],
 			window["departureStep"] / 2 ^ hillClimbRatio, window["tofStep"] / 2 ^ hillClimbRatio, 2).
 		PRINT "  " + climbed["iteration"] + " climb steps + " + refined["steps"] + " Newton steps.".
@@ -432,7 +439,9 @@ IF errorCode = "None" {
 	}
 
 	markTime("Hill climb and Newton").
-	IF bestOverall["finalValue"] >= invalidDeltaV {
+	IF abortKeyPressed() {
+		SET errorCode TO abortMessage.
+	} ELSE IF bestOverall["finalValue"] >= invalidDeltaV {
 		SET errorCode TO "No valid transfer was found in the search window.".
 	} ELSE {
 		// finalGuess1 is tSOI (case 3: the burn time), a UT; finalGuess2 is the flight time.
@@ -449,7 +458,10 @@ IF errorCode = "None" {
 			debugLogValues("Full-precision pricing of the winner", reportStats).
 		}
 
-		IF sameSOI {
+		IF abortKeyPressed() {
+			// No phase lock, node or launch plan.
+			SET errorCode TO abortMessage.
+		} ELSE IF sameSOI {
 			// Case 3: the burn is at the departure time itself.
 			LOCAL departure IS reportStats["Ejection"].
 			// The ship's predicted position at arrival before the node, for checkNodeEncounter.
@@ -494,7 +506,10 @@ IF errorCode = "None" {
 					"timedDeltaV", timed["deltaV"], "tSOI", timed["tSOI"])).
 				IF timed["deltaV"] < invalidDeltaV debugLogValues("Timed pricing", timed["stats"]).
 			}
-			IF timed["deltaV"] < invalidDeltaV {
+			IF abortKeyPressed() {
+				// Pressed during the lock: no node.
+				SET errorCode TO abortMessage.
+			} ELSE IF timed["deltaV"] < invalidDeltaV {
 				SET reportTSOI TO timed["tSOI"].
 				IF timed:HASKEY("flightTime") SET reportTimeOfFlight TO timed["flightTime"].
 				SET reportDV TO timed["deltaV"].
@@ -633,27 +648,30 @@ IF errorCode = "None" {
 			}
 		}
 
-		PRINT "".
-		IF sameSOI {
-			PRINT "Departure " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
-		} ELSE IF shipEscaping {
-			PRINT "Correction " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
-		} ELSE {
-			PRINT "Ejection " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
-		}
-		IF reportStats:HASKEY("Aim Offset") {
-			PRINT "Aimed " + distanceToString(reportStats["Aim Offset"]:MAG) + " off " + toOrbitable:NAME + "'s centre, for a " + distanceToString(captureRadius - toOrbitable:RADIUS) + " periapsis altitude.".
-		}
-		PRINT "Complete".
-		WAIT 0.5.
+		IF NOT abortRequested {
+			PRINT "".
+			IF sameSOI {
+				PRINT "Departure " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
+			} ELSE IF shipEscaping {
+				PRINT "Correction " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
+			} ELSE {
+				PRINT "Ejection " + distanceToString(reportStats["Ejection"]["deltaV"]) + "/s + arrival " + distanceToString(reportStats["Arrival Delta V"]) + "/s.".
+			}
+			IF reportStats:HASKEY("Aim Offset") {
+				PRINT "Aimed " + distanceToString(reportStats["Aim Offset"]:MAG) + " off " + toOrbitable:NAME + "'s centre, for a " + distanceToString(captureRadius - toOrbitable:RADIUS) + " periapsis altitude.".
+			}
+			PRINT "Complete".
+			WAIT 0.5.
 
-		SET loopMessage TO fromOrbitable:NAME + " -> " + toOrbitable:NAME + " " + ROUND(reportDV) + "m/s in " + durationToUnitString(reportTimeOfFlight).
-		IF soiProblems > 0 SET loopMessage TO loopMessage + " (SOI WARNING)".
-		IF nodeDisagreements > 0 SET loopMessage TO loopMessage + " (NODE CHECK WARNING)".
+			SET loopMessage TO fromOrbitable:NAME + " -> " + toOrbitable:NAME + " " + ROUND(reportDV) + "m/s in " + durationToUnitString(reportTimeOfFlight).
+			IF soiProblems > 0 SET loopMessage TO loopMessage + " (SOI WARNING)".
+			IF nodeDisagreements > 0 SET loopMessage TO loopMessage + " (NODE CHECK WARNING)".
+		}
 	}
 }
 
-IF errorCode <> "None" SET loopMessage TO "Error: " + errorCode.
+IF abortRequested SET loopMessage TO abortMessage.
+ELSE IF errorCode <> "None" SET loopMessage TO "Error: " + errorCode.
 markTime("Node and checks").
 PRINT "Time taken:".
 FOR timingLine IN stageTimings {
