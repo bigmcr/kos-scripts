@@ -62,17 +62,24 @@ IF HASTARGET {
 
 // A target that never enters this SOI (a body orbiting something else, for instance) has no orbit here to park in.
 // If transferCalc saved a launch plan on this ship's own disk for that target, launch into the plan's plane instead.
+// The plan is for the target itself, or for the body the target orbits: for a moon, or a vessel orbiting another
+// planet, transferCalc saves that planet as the destination.
 // Returns "None" if the saved plan can be used for the current target, otherwise the reason it cannot (string).
 FUNCTION savedPlanProblem {
 	PARAMETER planPath.
 	PARAMETER plan.
-	IF NOT TARGET:ISTYPE("Body") RETURN "the target is not a body".
+	IF NOT (TARGET:ISTYPE("Body") OR TARGET:ISTYPE("Vessel")) RETURN "the target is not a body or a vessel".
 	IF NOT EXISTS(planPath) RETURN "no saved launch plan".
 	IF NOT plan:ISTYPE("Lexicon") RETURN "the saved plan is not a lexicon".
 	FOR requiredKey IN LIST("version", "departureBody", "destination", "inclination", "lan", "burnUT") {
 		IF NOT plan:HASKEY(requiredKey) RETURN "the saved plan has no " + requiredKey.
 	}
-	IF plan["destination"] <> TARGET:NAME RETURN "the saved plan is for " + plan["destination"].
+	LOCAL destinationMatches IS plan["destination"] = TARGET:NAME.
+	// In steps: the Sun has no body, and OR does not short-circuit.
+	IF TARGET:HASBODY {
+		IF plan["destination"] = TARGET:BODY:NAME SET destinationMatches TO TRUE.
+	}
+	IF NOT destinationMatches RETURN "the saved plan is for " + plan["destination"].
 	IF plan["version"] <> 1 RETURN "the saved plan is version " + plan["version"] + ", and only version 1 is understood".
 	IF plan["departureBody"] <> SHIP:BODY:NAME RETURN "the saved plan departs from " + plan["departureBody"] + ", not " + SHIP:BODY:NAME.
 	IF plan["burnUT"] <= TIME:SECONDS RETURN "the saved plan's ejection burn time has already passed".
@@ -87,11 +94,6 @@ LOCAL usePlan IS FALSE.
 LOCAL launchInclination IS 0.
 LOCAL launchLAN IS 0.
 
-// With a saved plan, the launch is timed to the ejection burn. GravTurnLaunch then waits for the launch site to pass through
-// the plane, which takes at most one rotation of the body, and the ascent takes about 20 minutes. So the lead before the burn is
-// a rotation plus the ascent, so that the ship is in orbit before the burn however long the plane wait turns out to be.
-LOCAL planLeadTime IS SHIP:BODY:ROTATIONPERIOD + 20 * 60.
-
 // Whether there is anything to launch into: the target's orbit in this SOI, or a saved plan for a target outside of it.
 LOCAL canLaunch IS FALSE.
 IF abortRequested {
@@ -105,7 +107,7 @@ IF abortRequested {
 		PRINT "Inclination:      " + ROUND(plan["inclination"], 3) + " deg".
 		PRINT "LAN:              " + ROUND(plan["lan"], 3) + " deg".
 		PRINT "Ejection burn at: " + plan["burnClock"] + " (" + plan["burnCalendar"] + "), in " + timeToString(plan["burnUT"] - TIME:SECONDS).
-		PRINT "The ship will warp until " + timeToString(planLeadTime) + " before the burn, then wait for the launch site to pass through the plane.".
+		PRINT "Launching into a circular orbit in this plane now, to wait there for the burn.".
 		SET usePlan TO TRUE.
 		SET canLaunch TO TRUE.
 		// The plan overrides the plane that would have come from the target's orbit.
@@ -113,7 +115,7 @@ IF abortRequested {
 		SET launchLAN TO plan["lan"].
 	} ELSE {
 		PRINT "Chosen object does not enter current SOI - cannot find orbit to park in".
-		IF planProblem <> "no saved launch plan" AND planProblem <> "the target is not a body" PRINT "Saved launch plan not used: " + planProblem + ".".
+		IF planProblem <> "no saved launch plan" AND planProblem <> "the target is not a body or a vessel" PRINT "Saved launch plan not used: " + planProblem + ".".
 	}
 } ELSE {
 	IF previousTargetOrbit = 0 {
@@ -124,7 +126,9 @@ IF abortRequested {
 	SET canLaunch TO TRUE.
 }
 IF canLaunch {
-	// With a saved plan there is no orbit of the target in this SOI to time the launch against, so the SOI timing is skipped.
+	// With a saved plan there is no orbit of the target in this SOI to time the launch against, and the ship waits for the
+	// ejection burn in orbit, so there is no timing wait at all. GravTurnLaunch still waits for the launch site to pass
+	// through the plane.
 	IF NOT usePlan {
 		// Figure out how long the target will remain within this SOI, and compare
 		// that to how long a Hohmann transfer would take from a parking orbit
@@ -174,17 +178,6 @@ IF canLaunch {
 
 		SET launchInclination TO finalTargetOrbit:INCLINATION.
 		SET launchLAN TO finalTargetOrbit:LAN.
-	} ELSE {
-		// There is no SOI window to time against, so time the launch to the ejection burn instead.
-		LOCAL waitTime IS plan["burnUT"] - TIME:SECONDS - planLeadTime.
-		IF waitTime > 0 {
-			PRINT "Waiting " + timeToString(waitTime) + " so launch happens " + timeToString(planLeadTime) + " before the ejection burn.".
-			warpToTime(TIME:SECONDS + waitTime, abortKeyPressed@).
-			WAIT 0.
-			UNTIL (KUNIVERSE:TIMEWARP:ISSETTLED AND KUNIVERSE:TIMEWARP:RATE = 1) OR abortKeyPressed() {WAIT 0.}
-		} ELSE {
-			PRINT "The ejection burn is less than " + timeToString(planLeadTime) + " away - launching immediately.".
-		}
 	}
 
 	// A last few seconds to abort before the launch starts.
