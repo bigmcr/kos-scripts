@@ -4,6 +4,9 @@
 GLOBAL physicsWarpPerm TO 2.					// If non-zero, allow physics warping up to the specified level when reasonable
 GLOBAL maxAOA TO 5.								// Maximum angle of attack. Used as the limits of the pitch PID while in atmosphere
 GLOBAL debug IS TRUE.							// If TRUE, multiple functions will display or log extra info
+GLOBAL stagingSideLoadLimit IS 0.15.			// kPa. Above this side load (see stagingSideLoad), the ship turns toward surface prograde to stage
+GLOBAL stagingMaxRotationRate IS 0.025.			// rad/s. A ship turning to stage has to rotate slower than this before it stages
+GLOBAL stagingSettleTime IS 1.					// s. How long it has to be lined up and rotating that slowly before it stages
 GLOBAL missionTimeOffset TO 0.					// Offset for MISSIONTIME to account for time spent on the launchpad
 GLOBAL g_0 IS CONSTANT:G0.               			// Gravitational acceleration constant (m/s²)
 GLOBAL augerList IS SHIP:PARTSTITLEDPATTERN("Auger").
@@ -105,6 +108,61 @@ FUNCTION partDropStage {
 		}
 	}
 	RETURN dropStage.
+}
+
+// Whether the next staging drops anything from the ship, rather than only lighting engines, opening parachutes and so on.
+// The next staging activates the stage numbered one below STAGE:NUMBER. It drops the parts whose partDropStage is that number,
+// and jettisons the fairings that are in that stage (a fairing stays on the ship when it opens, so partDropStage does not show it).
+// Returns TRUE or FALSE
+FUNCTION nextStageDropsParts {
+	LOCAL nextStageNumber IS STAGE:NUMBER - 1.
+	IF nextStageNumber < 0 RETURN FALSE.
+	FOR eachPart IN SHIP:PARTS {
+		IF partDropStage(eachPart) = nextStageNumber RETURN TRUE.
+		IF eachPart:STAGE = nextStageNumber AND eachPart:HASMODULE("ModuleProceduralFairing") RETURN TRUE.
+	}
+	RETURN FALSE.
+}
+
+// The air load that can push a dropped part sideways, or back, into the ship: the dynamic pressure times the sine of the angle
+// between the ship's facing and its surface velocity. Past 90 degrees the air comes from behind and pushes dropped parts toward
+// the ship, so the whole dynamic pressure counts.
+// SHIP:Q is in atmospheres (of Kerbin sea level), so it is converted to kPa.
+// Returns the side load (scalar, kPa), 0 outside of an atmosphere
+FUNCTION stagingSideLoad {
+	LOCAL angleOfAttack IS VANG(SHIP:FACING:VECTOR, SHIP:VELOCITY:SURFACE).
+	RETURN SHIP:Q * CONSTANT:ATMTOKPA * SIN(MIN(angleOfAttack, 90)).
+}
+
+// The state of the ship that matters to a separation, for logStagingRecord.
+// Returns a lexicon
+FUNCTION stagingRecord {
+	RETURN LEXICON("universalTime", TIME:SECONDS, "missionTime", MISSIONTIME, "stageNumber", STAGE:NUMBER,
+		"altitude", ALTITUDE, "surfaceSpeed", SHIP:VELOCITY:SURFACE:MAG, "dynamicPressure", SHIP:Q * CONSTANT:ATMTOKPA,
+		"progradeAngle", VANG(SHIP:FACING:VECTOR, SHIP:VELOCITY:SURFACE), "sideLoad", stagingSideLoad(),
+		"rotationRate", SHIP:ANGULARVEL:MAG * CONSTANT:RADTODEG).
+}
+
+// Prints the state of the ship at a separation, and adds it to the staging log on the archive if it can be reached.
+// Passed the following
+//			record (lexicon from stagingRecord, taken just before staging)
+//			turn result (string, "No turn", "Settled" or "Timed out")
+//			turn duration (scalar, seconds spent turning before staging)
+FUNCTION logStagingRecord {
+	PARAMETER separationRecord.
+	PARAMETER turnResult.
+	PARAMETER turnDuration.
+
+	PRINT "Separated: side load " + ROUND(separationRecord["sideLoad"], 3) + " kPa, " + ROUND(separationRecord["progradeAngle"], 1) +
+		" deg off prograde, " + ROUND(separationRecord["rotationRate"], 2) + " deg/s. " + turnResult.
+	IF connectionToKSC() {
+		LOCAL fileName IS "0:stagingLog.csv".
+		IF NOT EXISTS(fileName) LOG "Ship,Universal Time (s),Mission Time (s),Stage,Altitude (m),Surface Speed (m/s),Q (kPa),Angle Off Prograde (deg),Side Load (kPa),Side Load Limit (kPa),Rotation Rate (deg/s),Turn Result,Turn Duration (s)" TO fileName.
+		LOG SHIP:NAME + "," + separationRecord["universalTime"] + "," + separationRecord["missionTime"] + "," +
+			separationRecord["stageNumber"] + "," + separationRecord["altitude"] + "," + separationRecord["surfaceSpeed"] + "," +
+			separationRecord["dynamicPressure"] + "," + separationRecord["progradeAngle"] + "," + separationRecord["sideLoad"] + "," +
+			stagingSideLoadLimit + "," + separationRecord["rotationRate"] + "," + turnResult + "," + turnDuration TO fileName.
+	}
 }
 
 // Group Ship Parts
@@ -325,6 +383,19 @@ FUNCTION loadRotationData {
 FUNCTION defaultStoppingTime {
 	IF isStock() RETURN 1.0.
 	RETURN 15.0.
+}
+
+// Whether the ship may be moved to measure its turn rate when it boots (boolean). It must be above any atmosphere, and
+// either in orbit (ORBITING or ESCAPING) or off the surface and climbing. So the measurement is skipped on the ground, in
+// the water, in an atmosphere, and on a suborbital path while descending.
+FUNCTION canMeasureRotationAtBoot {
+	IF SHIP:BODY:ATM:EXISTS {
+		IF SHIP:ALTITUDE < SHIP:BODY:ATM:HEIGHT RETURN FALSE.
+	}
+	LOCAL shipStatus IS SHIP:STATUS.
+	IF shipStatus = "ORBITING" OR shipStatus = "ESCAPING" RETURN TRUE.
+	IF shipStatus = "LANDED" OR shipStatus = "PRELAUNCH" OR shipStatus = "SPLASHED" RETURN FALSE.
+	RETURN SHIP:VERTICALSPEED > 0.
 }
 
 // Updates STEERINGMANAGER:MAXSTOPPINGTIME and shipInfo["Rotation"] for the ship as it is now.
@@ -4012,12 +4083,15 @@ FUNCTION VESSELEXISTS {
 //               empty-tank checks only apply when it is TRUE, so that a stage that has not started yet is not dropped.)
 //   execute (boolean, FALSE to only report the reason without staging, so that the caller can prepare first, for ullage)
 //   longWait (boolean, optional, TRUE, whether to use the long wait of stageFunction below the top of the atmosphere)
+//   abortCheck (delegate, optional, passed to stageFunction, such as abortKeyPressed@; the default never aborts)
 // Returns the following:
-//   "max thrust", "flameout" or "resources" if the ship was staged (or would be, if execute is FALSE), "None" if it was not
+//   "max thrust", "flameout" or "resources" if the ship was staged (or would be, if execute is FALSE), "None" if it was not.
+//   After an abort it is still the reason, although the ship may not have staged
 FUNCTION stageIfNeeded {
 	PARAMETER thrustSeen IS TRUE.
 	PARAMETER execute IS TRUE.
 	PARAMETER longWait IS TRUE.
+	PARAMETER abortCheck IS neverAbort@.
 
 	IF shipInfo["PartCount"] <> SHIP:PARTS:LENGTH updateShipInfo().
 
@@ -4071,8 +4145,8 @@ FUNCTION stageIfNeeded {
 	IF NOT stagingHelps SET reason TO "None".
 
 	IF reason <> "None" AND execute {
-		IF longWait AND ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE).
-		ELSE stageFunction().
+		IF longWait AND ALTITUDE < SHIP:BODY:ATM:HEIGHT stageFunction(10, TRUE, FALSE, abortCheck).
+		ELSE stageFunction(0.5, SHIP:PARTS:LENGTH > 200, FALSE, abortCheck).
 	}
 	RETURN reason.
 }

@@ -28,7 +28,9 @@ RUNPATH("loopTerminal").
 SET STEERINGMANAGER:MAXSTOPPINGTIME TO defaultStoppingTime().		// 1 s stock, 15 s RealFuels
 // Replace that default with one based on how fast the ship can turn (the default if landed). Use the saved measurement from the
 // last boot if it still describes this ship, because measuring takes several seconds and moves the ship a little.
-updateStoppingTime(NOT loadRotationData(), TRUE).
+// Without a saved one, the ship is only measured where it is safe to move it (see canMeasureRotationAtBoot).
+LOCAL haveRotationData IS loadRotationData().
+updateStoppingTime((NOT haveRotationData) AND canMeasureRotationAtBoot(), TRUE).
 
 FUNCTION functionCaller {
 		PARAMETER func, minArguments, maxArguments, args.
@@ -78,42 +80,67 @@ FUNCTION isResidentScript {
 
 // Stage Function
 // This function activates a stage and updates the appropriate stage information
-// If the atmosphere near the rocket is below 50% of sea level pressure and the rocket is moving faster
-// than 10 m/s, the rocket points prograde before and after staging. The reason is to allow the staged
-// rocket parts to drop behind without colliding with the rocket. This prevents the spent stage from
-// being pushed into the rocket by aerodynamic forces.
+// If the staging drops anything and the air would push on it too hard (stagingSideLoad is above stagingSideLoadLimit),
+// the rocket first turns toward surface prograde. The reason is to allow the staged rocket parts to drop behind without
+// colliding with the rocket. This prevents the spent stage from being pushed into the rocket by aerodynamic forces.
+// It stages once the rocket has been lined up (the side load within the limit, or within 0.5 degrees of prograde) and
+// steady (rotating slower than stagingMaxRotationRate) for stagingSettleTime, or after 10 seconds.
+// A staging that drops nothing (such as one that only lights engines) needs no turn and no long wait.
+// The state of the ship at each separation is printed and logged (see logStagingRecord).
 // Passed the following
-//			waitTime (scalar, seconds rocket should point prograde before and after staging)
+//			waitTime (scalar, seconds to wait after staging for the dropped parts to get clear. At most 0.5 if nothing is dropped)
+//			forceLongWait (boolean, wait 5 seconds after dropping parts, whatever waitTime is. Defaults to TRUE for a large ship)
+//			manualStage (boolean, only stage, without any turning or waiting)
+//			abortCheck (delegate, returns TRUE to give up, such as abortKeyPressed@; the default never aborts. An abort ends
+//				the waits, and if it comes before the staging, nothing is staged)
 // Returns the following:
 //			nothing
 FUNCTION stageFunction {
 	PARAMETER waitTime IS 0.5.
 	PARAMETER forceLongWait IS SHIP:PARTS:LENGTH > 200.
 	PARAMETER manualStage IS FALSE.
+	PARAMETER abortCheck IS neverAbort@.
 	LOCAL stageStartTime IS TIME:SECONDS.
-	
+	LOCAL dropsParts IS FALSE.
+	LOCAL turnResult IS "No turn".
+	LOCAL turnDuration IS 0.
+
 	IF not manualStage {
-		LOCAL stageInAtm IS ((SHIP:BODY:ATM:EXISTS) AND
-							(SHIP:BODY:ATM:ALTITUDEPRESSURE(ALTITUDE) / SHIP:BODY:ATM:SEALEVELPRESSURE > 0.50) AND
-							(SHIP:VELOCITY:SURFACE:MAG > 10.0)).
-		IF stageInAtm PRINT "Staging in atmosphere!".
-		IF forceLongWait SET waitTime TO 5.0.
+		// this has to be found before staging, while the parts are still on the ship
+		SET dropsParts TO nextStageDropsParts().
+		IF NOT dropsParts SET waitTime TO MIN(waitTime, 0.5).
+		ELSE IF forceLongWait SET waitTime TO 5.0.
 
-
-		IF stageInAtm {
-			SET globalSteer TO SHIP:VELOCITY:SURFACE.
-			// this pause is to allow time for the rocket to face pure prograde (within 2.5 degrees)
-			// It times out after 10 seconds.
+		IF dropsParts AND stagingSideLoad() > stagingSideLoadLimit {
+			PRINT "Turning prograde to stage, side load " + ROUND(stagingSideLoad(), 2) + " kPa".
+			// this pause is to allow time for the rocket to line up and stop swinging, so that it is not still rotating
+			// through prograde when the parts separate. It times out after 10 seconds.
 			LOCAL startTime IS TIME:SECONDS.
-			UNTIL VANG(SHIP:FACING:VECTOR, SHIP:VELOCITY:SURFACE) < 2.5 OR (TIME:SECONDS - startTime) > 10 WAIT 0.
+			LOCAL steadySince IS -1.		// when the rocket became lined up and steady, -1 while it is not
+			LOCAL settled IS FALSE.
+			UNTIL settled OR (TIME:SECONDS - startTime) > 10 OR abortCheck:CALL() {
+				SET globalSteer TO SHIP:VELOCITY:SURFACE.		// prograde moves during the turn, so keep following it
+				LOCAL linedUp IS stagingSideLoad() <= stagingSideLoadLimit OR VANG(SHIP:FACING:VECTOR, SHIP:VELOCITY:SURFACE) < 0.5.
+				IF NOT (linedUp AND SHIP:ANGULARVEL:MAG < stagingMaxRotationRate) SET steadySince TO -1.
+				ELSE IF steadySince < 0 SET steadySince TO TIME:SECONDS.
+				ELSE SET settled TO TIME:SECONDS - steadySince >= stagingSettleTime.
+				WAIT 0.
+			}
+			SET turnDuration TO TIME:SECONDS - startTime.
+			SET turnResult TO CHOOSE "Settled" IF settled ELSE "Timed out".
 		}
 	}
+	IF abortCheck:CALL() RETURN.		// aborted, so do not stage
+	// the state at separation is read here and written after staging, so that writing it does not delay the staging
+	LOCAL separationRecord IS LEXICON().
+	IF dropsParts SET separationRecord TO stagingRecord().
 	STAGE.
+	IF dropsParts logStagingRecord(separationRecord, turnResult, turnDuration).
 	IF not manualStage {
 		SET stageStartTime TO TIME:SECONDS.
 
 		// this pause is to allow time for the spent stage to go past the rocket
-		UNTIL TIME:SECONDS > stageStartTime + waitTime WAIT 0.
+		UNTIL TIME:SECONDS > stageStartTime + waitTime OR abortCheck:CALL() WAIT 0.
 	}
 	updateShipInfo().
 }
